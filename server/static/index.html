@@ -48,7 +48,10 @@
 
         <section class="lg:col-span-2 space-y-3">
           <div class="p-4 bg-white rounded-lg shadow">
-            <h2 class="font-medium mb-2">Timeline</h2>
+            <div class="flex items-center justify-between mb-2">
+              <h2 class="font-medium">Timeline</h2>
+              <div id="spark" class="h-8 w-48"></div>
+            </div>
             <div id="timeline" class="space-y-3"></div>
           </div>
         </section>
@@ -64,7 +67,7 @@
       const API = '';
       let currentRID = null;
       let es = null;
-      const state = { rag: {}, speaks: {}, directors: {} };
+      const state = { rag: {}, speaks: {}, directors: {}, selectedTurn: null };
 
       function tkn(s){ return (s||'').match(/[A-Za-z0-9ぁ-んァ-ン一-龯]{2,}/g) || []; }
       function grams(s,n=3){ const c=(s||'').replace(/\s+/g,''); return new Set(Array.from({length: Math.max(0,c.length-n+1)}, (_,i)=>c.slice(i,i+n))); }
@@ -75,7 +78,7 @@
       }
 
       function badge(beat){ const m={BANter:'bg-gray-200 text-gray-800', PIVOT:'bg-blue-200 text-blue-800', PAYOFF:'bg-purple-200 text-purple-800'}; return `<span class="px-2 py-0.5 rounded ${m[beat]||'bg-slate-200'}">${beat||'-'}</span>` }
-      function progress(p){ const w=Math.round((p||0)*100); return `<div class="w-full bg-slate-100 rounded h-2"><div class="h-2 rounded ${w>=20?'bg-emerald-500':'bg-slate-400'}" style="width:${w}%"></div></div>` }
+      function progress(p, title){ const w=Math.round((p||0)*100); const cls=(p<0.10)?'bg-slate-300':(p<0.20)?'bg-amber-400':'bg-emerald-500'; return `<div class="w-full bg-slate-100 rounded h-2" title="${title||''}"><div class="h-2 rounded ${cls}" style="width:${w}%"></div></div>` }
 
       function renderRuns(list){
         const el = document.getElementById('runs');
@@ -95,26 +98,32 @@
         const fA=document.getElementById('fA').checked, fB=document.getElementById('fB').checked;
         const fBAN=document.getElementById('fBAN').checked, fPIV=document.getElementById('fPIV').checked, fPAY=document.getElementById('fPAY').checked;
         const turns = Object.keys(state.speaks).map(Number).sort((a,b)=>a-b);
+        // sparkline
+        try { drawSpark(turns); } catch(e){}
         turns.forEach(turn=>{
           const sp = state.speaks[turn]||{}; const dr = state.directors[turn]||{}; const rag = state.rag[turn]||{};
           const speaker=sp.speaker; const beat=dr.beat;
           if((speaker==='A'&&!fA)||(speaker==='B'&&!fB)) return;
           if((beat==='BANter'&&!fBAN)||(beat==='PIVOT'&&!fPIV)||(beat==='PAYOFF'&&!fPAY)) return;
-          const pv=[rag.canon?.preview||'', rag.lore?.preview||'', rag.pattern?.preview||''].filter(Boolean).join(' ');
-          const c = cov(pv, sp.text||'');
+          const canonPv=rag.canon?.preview||''; const lorePv=rag.lore?.preview||''; const pattPv=rag.pattern?.preview||'';
+          const cCanon=cov(canonPv, sp.text||''); const cLore=cov(lorePv, sp.text||''); const cPatt=cov(pattPv, sp.text||'');
+          const c = Math.max(cCanon,cLore,cPatt);
+          const tip = `c=${cCanon.toFixed(2)} l=${cLore.toFixed(2)} p=${cPatt.toFixed(2)}`;
           const card = document.createElement('div');
           card.className = 'border rounded p-3';
+          card.id = `turn-${turn}`;
           card.innerHTML = `
             <div class="flex items-center justify-between text-sm">
               <div class="flex items-center gap-2"><span class="font-mono">Turn ${turn}</span><span class="px-1.5 py-0.5 rounded bg-slate-800 text-white">${speaker||'-'}</span>${badge(beat)}</div>
               <div class="text-slate-400">${dr.cut_cue? 'TAG' : ''}</div>
             </div>
             <div class="mt-2 whitespace-pre-wrap leading-relaxed">${(sp.text||'').replace(/</g,'&lt;')}</div>
-            <div class="mt-3 flex items-center gap-2">${progress(c)}<span class="text-xs text-slate-500">${Math.round(c*100)}%</span></div>
+            <div class="mt-3 flex items-center gap-2">${progress(c, tip)}<span class="text-xs text-slate-500" title="${tip}">${Math.round(c*100)}%</span><span class="text-emerald-500 text-xs" id="unread-${turn}" style="opacity:0">●</span></div>
           `;
-          card.onclick = ()=> renderRag(turn);
+          card.onclick = ()=> { state.selectedTurn=turn; renderRag(turn); };
           tl.appendChild(card);
         })
+        if (state.selectedTurn) renderRag(state.selectedTurn);
       }
 
       function renderRag(turn){
@@ -125,10 +134,21 @@
         if(dr.beat==='PAYOFF') items.sort((a,b)=> (a[0]==='pattern'?-1:1));
         items.forEach(([k,v])=>{
           const div = document.createElement('div');
-          div.className = 'border rounded p-3';
-          div.innerHTML = `<div class="text-sm mb-1"><span class="px-2 py-0.5 rounded bg-slate-100">${k}</span></div><div class="text-sm text-slate-700">${(v?.preview||'-')}</div><div class="text-xs text-slate-400 mt-1">${v?.path||''}</div>`
+          const hi = (dr.beat==='PAYOFF' && k==='pattern');
+          div.className = `border rounded p-3 ${hi?'ring-2 ring-violet-400 bg-violet-50':''}`;
+          div.innerHTML = `<div class="text-sm mb-1"><span class="px-2 py-0.5 rounded bg-slate-100 font-medium">${k}</span></div><div class="text-sm text-slate-700" title="${v?.path||''}">${(v?.preview||'-')}</div><div class="text-xs text-slate-400 mt-1">${v?.path||''}</div>`
           host.appendChild(div);
         })
+      }
+
+      function drawSpark(turns){
+        const el = document.getElementById('spark'); if(!el) return;
+        const vals = turns.map(t=>{ const sp=state.speaks[t]||{}; const rag=state.rag[t]||{}; return Math.max(cov(rag.canon?.preview||'', sp.text||''), cov(rag.lore?.preview||'', sp.text||''), cov(rag.pattern?.preview||'', sp.text||'')); });
+        if (!vals.length){ el.innerHTML=''; return; }
+        const W=180,H=24; const max=Math.max(...vals,0.001);
+        const pts = vals.map((v,i)=> [i*(W/(vals.length-1||1)), H - (v/max)*H]);
+        const d = pts.map((p,i)=> (i?'L':'M')+p[0].toFixed(1)+','+p[1].toFixed(1)).join(' ');
+        el.innerHTML = `<svg width="${W}" height="${H}"><path d="${d}" fill="none" stroke="#10b981" stroke-width="2" /></svg>`;
       }
 
       async function fetchRuns(){
@@ -141,20 +161,40 @@
         es = new EventSource(`${API}/api/run/stream?run_id=${encodeURIComponent(rid)}`);
         es.addEventListener('director', (e)=>{ const j=JSON.parse(e.data); state.directors[j.turn]=j; render(); });
         es.addEventListener('rag_select', (e)=>{ const j=JSON.parse(e.data); state.rag[j.turn]=j; render(); });
-        es.addEventListener('speak', (e)=>{ const j=JSON.parse(e.data); state.speaks[j.turn]=j; render(); });
+        es.addEventListener('speak', (e)=>{ const j=JSON.parse(e.data); state.speaks[j.turn]=j; render(); const el=document.getElementById(`turn-${j.turn}`); if(el){ el.scrollIntoView({behavior:'smooth', block:'nearest'}); const dot=document.getElementById(`unread-${j.turn}`); if(dot){ dot.style.opacity='1'; setTimeout(()=>dot.style.opacity='0', 2000);} } });
         es.addEventListener('run_end', ()=>{});
       }
 
       document.getElementById('runForm').addEventListener('submit', async (ev)=>{
         ev.preventDefault(); const fd=new FormData(ev.target);
         const body={ topic:fd.get('topic')||'', model:fd.get('model')||'', maxTurns:Number(fd.get('maxTurns')||8), seed: Number(fd.get('seed')||0), noRag: !!fd.get('noRag') };
-        await fetch(API + '/api/run/start', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)});
+        const resp = await fetch(API + '/api/run/start', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)});
+        const js = await resp.json().catch(()=>({}));
+        if(js && js.run_id){ connect(js.run_id); }
         setTimeout(fetchRuns, 800);
       });
 
+      function syncFiltersToURL(){
+        const p=new URLSearchParams(location.search);
+        p.set('speaker', [document.getElementById('fA').checked?'A':null, document.getElementById('fB').checked?'B':null].filter(Boolean).join(','));
+        p.set('beat', [document.getElementById('fBAN').checked?'BANter':null, document.getElementById('fPIV').checked?'PIVOT':null, document.getElementById('fPAY').checked?'PAYOFF':null].filter(Boolean).join(','));
+        history.replaceState(null,'', location.pathname + '?' + p.toString());
+      }
+      function loadFiltersFromURL(){
+        const p=new URLSearchParams(location.search);
+        const sp=(p.get('speaker')||'A,B').split(',');
+        document.getElementById('fA').checked=sp.includes('A');
+        document.getElementById('fB').checked=sp.includes('B');
+        const bt=(p.get('beat')||'BANter,PIVOT,PAYOFF').split(',');
+        document.getElementById('fBAN').checked=bt.includes('BANter');
+        document.getElementById('fPIV').checked=bt.includes('PIVOT');
+        document.getElementById('fPAY').checked=bt.includes('PAYOFF');
+      }
+      ;['fA','fB','fBAN','fPIV','fPAY'].forEach(id=> document.getElementById(id).addEventListener('change', ()=>{ syncFiltersToURL(); render(); }));
+
+      loadFiltersFromURL();
       fetchRuns();
       setInterval(fetchRuns, 5000);
     </script>
   </body>
   </html>
-
