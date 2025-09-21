@@ -151,6 +151,8 @@ def hard_enforce(text: str, sent_limit: int = 5, aizuchi_limit: int = 1) -> str:
 _SANITIZE_PATTERNS = [
     # Remove accidental printed direction notes like 「［演出ノート］…」
     (re.compile(r"\u3014?\[?演出ノート\]?\u3015?:?.*$", re.MULTILINE), ""),
+    # Remove internal hints lines
+    (re.compile(r"\u3014?\[?内蔵ヒント\]?\u3015?:?.*$", re.MULTILINE), ""),
 ]
 
 _SANITIZE_REPLACEMENTS = [

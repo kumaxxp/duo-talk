@@ -20,6 +20,7 @@ from duo_chat_mvp import (
     too_many_aizuchi,
 )
 from duo_chat_mvp import _write_event, set_run_id  # reuse logging helper
+from rag.rag_min import build as rag_build, retrieve as rag_retrieve
 
 
 DEFAULT_POLICY = {
@@ -162,7 +163,7 @@ def _sanitize_model_name(name: str) -> str:
     return name
 
 
-def _compose_user(partner_last: Optional[str], topic: Optional[str], beat: str) -> str:
+def _compose_user(partner_last: Optional[str], topic: Optional[str], beat: str, hints: Optional[list[str]] = None) -> str:
     constraints = (
         "絶対条件: 最大5文、合いの手は最大1回。箇条書きや前置きは禁止。返答のみを日本語で簡潔に。"
     )
@@ -177,6 +178,10 @@ def _compose_user(partner_last: Optional[str], topic: Optional[str], beat: str) 
         base.append("トピックに軽く触れつつ自己紹介して会話を始めてください。")
     # Director's note (should not leak)
     base.append(f"［演出ノート］現在: {beat}。露骨な演出語は避け、自然に反映。ノートは台詞に出さない。")
+    # RAG hints (should not leak)
+    if hints:
+        for h in hints[:3]:
+            base.append(f"［内蔵ヒント］{h}（ヒントは台詞に出さない）")
     return "\n".join(base)
 
 
@@ -217,6 +222,11 @@ def run_duo(
     resolved_topic = topic or os.getenv("TOPIC") or None
 
     policy = load_policy()
+    # Build RAG index (idempotent)
+    try:
+        rag_build()
+    except Exception:
+        pass
 
     last_a: Optional[str] = None
     last_b: Optional[str] = None
@@ -228,13 +238,30 @@ def run_duo(
         cut_cue = pick_cut(turn, max_turns, policy)
         _write_event({"event": "director", "turn": turn, "beat": beat, "cut_cue": cut_cue})
 
+        # RAG: pick up to one snippet per category
+        hints: list[str] = []
+        q = (last_b if turn % 2 == 1 else last_a) or (resolved_topic or "")
+        # canon (optionally by char)
+        who_char = "A" if turn % 2 == 1 else "B"
+        canon = rag_retrieve(q, {"category": "canon", "char": who_char}) or rag_retrieve(q, {"category": "canon"})
+        if canon:
+            hints.append(f"canon: {canon[0][0].splitlines()[0][:120]}")
+        # lore
+        lore = rag_retrieve(q, {"category": "lore"})
+        if lore:
+            hints.append(f"lore: {lore[0][0].splitlines()[0][:120]}")
+        # pattern
+        pattern = rag_retrieve(q, {"category": "pattern"})
+        if pattern:
+            hints.append(f"pattern: {pattern[0][0].splitlines()[0][:120]}")
+
         if turn % 2 == 1:
             system = a_sys.read_text(encoding="utf-8").strip()
-            user = _compose_user(last_b, resolved_topic, beat)
+            user = _compose_user(last_b, resolved_topic, beat, hints)
             who = "A"
         else:
             system = b_sys.read_text(encoding="utf-8").strip()
-            user = _compose_user(last_a, resolved_topic, beat)
+            user = _compose_user(last_a, resolved_topic, beat, hints)
             who = "B"
 
         # One call with retry-once policy
