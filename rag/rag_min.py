@@ -4,6 +4,8 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Tuple
+import re
+import os
 
 
 # Minimal, offline-friendly RAG. Tries Chroma + e5-small; falls back to a
@@ -48,9 +50,41 @@ def _char_from_path(p: Path) -> Optional[str]:
     return None
 
 
-def build(data_dir: str | Path = "rag_data") -> None:
+# --- Preview helpers --------------------------------------------------------
+FM = re.compile(r"^---\s*.*?---\s*", re.S)
+
+
+def _first_nonempty_line(text: str) -> str:
+    for line in (text or "").splitlines():
+        line = line.strip()
+        if line:
+            return line
+    return ""
+
+
+def _fallback_keywords(meta: dict) -> str:
+    path = (meta or {}).get("path", "")
+    base = os.path.splitext(os.path.basename(path))[0]
+    tags = meta.get("tags") if isinstance(meta, dict) else None
+    parts = [p for p in ([base] + (tags or [])) if p]
+    return ("・" + "・".join(parts[:4])) if parts else ""
+
+
+def clean_preview(text: str, meta: dict | None = None, limit: int = 120) -> str:
+    if not text:
+        return _fallback_keywords(meta or {})
+    t = FM.sub("", text).strip()
+    one = _first_nonempty_line(t)
+    if not one:
+        one = _fallback_keywords(meta or {})
+    return one[:limit]
+
+
+def build(data_dir: str | Path = "rag_data", *, force: bool = False) -> None:
     global _BUILT, _DOCS
     root = Path(data_dir)
+    if force:
+        _BUILT = False
     _DOCS = []
     if not root.exists():
         _BUILT = True
@@ -67,6 +101,8 @@ def build(data_dir: str | Path = "rag_data") -> None:
             "char": _char_from_path(fp),
             "filename": fp.name,
         }
+        # attach cleaned preview
+        meta["preview"] = clean_preview(text, meta)
         _DOCS.append(Doc(id=str(len(_DOCS)), text=text, meta=meta))
 
     _BUILT = True
@@ -119,4 +155,3 @@ def retrieve(
         m["score"] = s
         out.append((d.text, m))
     return out
-

@@ -252,19 +252,35 @@ def run_duo(
             if canon:
                 canon_hit = canon[0][0]
                 canon_meta = canon[0][1]
-                hints.append(f"canon: {canon_hit.splitlines()[0][:120]}")
+                # choose cleaned preview when available
+                canon_preview = (canon_meta or {}).get("preview") or (canon_hit.splitlines()[0][:120] if canon_hit else "")
             # lore
             lore = rag_retrieve(q, {"category": "lore"})
             if lore:
                 lore_hit = lore[0][0]
                 lore_meta = lore[0][1]
-                hints.append(f"lore: {lore_hit.splitlines()[0][:120]}")
+                lore_preview = (lore_meta or {}).get("preview") or (lore_hit.splitlines()[0][:120] if lore_hit else "")
             # pattern
             pattern = rag_retrieve(q, {"category": "pattern"})
             if pattern:
                 pattern_hit = pattern[0][0]
                 pattern_meta = pattern[0][1]
-                hints.append(f"pattern: {pattern_hit.splitlines()[0][:120]}")
+                pattern_preview = (pattern_meta or {}).get("preview") or (pattern_hit.splitlines()[0][:120] if pattern_hit else "")
+
+        # Inject only non-empty previews (avoid '---' or dashes)
+        def _good(pv: Optional[str]) -> bool:
+            if not pv:
+                return False
+            s = pv.strip()
+            return s not in {"---", "—", "--", "-"}
+
+        if not no_rag:
+            if _good(locals().get("canon_preview")):
+                hints.append(f"canon: {canon_preview}")
+            if _good(locals().get("lore_preview")):
+                hints.append(f"lore: {lore_preview}")
+            if _good(locals().get("pattern_preview")):
+                hints.append(f"pattern: {pattern_preview}")
 
         # Log selection result for visibility
         _write_event(
@@ -273,15 +289,15 @@ def run_duo(
                 "turn": turn,
                 "canon": {
                     "path": (canon_meta or {}).get("path") if canon_meta else None,
-                    "preview": (canon_hit[:60] if canon_hit else None),
+                    "preview": (locals().get("canon_preview")[:60] if locals().get("canon_preview") else None),
                 },
                 "lore": {
                     "path": (lore_meta or {}).get("path") if lore_meta else None,
-                    "preview": (lore_hit[:60] if lore_hit else None),
+                    "preview": (locals().get("lore_preview")[:60] if locals().get("lore_preview") else None),
                 },
                 "pattern": {
                     "path": (pattern_meta or {}).get("path") if pattern_meta else None,
-                    "preview": (pattern_hit[:60] if pattern_hit else None),
+                    "preview": (locals().get("pattern_preview")[:60] if locals().get("pattern_preview") else None),
                 },
             }
         )
@@ -296,6 +312,15 @@ def run_duo(
             who = "B"
 
         # One call with retry-once policy
+        # Log prompt tail for debugging (ensure it's before LLM call)
+        try:
+            _write_event({
+                "event": "prompt_debug",
+                "turn": turn,
+                "prompt_tail": (user[-500:] if isinstance(user, str) else ""),
+            })
+        except Exception:
+            pass
         try:
             text = call(
                 model=resolved_model,
