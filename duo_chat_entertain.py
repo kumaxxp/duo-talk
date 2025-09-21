@@ -1,5 +1,6 @@
 import argparse
 import os
+import uuid
 from pathlib import Path
 from typing import Optional, Dict, Any
 
@@ -18,7 +19,7 @@ from duo_chat_mvp import (
     too_many_sentences,
     too_many_aizuchi,
 )
-from duo_chat_mvp import _write_event  # reuse logging helper
+from duo_chat_mvp import _write_event, set_run_id  # reuse logging helper
 
 
 DEFAULT_POLICY = {
@@ -60,6 +61,57 @@ def load_policy(path: str = "beats/beat_policy.yaml") -> Dict[str, Any]:
     except Exception:
         # Fallback safely
         return DEFAULT_POLICY
+
+
+def load_agree_words(path: str = "config/agree_words.txt") -> list[str]:
+    """Load consensus/summary words from config file; fallback to safe defaults.
+
+    One phrase per line; lines starting with '#' are ignored.
+    """
+    defaults = [
+        "まとめると",
+        "要するに",
+        "結論として",
+        "最終的に",
+        "合意",
+        "合意形成",
+        "落としどころ",
+        "振り返ると",
+        "総括すると",
+    ]
+    p = Path(path)
+    if not p.exists():
+        return defaults
+    try:
+        lines = p.read_text(encoding="utf-8").splitlines()
+        words = [ln.strip() for ln in lines if ln.strip() and not ln.strip().startswith("#")]
+        return words or defaults
+    except Exception:
+        return defaults
+
+
+def contains_agree(text: str, words: list[str] | None = None) -> bool:
+    words = words or load_agree_words()
+    t = text or ""
+    return any(w in t for w in words)
+
+
+def soften_agree_phrases(text: str) -> str:
+    SOFTEN = [
+        ("まとめると", "って感じだね"),
+        ("要するに", "ざっくり言うと"),
+        ("結論として", "ひとまず"),
+        ("最終的に", "結局のところ"),
+        ("合意形成", "歩み寄り"),
+        ("合意", "すり合わせ"),
+        ("落としどころ", "折り合い"),
+        ("振り返ると", "振り返れば"),
+        ("総括すると", "大まかに言えば"),
+    ]
+    s = text or ""
+    for a, b in SOFTEN:
+        s = s.replace(a, b)
+    return s
 
 
 def pick_beat(turn: int, policy: Dict[str, Any] | None = None) -> str:
@@ -169,6 +221,8 @@ def run_duo(
     last_a: Optional[str] = None
     last_b: Optional[str] = None
 
+    agree_words = load_agree_words()
+
     for turn in range(1, max_turns + 1):
         beat = pick_beat(turn, policy)
         cut_cue = pick_cut(turn, max_turns, policy)
@@ -206,13 +260,12 @@ def run_duo(
                 _write_event({"event": "error", "stage": "call", "turn": turn, "speaker": who, "message": str(e2)})
                 raise
 
-        # Enforce constraints hard regardless of model behavior
-        text = hard_enforce(text)
-
-        # Avoid summary/consensus words once
-        summary_words = ["結論として", "合意", "まとめると", "総括すると", "最終的に"]
-        if any(w in text for w in summary_words):
-            avoid = "以下は使用禁止: 結論として/合意/まとめると/総括/最終的に。軽快に続けて。"
+        # Avoid summary/consensus words: one regeneration; if still present, soften by replacement
+        if contains_agree(text, agree_words):
+            avoid = (
+                "以下の表現は使用禁止: " + "/".join(agree_words) + "。"
+                " 断定的な締めや合意の提示は避け、軽快に続けて。"
+            )
             user2 = f"{user}\n\n{avoid}"
             try:
                 text2 = call(
@@ -222,16 +275,40 @@ def run_duo(
                     temperature=resolved_temperature,
                     max_tokens=resolved_max_tokens,
                 )
-                text = hard_enforce(text2)
+                text = text2
             except Exception:
                 pass
 
-        # Loop escape: if same leading 120 chars as previous same-speaker line
+        if contains_agree(text, agree_words):
+            text = soften_agree_phrases(text)
+
+        # Enforce constraints hard regardless of model behavior
+        text = hard_enforce(text)
+
+        # Loop escape: if same leading 120 chars OR high n-gram overlap as previous same-speaker line
         prev_same = last_a if who == "A" else last_b
         def head120(s: Optional[str]) -> str:
             return (s or "")[:120]
 
-        if prev_same and head120(prev_same) == head120(text):
+        def ngram_overlap(a: Optional[str], b: Optional[str], n: int = 8, head: int = 160) -> float:
+            import re
+            sa = (a or "")[:head]
+            sb = (b or "")[:head]
+            # normalize spaces
+            sa = re.sub(r"\s+", " ", sa)
+            sb = re.sub(r"\s+", " ", sb)
+            if len(sa) < n or len(sb) < n:
+                return 0.0
+            A = {sa[i : i + n] for i in range(len(sa) - n + 1)}
+            B = {sb[i : i + n] for i in range(len(sb) - n + 1)}
+            if not A or not B:
+                return 0.0
+            overlap = len(A & B) / max(1, min(len(A), len(B)))
+            return overlap
+
+        overlap = ngram_overlap(prev_same, text) if prev_same else 0.0
+
+        if prev_same and (head120(prev_same) == head120(text) or overlap > 0.6):
             addon = "ところで、余談だけど一つだけ付け足すね。"
             text = hard_enforce(f"{text}\n{addon}")
 
@@ -241,7 +318,7 @@ def run_duo(
 
         text = sanitize(text)
 
-        _write_event({"event": "speak", "speaker": who, "turn": turn, "text": text})
+        _write_event({"event": "speak", "speaker": who, "turn": turn, "beat": beat, "text": text})
         print(f"{who}: {text}")
 
         if who == "A":
@@ -257,15 +334,24 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     p.add_argument("--temperature", type=float, default=None, help="Sampling temperature (defaults to OPENAI_TEMPERATURE)")
     p.add_argument("--max-tokens", type=int, default=None, help="Max tokens (defaults to OPENAI_MAX_TOKENS)")
     p.add_argument("--topic", type=str, default=None, help="Conversation topic / theme (defaults to TOPIC)")
+    p.add_argument("--seed", type=int, default=None, help="Random seed for light variability")
     return p.parse_args(argv)
 
 
 def main(argv: Optional[list[str]] = None) -> int:
     load_dotenv(override=False)
     args = _parse_args(argv or [])
+    # Optional seeding for reproducibility
+    if args.seed is not None:
+        import random
+        random.seed(args.seed)
+    # run id
+    rid = str(uuid.uuid4())
+    set_run_id(rid)
     _write_event({
         "event": "run_start",
         "mode": "entertain",
+        "run_id": rid,
         "max_turns": args.max_turns,
         "model": args.model,
         "temperature": args.temperature,

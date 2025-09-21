@@ -3,6 +3,7 @@ import json
 import os
 import re
 import sys
+import uuid
 from dataclasses import asdict, dataclass
 from datetime import datetime
 from pathlib import Path
@@ -18,6 +19,7 @@ except Exception:  # pragma: no cover - tests may run without dotenv installed
 # ---------- Utility: JSONL logging ----------
 RUNS_DIR = Path("runs")
 RUNS_FILE = RUNS_DIR / "duo_runs.jsonl"
+RUN_ID: Optional[str] = None
 
 
 def _utc_now_iso() -> str:
@@ -28,9 +30,16 @@ def _ensure_runs_dir() -> None:
     RUNS_DIR.mkdir(parents=True, exist_ok=True)
 
 
+def set_run_id(run_id: str) -> None:
+    global RUN_ID
+    RUN_ID = run_id
+
+
 def _write_event(event: dict) -> None:
     _ensure_runs_dir()
     event = {"ts": _utc_now_iso(), **event}
+    if RUN_ID is not None:
+        event.setdefault("run_id", RUN_ID)
     with RUNS_FILE.open("a", encoding="utf-8") as f:
         f.write(json.dumps(event, ensure_ascii=False) + "\n")
 
@@ -144,11 +153,19 @@ _SANITIZE_PATTERNS = [
     (re.compile(r"\u3014?\[?演出ノート\]?\u3015?:?.*$", re.MULTILINE), ""),
 ]
 
+_SANITIZE_REPLACEMENTS = [
+    ("信号無視", "危険な行為"),
+    ("無謀運転", "危ない運転"),
+    ("違法", "望ましくない"),
+]
+
 
 def sanitize(text: str) -> str:
     s = text or ""
     for pat, repl in _SANITIZE_PATTERNS:
         s = pat.sub(repl, s)
+    for a, b in _SANITIZE_REPLACEMENTS:
+        s = s.replace(a, b)
     return s.strip()
 
 
@@ -298,6 +315,7 @@ def _speaker(
     temperature: float,
     max_tokens: int,
     topic: Optional[str] = None,
+    turn: Optional[int] = None,
 ) -> str:
     system = _load_persona(system_path)
     constraints = (
@@ -351,7 +369,10 @@ def _speaker(
         _write_event({"event": "error", "stage": "enforce", "speaker": name, "message": str(e)})
         raise
 
-    _write_event({"event": "speak", "speaker": name, "text": fixed})
+    ev = {"event": "speak", "speaker": name, "text": fixed}
+    if turn is not None:
+        ev["turn"] = turn
+    _write_event(ev)
     return fixed
 
 
@@ -400,6 +421,7 @@ def run_duo(
                 temperature=resolved_temperature,
                 max_tokens=resolved_max_tokens,
                 topic=resolved_topic,
+                turn=turn + 1,
             )
             if last_a is not None and is_loop(last_a, text_a):
                 _write_event({"event": "loop_detected", "speaker": "A"})
@@ -415,6 +437,7 @@ def run_duo(
                 temperature=resolved_temperature,
                 max_tokens=resolved_max_tokens,
                 topic=resolved_topic,
+                turn=turn + 1,
             )
             if last_b is not None and is_loop(last_b, text_b):
                 _write_event({"event": "loop_detected", "speaker": "B"})
@@ -431,6 +454,7 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     p.add_argument("--temperature", type=float, default=None, help="Sampling temperature (defaults to OPENAI_TEMPERATURE)")
     p.add_argument("--max-tokens", type=int, default=None, help="Max tokens (defaults to OPENAI_MAX_TOKENS)")
     p.add_argument("--topic", type=str, default=None, help="Conversation topic / theme (defaults to TOPIC)")
+    p.add_argument("--seed", type=int, default=None, help="Random seed for light variability")
     return p.parse_args(argv)
 
 
@@ -438,8 +462,17 @@ def main(argv: Optional[list[str]] = None) -> int:
     # Ensure .env is loaded before parsing env-aware defaults downstream
     load_dotenv(override=False)
     args = _parse_args(argv or [])
+    # Optional seeding for reproducibility
+    if args.seed is not None:
+        import random
+        random.seed(args.seed)
+    # Attach a session run_id
+    rid = str(uuid.uuid4())
+    set_run_id(rid)
     _write_event({
         "event": "run_start",
+        "mode": "mvp",
+        "run_id": rid,
         "max_turns": args.max_turns,
         "model": args.model,
         "temperature": args.temperature,
