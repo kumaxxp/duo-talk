@@ -208,6 +208,7 @@ def run_duo(
     temperature: Optional[float] = None,
     max_tokens: Optional[int] = None,
     topic: Optional[str] = None,
+    no_rag: bool = False,
 ) -> None:
     load_dotenv(override=False)
     a_sys = Path("persona/char_a.system.txt")
@@ -241,19 +242,49 @@ def run_duo(
         # RAG: pick up to one snippet per category
         hints: list[str] = []
         q = (last_b if turn % 2 == 1 else last_a) or (resolved_topic or "")
-        # canon (optionally by char)
         who_char = "A" if turn % 2 == 1 else "B"
-        canon = rag_retrieve(q, {"category": "canon", "char": who_char}) or rag_retrieve(q, {"category": "canon"})
-        if canon:
-            hints.append(f"canon: {canon[0][0].splitlines()[0][:120]}")
-        # lore
-        lore = rag_retrieve(q, {"category": "lore"})
-        if lore:
-            hints.append(f"lore: {lore[0][0].splitlines()[0][:120]}")
-        # pattern
-        pattern = rag_retrieve(q, {"category": "pattern"})
-        if pattern:
-            hints.append(f"pattern: {pattern[0][0].splitlines()[0][:120]}")
+        canon_hit = lore_hit = pattern_hit = None
+        canon_meta = lore_meta = pattern_meta = None
+
+        if not no_rag:
+            # canon (optionally by char)
+            canon = rag_retrieve(q, {"category": "canon", "char": who_char}) or rag_retrieve(q, {"category": "canon"})
+            if canon:
+                canon_hit = canon[0][0]
+                canon_meta = canon[0][1]
+                hints.append(f"canon: {canon_hit.splitlines()[0][:120]}")
+            # lore
+            lore = rag_retrieve(q, {"category": "lore"})
+            if lore:
+                lore_hit = lore[0][0]
+                lore_meta = lore[0][1]
+                hints.append(f"lore: {lore_hit.splitlines()[0][:120]}")
+            # pattern
+            pattern = rag_retrieve(q, {"category": "pattern"})
+            if pattern:
+                pattern_hit = pattern[0][0]
+                pattern_meta = pattern[0][1]
+                hints.append(f"pattern: {pattern_hit.splitlines()[0][:120]}")
+
+        # Log selection result for visibility
+        _write_event(
+            {
+                "event": "rag_select",
+                "turn": turn,
+                "canon": {
+                    "path": (canon_meta or {}).get("path") if canon_meta else None,
+                    "preview": (canon_hit[:60] if canon_hit else None),
+                },
+                "lore": {
+                    "path": (lore_meta or {}).get("path") if lore_meta else None,
+                    "preview": (lore_hit[:60] if lore_hit else None),
+                },
+                "pattern": {
+                    "path": (pattern_meta or {}).get("path") if pattern_meta else None,
+                    "preview": (pattern_hit[:60] if pattern_hit else None),
+                },
+            }
+        )
 
         if turn % 2 == 1:
             system = a_sys.read_text(encoding="utf-8").strip()
@@ -362,6 +393,7 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     p.add_argument("--max-tokens", type=int, default=None, help="Max tokens (defaults to OPENAI_MAX_TOKENS)")
     p.add_argument("--topic", type=str, default=None, help="Conversation topic / theme (defaults to TOPIC)")
     p.add_argument("--seed", type=int, default=None, help="Random seed for light variability")
+    p.add_argument("--no-rag", action="store_true", help="Disable RAG injection for A/B testing")
     return p.parse_args(argv)
 
 
@@ -392,6 +424,7 @@ def main(argv: Optional[list[str]] = None) -> int:
             temperature=args.temperature,
             max_tokens=args.max_tokens,
             topic=args.topic,
+            no_rag=args.no_rag,
         )
     except KeyboardInterrupt:
         _write_event({"event": "interrupted"})
