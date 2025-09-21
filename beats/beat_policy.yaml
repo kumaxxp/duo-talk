@@ -1,0 +1,14 @@
+# ビート配布ポリシー（サンプル）
+beats:
+  default: BANter
+  rules:
+    - every: 3
+      beat: PIVOT
+    - from_turn: 6
+      beat: PAYOFF
+
+cuts:
+  default: null
+  rules:
+    - last_turn: true
+      cut: TAG
