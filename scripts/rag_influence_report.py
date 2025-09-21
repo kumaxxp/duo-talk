@@ -22,16 +22,50 @@ def tokens(s: str):
     return [w for w in TOK.findall(s or "") if w not in STOP]
 
 
+def char_ngrams(s: str, n: int = 3):
+    s = re.sub(r"\s+", "", s or "")
+    return {s[i : i + n] for i in range(max(0, len(s) - n + 1))}
+
+
 def topk_words(s, k=12):
     c = collections.Counter(tokens(s))
     return [w for w, _ in c.most_common(k)]
+
+
+def cov_rate(snippet: str, utter: str, topk: int = 12, mode: str = "mix") -> float:
+    """token / chargram / mix の簡易カバレッジ"""
+    if not snippet or not utter:
+        return 0.0
+    # token overlap
+    t_hit = 0.0
+    if mode in ("token", "mix"):
+        t_snip = tokens(snippet)
+        if topk and len(t_snip) > topk:
+            ctr = collections.Counter(t_snip)
+            t_snip = [w for w, _ in ctr.most_common(topk)]
+        t_utt = set(tokens(utter))
+        if t_snip:
+            t_hit = len(set(t_snip) & t_utt) / max(1, len(set(t_snip)))
+    # char 3-gram overlap
+    c_hit = 0.0
+    if mode in ("chargram", "mix"):
+        g1 = char_ngrams(snippet, 3)
+        g2 = char_ngrams(utter, 3)
+        if g1:
+            c_hit = len(g1 & g2) / max(1, len(g1))
+    if mode == "token":
+        return t_hit
+    if mode == "chargram":
+        return c_hit
+    return max(t_hit, c_hit)
 
 
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("jsonl")
     ap.add_argument("--run-id", help="対象run_id。未指定なら最新run")
-    ap.add_argument("--k", type=int, default=12, help="スニペの上位語を何個使うか")
+    ap.add_argument("--k", type=int, default=12, help="token上位語の使用数（0=無制限）")
+    ap.add_argument("--mode", choices=["token", "chargram", "mix"], default="mix")
     args = ap.parse_args()
 
     rows = list(load_jsonl(args.jsonl))
@@ -66,12 +100,7 @@ def main():
 
         def score(sn):
             pv = (r.get(sn) or {}).get("preview") or ""
-            kws = set(topk_words(pv, args.k))
-            if not kws:
-                return 0.0
-            used = set(tokens(text))
-            inter = len(kws & used)
-            return inter / max(1, len(kws))
+            return cov_rate(pv, text, topk=args.k, mode=args.mode)
 
         sc_c, sc_l, sc_p = score("canon"), score("lore"), score("pattern")
         cov = max(sc_c, sc_l, sc_p)
@@ -80,4 +109,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

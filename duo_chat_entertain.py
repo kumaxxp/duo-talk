@@ -185,6 +185,14 @@ def _compose_user(partner_last: Optional[str], topic: Optional[str], beat: str, 
     return "\n".join(base)
 
 
+def _to_nouny(s: Optional[str]) -> str:
+    import re
+    t = (s or "").strip()
+    # 末尾の句読点・記号を削る（体言止め寄りに）
+    t = re.sub(r"[。！!？?、,.\s]+$", "", t)
+    return t
+
+
 def _speak(
     system_path: Path,
     name: str,
@@ -254,18 +262,21 @@ def run_duo(
                 canon_meta = canon[0][1]
                 # choose cleaned preview when available
                 canon_preview = (canon_meta or {}).get("preview") or (canon_hit.splitlines()[0][:120] if canon_hit else "")
+                canon_preview = _to_nouny(canon_preview)
             # lore
             lore = rag_retrieve(q, {"category": "lore"})
             if lore:
                 lore_hit = lore[0][0]
                 lore_meta = lore[0][1]
                 lore_preview = (lore_meta or {}).get("preview") or (lore_hit.splitlines()[0][:120] if lore_hit else "")
+                lore_preview = _to_nouny(lore_preview)
             # pattern
             pattern = rag_retrieve(q, {"category": "pattern"})
             if pattern:
                 pattern_hit = pattern[0][0]
                 pattern_meta = pattern[0][1]
                 pattern_preview = (pattern_meta or {}).get("preview") or (pattern_hit.splitlines()[0][:120] if pattern_hit else "")
+                pattern_preview = _to_nouny(pattern_preview)
 
         # Inject only non-empty previews (avoid '---' or dashes)
         def _good(pv: Optional[str]) -> bool:
@@ -275,12 +286,18 @@ def run_duo(
             return s not in {"---", "—", "--", "-"}
 
         if not no_rag:
+            ordered_pairs = []
             if _good(locals().get("canon_preview")):
-                hints.append(f"canon: {canon_preview}")
+                ordered_pairs.append(("canon", canon_preview))
             if _good(locals().get("lore_preview")):
-                hints.append(f"lore: {lore_preview}")
+                ordered_pairs.append(("lore", lore_preview))
             if _good(locals().get("pattern_preview")):
-                hints.append(f"pattern: {pattern_preview}")
+                ordered_pairs.append(("pattern", pattern_preview))
+            # PAYOFFのときは pattern を先頭に（存在する場合）
+            if beat == "PAYOFF":
+                ordered_pairs = sorted(ordered_pairs, key=lambda kv: 0 if kv[0] == "pattern" else 1)
+            for k, pv in ordered_pairs[:3]:
+                hints.append(f"{k}: {pv}")
 
         # Log selection result for visibility
         _write_event(
