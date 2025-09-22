@@ -1,4 +1,26 @@
+# Runtime logs
 runs/duo_runs.jsonl
+
+# Python caches & envs
 __pycache__/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
 *.pyc
+.venv/
+
+# Local environment files
 .env
+*.env.local
+
+# Editor/OS
+.vscode/
+.idea/
+.DS_Store
+
+# Node/Vite (React GUI)
+duo-gui/node_modules/
+duo-gui/dist/
+duo-gui/.vite/
+duo-gui/*.log
+duo-gui/.env*

@@ -134,6 +134,16 @@ async def _list_runs() -> List[Dict]:
     return rows
 
 
+@app.get("/api/run/events")
+async def run_events(run_id: str):
+    """Return all events for a given run_id in order."""
+    events: List[Dict] = []
+    for j in _iter_jsonl_all():
+        if j.get("run_id") == run_id:
+            events.append(j)
+    return JSONResponse(events)
+
+
 @app.get("/", include_in_schema=False)
 async def index():
     return HTMLResponse(

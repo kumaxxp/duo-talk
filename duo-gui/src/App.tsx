@@ -6,7 +6,7 @@ import RagPanel from './components/RagPanel'
 import CovSpark from './components/CovSpark'
 import { useSSE } from './hooks/useSSE'
 import { covRate } from './hooks/useCov'
-import type { DirectorEvent, RAGEvent, SpeakEvent } from './lib/types'
+import type { DirectorEvent, RAGEvent, SpeakEvent, PromptDbg } from './lib/types'
 
 const API = (import.meta as any).env?.VITE_API_BASE || ''
 
@@ -17,6 +17,8 @@ export default function App(){
   const [rag, setRag] = useState<Record<number, RAGEvent>>({})
   const [speaks, setSpeaks] = useState<Record<number, SpeakEvent>>({})
   const [selected, setSelected] = useState<number|undefined>()
+  const [prompts, setPrompts] = useState<Record<number, string>>({})
+  const [modalTurn, setModalTurn] = useState<number|undefined>()
 
   const listRuns = async ()=>{
     const r = await fetch(`${API}/api/run/list`)
@@ -31,6 +33,7 @@ export default function App(){
     director: (j:DirectorEvent)=> setDirectors(prev=> ({...prev, [j.turn]: j})),
     rag_select: (j:RAGEvent)=> setRag(prev=> ({...prev, [j.turn]: j})),
     speak: (j:SpeakEvent)=> setSpeaks(prev=> ({...prev, [j.turn]: j})),
+    prompt_debug: (j:PromptDbg)=> setPrompts(prev=> ({...prev, [j.turn]: j.prompt_tail})),
   })
 
   const turns = useMemo(()=> Object.keys(speaks).map(n=>parseInt(n,10)).sort((a,b)=>a-b), [speaks])
@@ -44,11 +47,53 @@ export default function App(){
     )
   }), [turns, speaks, rag])
 
+  const avg = useMemo(()=> covValues.length? covValues.reduce((a,b)=>a+b,0)/covValues.length : 0, [covValues])
+  const payoffValues = useMemo(()=> turns.filter(t=> directors[t]?.beat==='PAYOFF').map(t=> {
+    const sp = speaks[t]
+    const rg = rag[t]
+    if(!sp) return 0
+    return Math.max(
+      covRate(rg?.canon?.preview||'', sp.text),
+      covRate(rg?.lore?.preview||'', sp.text),
+      covRate(rg?.pattern?.preview||'', sp.text),
+    )
+  }), [turns, directors, rag, speaks])
+  const payoffAvg = useMemo(()=> payoffValues.length? payoffValues.reduce((a,b)=>a+b,0)/payoffValues.length : 0, [payoffValues])
+  const maxCov = useMemo(()=> covValues.length? Math.max(...covValues) : 0, [covValues])
+
+  function covBadge(c:number){
+    const cls = c<0.10? 'bg-slate-200 text-slate-700' : c<0.20? 'bg-amber-200 text-amber-900' : 'bg-emerald-200 text-emerald-900'
+    return <span className={`px-2 py-0.5 rounded text-xs ${cls}`}>{Math.round(c*100)}%</span>
+  }
+
+  function extractHints(turn:number){
+    const tail = prompts[turn]||''
+    const lines = tail.split(/\n/).filter(l=> /\[?内蔵ヒント\]?/.test(l))
+    return lines.join('\n') || '(no hints)'
+  }
+
+  function highlight(text:string, turn:number){
+    const hints = extractHints(turn)
+    const toks = new Set(hints.match(/[A-Za-z0-9ぁ-んァ-ン一-龯]{2,}/g) || [])
+    let out = text.replace(/&/g,'&amp;').replace(/</g,'&lt;')
+    Array.from(toks).sort((a,b)=> b.length - a.length).forEach(tok=>{
+      const re = new RegExp(tok.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g')
+      out = out.replace(re, m=> `<mark>${m}</mark>`)
+    })
+    return out
+  }
+
   return (
+    <>
     <div className="max-w-7xl mx-auto p-4 space-y-4">
       <header className="flex items-center justify-between">
         <h1 className="text-2xl font-semibold">DUO RUNS</h1>
-        <nav className="text-sm text-slate-500">Backend UI — <a className="underline" href="/docs">/docs</a></nav>
+        <div className="flex items-center gap-2 text-sm">
+          <span>avg</span>{covBadge(avg)}
+          <span>payoff</span>{covBadge(payoffAvg)}{payoffAvg>=0.20 && <span className="ml-1 px-2 py-0.5 rounded bg-emerald-100 text-emerald-800">Good</span>}
+          <span>max</span>{covBadge(maxCov)}
+          <nav className="text-slate-500 ml-2">Backend — <a className="underline" href="/docs">/docs</a></nav>
+        </div>
       </header>
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
         <section className="space-y-3">
@@ -69,7 +114,7 @@ export default function App(){
             </div>
             <div className="space-y-3">
               {turns.map(t=> (
-                <TurnCard key={t} sp={speaks[t]} rag={rag[t]} beat={directors[t]?.beat} onSelect={()=> setSelected(t)} />
+                <TurnCard key={t} sp={speaks[t]} rag={rag[t]} beat={directors[t]?.beat} onSelect={()=> setSelected(t)} onViewPrompts={()=> setModalTurn(t)} />
               ))}
             </div>
           </div>
@@ -80,6 +125,20 @@ export default function App(){
         </section>
       </div>
     </div>
+    {modalTurn!==undefined && (
+      <div className="fixed inset-0 bg-black/40 flex items-center justify-center" onClick={()=> setModalTurn(undefined)}>
+        <div className="bg-white text-slate-900 max-w-4xl w-full rounded shadow p-4" onClick={e=>e.stopPropagation()}>
+          <div className="flex items-center justify-between mb-2">
+            <h3 className="font-semibold">Prompts vs Utterance — Turn {modalTurn}</h3>
+            <button className="text-sm px-2 py-1 border rounded" onClick={()=> setModalTurn(undefined)}>Close</button>
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <pre className="whitespace-pre-wrap p-2 border rounded bg-slate-50">{extractHints(modalTurn)}</pre>
+            <div className="p-2 border rounded bg-slate-50" dangerouslySetInnerHTML={{__html: highlight(speaks[modalTurn!]?.text||'', modalTurn!)}} />
+          </div>
+        </div>
+      </div>
+    )}
+    </>
   )
 }
-
