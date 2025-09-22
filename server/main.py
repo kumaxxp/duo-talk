@@ -11,6 +11,7 @@ from fastapi.staticfiles import StaticFiles
 
 
 LOG = Path("runs/duo_runs.jsonl")
+RAG_EVAL_SUMMARY = Path("runs/rag_eval_summary.json")
 app = FastAPI(title="Duo Talk Backend", version="0.1.0")
 
 # Allow local dev frontends (vite default port 5173)
@@ -142,6 +143,49 @@ async def run_events(run_id: str):
         if j.get("run_id") == run_id:
             events.append(j)
     return JSONResponse(events)
+
+
+@app.get("/api/run/style")
+async def style_rate(run_id: str):
+    """Compute style adherence rate for a run: sentences<=5 and aizuchi<=1.
+
+    Very lightweight proxy for persona style conformance.
+    """
+    import re
+    sent_split = re.compile(r"[。．.!?！？]+")
+    aizuchi_words = ["うん","へぇ","へえ","なるほど","そうそう","ふむ","ええ","はい","そっか","そうか","たしかに","なる"]
+    def sentence_count(txt: str) -> int:
+        parts = [s for s in sent_split.split(txt or "") if s.strip()]
+        return len(parts)
+    def aizuchi_count(txt: str) -> int:
+        t = txt or ""
+        return sum(t.count(w) for w in aizuchi_words)
+    speaks = [j for j in _iter_jsonl_all() if j.get("run_id") == run_id and j.get("event")=="speak"]
+    if not speaks:
+        return JSONResponse({"style_ok_rate": 0.0})
+    ok = 0
+    for j in speaks:
+        ns = sentence_count(j.get("text",""))
+        na = aizuchi_count(j.get("text",""))
+        if ns <= 5 and na <= 1:
+            ok += 1
+    rate = ok / max(1, len(speaks))
+    return JSONResponse({"style_ok_rate": rate, "count": len(speaks)})
+
+
+@app.get("/api/rag/score")
+async def rag_score():
+    """Return latest offline RAG eval summary if present.
+
+    Expected JSON: {"f1": float, "citation_rate": float, "n": int}
+    """
+    if RAG_EVAL_SUMMARY.exists():
+        try:
+            js = json.loads(RAG_EVAL_SUMMARY.read_text(encoding="utf-8"))
+            return JSONResponse(js)
+        except Exception:
+            pass
+    return JSONResponse({"f1": 0.0, "citation_rate": 0.0, "n": 0})
 
 
 @app.get("/", include_in_schema=False)

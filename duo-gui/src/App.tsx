@@ -34,12 +34,19 @@ export default function App(){
   const [runB, setRunB] = useState<string|undefined>()
   const [cmpA, setCmpA] = useState<{directors:Record<number,DirectorEvent>, rag:Record<number,RAGEvent>, speaks:Record<number,SpeakEvent>, prompts:Record<number,string>}|undefined>()
   const [cmpB, setCmpB] = useState<{directors:Record<number,DirectorEvent>, rag:Record<number,RAGEvent>, speaks:Record<number,SpeakEvent>, prompts:Record<number,string>}|undefined>()
+  // Offline eval + style metrics
+  const [ragScore, setRagScore] = useState<{f1?:number, cite?:number}|undefined>()
+  const [styleRate, setStyleRate] = useState<number|undefined>()
+  const autoPicked = useRef(false)
 
   const listRuns = async ()=>{
     const r = await fetch(`${API}/api/run/list`)
     const js = await r.json()
     setRuns(js)
-    if (!rid && js[0]?.run_id) setRid(js[0].run_id)
+    if (!autoPicked.current && !rid && js[0]?.run_id){
+      setRid(js[0].run_id)
+      autoPicked.current = true
+    }
   }
   useEffect(()=>{ listRuns(); const id=setInterval(listRuns, 5000); return ()=> clearInterval(id) },[])
   // Initialize compare defaults from recent runs
@@ -74,6 +81,31 @@ export default function App(){
     speak: (j:SpeakEvent)=> setSpeaks(prev=> ({...prev, [j.turn]: j})),
     prompt_debug: (j:PromptDbg)=> setPrompts(prev=> ({...prev, [j.turn]: j.prompt_tail})),
   })
+
+  // Fetch RAG Score (offline eval results) with light polling
+  useEffect(()=>{
+    let stop=false
+    const pull = async ()=>{
+      try{
+        const r = await fetch(`${API}/api/rag/score`)
+        const js = await r.json()
+        if(!stop) setRagScore({ f1: js?.f1 ?? 0, cite: js?.citation_rate ?? 0 })
+      }catch{}
+    }
+    pull()
+    const id = setInterval(pull, 10000)
+    return ()=> { stop=true; clearInterval(id) }
+  }, [])
+
+  // Fetch style adherence for current run
+  useEffect(()=>{ (async()=>{
+    if(!rid) return
+    try{
+      const r = await fetch(`${API}/api/run/style?run_id=${encodeURIComponent(rid)}`)
+      const js = await r.json()
+      setStyleRate(js?.style_ok_rate ?? undefined)
+    }catch{}
+  })() }, [rid, directors, speaks])
 
   const turns = useMemo(()=> Object.keys(speaks).map(n=>parseInt(n,10)).sort((a,b)=>a-b), [speaks])
   const filteredTurns = useMemo(()=> {
@@ -158,6 +190,8 @@ export default function App(){
       <header className="flex items-center justify-between">
         <h1 className="text-2xl font-semibold">DUO RUNS</h1>
         <div className="flex items-center gap-2 text-sm">
+          {ragScore && <span className="px-2 py-0.5 rounded bg-slate-100">RAG Score F1 {(ragScore.f1!*100|0)}% / Cite {(ragScore.cite!*100|0)}%</span>}
+          {styleRate!==undefined && <span className="px-2 py-0.5 rounded bg-slate-100">style遵守 {(styleRate*100|0)}%</span>}
           <span>avg</span>{covBadge(avg)}
           <span>payoff</span>{covBadge(payoffAvg)}{payoffAvg>=0.20 && <span className="ml-1 px-2 py-0.5 rounded bg-emerald-100 text-emerald-800">Good</span>}
           <span>max</span>{covBadge(maxCov)}
@@ -168,12 +202,12 @@ export default function App(){
         <section className="space-y-3">
           <div className="p-4 bg-white rounded-lg shadow">
             <h2 className="font-medium mb-2">New Run</h2>
-            <ControlPanel apiBase={API} onStarted={(r)=> r && setRid(r)} />
+            <ControlPanel apiBase={API} onStarted={(r)=> { if(r){ autoPicked.current = true; setRid(r) } }} />
           </div>
           <div className="p-4 bg-white rounded-lg shadow">
             <h2 className="font-medium mb-2">Runs</h2>
             <div className="max-h-64 overflow-auto md:max-h-80">
-              <RunList rows={runs} onPick={setRid} />
+              <RunList rows={runs} onPick={(r)=> { autoPicked.current = true; setRid(r) }} />
             </div>
           </div>
           <div className="p-4 bg-white rounded-lg shadow">

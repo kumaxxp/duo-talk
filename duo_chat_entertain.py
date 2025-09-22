@@ -2,7 +2,7 @@ import argparse
 import os
 import uuid
 from pathlib import Path
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, Tuple
 
 try:
     from dotenv import load_dotenv
@@ -23,6 +23,7 @@ from duo_chat_mvp import _write_event, set_run_id  # reuse logging helper
 from rag.rag_min import build as rag_build, retrieve as rag_retrieve
 
 
+# Legacy 3-beat default policy
 DEFAULT_POLICY = {
     "beats": {
         "default": "BANter",
@@ -62,6 +63,34 @@ def load_policy(path: str = "beats/beat_policy.yaml") -> Dict[str, Any]:
     except Exception:
         # Fallback safely
         return DEFAULT_POLICY
+
+
+# Short 7-beat policy loader (optional): policy/beats_short.yaml
+SHORT_BEATS_DEFAULT = [
+    "Setup",
+    "Theme Stated",
+    "Fun&Games",
+    "Midpoint(PIVOT)",
+    "BadTurns",
+    "Aha(PAYOFF準備)",
+    "Finale(TAG)",
+]
+
+
+def load_short_beats(path: str = "policy/beats_short.yaml") -> Optional[list[str]]:
+    p = Path(path)
+    if not p.exists():
+        return None
+    try:
+        import yaml  # type: ignore
+
+        data = yaml.safe_load(p.read_text(encoding="utf-8")) or {}
+        beats = data.get("beats")
+        if isinstance(beats, list) and beats:
+            return [str(x) for x in beats]
+        return SHORT_BEATS_DEFAULT
+    except Exception:
+        return SHORT_BEATS_DEFAULT
 
 
 def load_agree_words(path: str = "config/agree_words.txt") -> list[str]:
@@ -115,7 +144,12 @@ def soften_agree_phrases(text: str) -> str:
     return s
 
 
-def pick_beat(turn: int, policy: Dict[str, Any] | None = None) -> str:
+def pick_beat(turn: int, policy: Dict[str, Any] | None = None, *, short_beats: Optional[list[str]] = None) -> str:
+    # If short beats configured, rotate through them in order
+    if short_beats:
+        idx = (max(1, turn) - 1) % max(1, len(short_beats))
+        return short_beats[idx]
+    # Fallback to legacy policy
     pol = policy or load_policy()
     beats = pol.get("beats", {})
     current = beats.get("default", "BANter")
@@ -163,7 +197,7 @@ def _sanitize_model_name(name: str) -> str:
     return name
 
 
-def _compose_user(partner_last: Optional[str], topic: Optional[str], beat: str, hints: Optional[list[str]] = None) -> str:
+def _compose_user(partner_last: Optional[str], topic: Optional[str], beat: str, hints: Optional[list[str]] = None, *, role_prep: Optional[str] = None, reflect_note: Optional[str] = None) -> str:
     constraints = (
         "絶対条件: 最大5文、合いの手は最大1回。箇条書きや前置きは禁止。返答のみを日本語で簡潔に。"
     )
@@ -178,6 +212,10 @@ def _compose_user(partner_last: Optional[str], topic: Optional[str], beat: str, 
         base.append("トピックに軽く触れつつ自己紹介して会話を始めてください。")
     # Director's note (should not leak)
     base.append(f"［演出ノート］現在: {beat}。露骨な演出語は避け、自然に反映。ノートは台詞に出さない。")
+    if role_prep:
+        base.append(f"［役作り］狙い: {role_prep}（台詞に出さない）")
+    if reflect_note:
+        base.append(f"［リフレクト］{reflect_note}（台詞に出さない）")
     # RAG hints (should not leak)
     if hints:
         for h in hints[:3]:
@@ -231,6 +269,7 @@ def run_duo(
     resolved_topic = topic or os.getenv("TOPIC") or None
 
     policy = load_policy()
+    short_beats = load_short_beats()
     # Build RAG index (idempotent)
     try:
         rag_build()
@@ -241,9 +280,13 @@ def run_duo(
     last_b: Optional[str] = None
 
     agree_words = load_agree_words()
+    # Reflection note carried over to next turn (director memo)
+    next_reflect: Optional[str] = None
+    # For delayed reviewer hook (dummy)
+    last_for_review: Optional[Tuple[int, str, str]] = None  # (turn, who, text)
 
     for turn in range(1, max_turns + 1):
-        beat = pick_beat(turn, policy)
+        beat = pick_beat(turn, policy, short_beats=short_beats)
         cut_cue = pick_cut(turn, max_turns, policy)
         _write_event({"event": "director", "turn": turn, "beat": beat, "cut_cue": cut_cue})
 
@@ -293,9 +336,19 @@ def run_duo(
                 ordered_pairs.append(("lore", lore_preview))
             if _good(locals().get("pattern_preview")):
                 ordered_pairs.append(("pattern", pattern_preview))
-            # PAYOFFのときは pattern を先頭に（存在する場合）
-            if beat == "PAYOFF":
-                ordered_pairs = sorted(ordered_pairs, key=lambda kv: 0 if kv[0] == "pattern" else 1)
+            # Beat-specific priority
+            def _sort_key(kv: Tuple[str, str]) -> int:
+                k, _ = kv
+                # Finale(TAG): pattern first
+                if (short_beats and "Finale" in (beat or "")) or beat == "PAYOFF":
+                    return 0 if k == "pattern" else 1
+                # Fun&Games: lore -> canon -> pattern
+                if (short_beats and "Fun&Games" == beat):
+                    order = {"lore": 0, "canon": 1, "pattern": 2}
+                    return order.get(k, 3)
+                return {"canon": 0, "lore": 1, "pattern": 2}.get(k, 9)
+
+            ordered_pairs = sorted(ordered_pairs, key=_sort_key)
             for k, pv in ordered_pairs[:3]:
                 hints.append(f"{k}: {pv}")
 
@@ -319,13 +372,34 @@ def run_duo(
             }
         )
 
+        # Prepare role_prep (hidden) using a minimal one-line target
         if turn % 2 == 1:
             system = a_sys.read_text(encoding="utf-8").strip()
-            user = _compose_user(last_b, resolved_topic, beat, hints)
+            try:
+                role_prep = call(
+                    model=resolved_model,
+                    system=system,
+                    user=f"あなたはA。core/style/boundsを踏まえ、今ターンの台詞の狙いを1行で要約。台詞に出さない。",
+                    temperature=0.2,
+                    max_tokens=60,
+                )
+            except Exception:
+                role_prep = "軽快に展開する狙い"
+            user = _compose_user(last_b, resolved_topic, beat, hints, role_prep=role_prep, reflect_note=next_reflect)
             who = "A"
         else:
             system = b_sys.read_text(encoding="utf-8").strip()
-            user = _compose_user(last_a, resolved_topic, beat, hints)
+            try:
+                role_prep = call(
+                    model=resolved_model,
+                    system=system,
+                    user=f"あなたはB。core/style/boundsを踏まえ、今ターンの台詞の狙いを1行で要約。台詞に出さない。",
+                    temperature=0.2,
+                    max_tokens=60,
+                )
+            except Exception:
+                role_prep = "要点を鋭く返す狙い"
+            user = _compose_user(last_a, resolved_topic, beat, hints, role_prep=role_prep, reflect_note=next_reflect)
             who = "B"
 
         # One call with retry-once policy
@@ -425,6 +499,35 @@ def run_duo(
             last_a = text
         else:
             last_b = text
+
+        # Lightweight director reflection (three one-liners)
+        try:
+            reflect = call(
+                model=resolved_model,
+                system="あなたはディレクター。短く要点だけ。",
+                user=(
+                    "以下の形式で1行ずつ:\n"
+                    "今回効いた語彙: （10字以内）\n"
+                    "次ターンの狙い: （12字以内）\n"
+                    "避けること: （8字以内）\n\n"
+                    f"話者: {who}\n発話: {text[:240]}"
+                ),
+                temperature=0.2,
+                max_tokens=100,
+            )
+            # Keep one-line combined memo for the next turn
+            memo = " / ".join([ln.strip() for ln in (reflect or "").splitlines() if ln.strip()][:3])
+            next_reflect = memo or None
+            _write_event({"event": "reflect", "turn": turn, "note": next_reflect})
+        except Exception:
+            next_reflect = None
+
+        # Dummy reviewer hook: emit a delayed OK on previous line
+        if last_for_review is not None:
+            tprev, whop, textp = last_for_review
+            _write_event({"event": "review", "turn": tprev, "speaker": whop, "verdict": "OK", "short": "流れ良し"})
+            last_for_review = None
+        last_for_review = (turn, who, text)
 
 
 def _parse_args(argv: list[str]) -> argparse.Namespace:

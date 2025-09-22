@@ -63,10 +63,17 @@ def main():
             if args.show_violations:
                 print(f"AIZUCHI\t{who}\t{na}回\t{text[:120]}...")
 
+    style_ok = 0
+    for who, ns, na, text in rows:
+        if ns <= args.limit_sent and na <= args.limit_aizuchi:
+            style_ok += 1
+    style_rate = (style_ok / max(1, len(rows))) if rows else 0.0
+
     print("--- summary ---")
     print(f"lines(total): {total}")
     print(f"speak:        {speak}")
     print(f"violations:   LONG={long_ng}, AIZUCHI={aizuchi_ng}")
+    print(f"style_ok:     {style_ok}/{len(rows)} ({style_rate*100:.1f}%)")
     if long_ng==0 and aizuchi_ng==0:
         print("OK: no violations found (given limits).")
 

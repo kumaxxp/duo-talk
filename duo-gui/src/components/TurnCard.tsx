@@ -12,13 +12,21 @@ export default function TurnCard({ sp, rag, beat, onSelect, onViewPrompts }:{ sp
   const cPatt  = covRate(patt, sp.text)
   const cov = Math.max(cCanon, cLore, cPatt)
   const tip = `c=${cCanon.toFixed(2)} l=${cLore.toFixed(2)} p=${cPatt.toFixed(2)}`
+  function beatColor(b?: string){
+    if (!b) return 'bg-slate-200 text-slate-700'
+    if (b==='BANter' || b==='Setup' || b.includes('Theme')) return 'bg-gray-200 text-gray-800'
+    if (b==='PIVOT' || b.includes('Midpoint')) return 'bg-blue-200 text-blue-800'
+    if (b==='PAYOFF' || b.includes('Finale') || b.includes('Aha')) return 'bg-purple-200 text-purple-800'
+    if (b.includes('Fun&Games')) return 'bg-emerald-200 text-emerald-800'
+    return 'bg-slate-200 text-slate-700'
+  }
   return (
     <div className="border rounded p-3" onClick={onSelect}>
       <div className="flex items-center justify-between text-sm">
         <div className="flex items-center gap-2">
           <span className="font-mono">Turn {sp.turn}</span>
           <span className="px-1.5 py-0.5 rounded bg-slate-800 text-white">{sp.speaker}</span>
-          <span className={`px-2 py-0.5 rounded ${beat==='BANter'?'bg-gray-200 text-gray-800':beat==='PIVOT'?'bg-blue-200 text-blue-800':'bg-purple-200 text-purple-800'}`}>{beat||'-'}</span>
+          <span className={`px-2 py-0.5 rounded ${beatColor(beat)}`}>{beat||'-'}</span>
         </div>
         <div className="flex items-center gap-2">
           <button type="button" className="text-xs px-2 py-1 border rounded hover:bg-slate-50"

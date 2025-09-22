@@ -153,6 +153,10 @@ _SANITIZE_PATTERNS = [
     (re.compile(r"\u3014?\[?演出ノート\]?\u3015?:?.*$", re.MULTILINE), ""),
     # Remove internal hints lines
     (re.compile(r"\u3014?\[?内蔵ヒント\]?\u3015?:?.*$", re.MULTILINE), ""),
+    # Remove role-prep / reflection notes (hidden director hints)
+    (re.compile(r"\u3014?\[?役作り\]?\u3015?:?.*$", re.MULTILINE), ""),
+    (re.compile(r"\u3014?\[?狙い\]?\u3015?:?.*$", re.MULTILINE), ""),
+    (re.compile(r"\u3014?\[?リフレクト\]?\u3015?:?.*$", re.MULTILINE), ""),
 ]
 
 _SANITIZE_REPLACEMENTS = [

@@ -1,4 +1,4 @@
-export type Beat = 'BANter' | 'PIVOT' | 'PAYOFF'
+export type Beat = string
 
 export type DirectorEvent = { ts:string; event:'director'; run_id:string; turn:number; beat:Beat; cut_cue?:string|null }
 export type SpeakEvent    = { ts:string; event:'speak';    run_id:string; turn:number; speaker:'A'|'B'; text:string; beat?:Beat }
@@ -11,4 +11,3 @@ export type PromptDbg     = { ts:string; event:'prompt_debug'; run_id:string; tu
 export type RunStartEnd   = { ts:string; event:'run_start'|'run_end'; run_id:string; model?:string; topic?:string }
 
 export type EventRow = DirectorEvent | SpeakEvent | RAGEvent | PromptDbg | RunStartEnd
-
