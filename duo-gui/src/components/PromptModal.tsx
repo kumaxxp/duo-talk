@@ -3,6 +3,7 @@ import { useKeypress } from "../hooks/useKeypress";
 import { highlightUtter } from "../lib/highlight";
 import type { Beat } from "../lib/types";
 import { covRate } from "../hooks/useCov";
+import { leakCheck } from "../lib/leakcheck";
 
 export type PromptModalProps = {
   open: boolean;
@@ -47,6 +48,7 @@ export default function PromptModal({ open, onClose, turn }: PromptModalProps) {
     l: covRate(lore, utter),
     p: covRate(pattern, utter),
   };
+  const lc = leakCheck(turn.prompt_tail || "", turn.text || "");
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center">
@@ -58,9 +60,14 @@ export default function PromptModal({ open, onClose, turn }: PromptModalProps) {
           <h3 className="text-sm font-semibold">
             Prompt比較 — Turn {turn.turn} / Speaker {turn.speaker} / {turn.beat ?? "-"}
           </h3>
-          <button onClick={onClose} className="text-slate-500 hover:text-slate-800 text-sm">
-            Escで閉じる
-          </button>
+          <div className="flex items-center gap-3">
+            {!lc.ok ? (
+              <span className="text-xs px-2 py-1 rounded bg-red-100 text-red-700">Leak: {lc.found.join(", ")}</span>
+            ) : (
+              <span className="text-xs px-2 py-1 rounded bg-emerald-100 text-emerald-700">No leak</span>
+            )}
+            <button onClick={onClose} className="text-slate-500 hover:text-slate-800 text-sm">Escで閉じる</button>
+          </div>
         </header>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-0">
           {/* 左：ヒント */}

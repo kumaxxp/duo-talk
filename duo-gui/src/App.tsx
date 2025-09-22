@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react'
+import React, { useEffect, useMemo, useRef, useState } from 'react'
 import ControlPanel from './components/ControlPanel'
 import RunList from './components/RunList'
 import TurnCard from './components/TurnCard'
@@ -22,6 +22,7 @@ export default function App(){
   const [prompts, setPrompts] = useState<Record<number, string>>({})
   const [modalTurn, setModalTurn] = useState<number|undefined>()
   const [modalSrc, setModalSrc] = useState<'live'|'A'|'B'>('live')
+  const lastFocusRef = useRef<HTMLElement|null>(null)
   // Filters (speaker & beat)
   const [showA, setShowA] = useState(true)
   const [showB, setShowB] = useState(true)
@@ -209,6 +210,7 @@ export default function App(){
           </div>
           <div className="p-4 bg-white rounded-lg shadow">
             <h2 className="font-medium mb-2">RAG Panel</h2>
+            <div id={selected!==undefined? `rag-${selected}`: undefined}>
             {(()=>{
               const rsel = selected===undefined ? undefined : (
                 selectedSrc==='A' ? cmpA?.rag[selected] : selectedSrc==='B' ? cmpB?.rag[selected] : rag[selected]
@@ -218,6 +220,7 @@ export default function App(){
               )
               return <RagPanel rag={rsel} beat={bsel} />
             })()}
+            </div>
           </div>
         </section>
         <section className="lg:col-span-2 space-y-3">
@@ -229,8 +232,8 @@ export default function App(){
              <div className="space-y-3">
                {filteredTurns.map(t=> (
                  <TurnCard key={t} sp={speaks[t]} rag={rag[t]} beat={directors[t]?.beat}
-                   onSelect={()=> { setSelected(t); setSelectedSrc('live') }}
-                   onViewPrompts={()=> { setModalTurn(t); setModalSrc('live') }} />
+                   onSelect={()=> { setSelected(t); setSelectedSrc('live'); requestAnimationFrame(()=>{ const el=document.getElementById(`rag-${t}`); el?.scrollIntoView({block:'center', behavior:'smooth'}) }) }}
+                   onViewPrompts={(e)=> { lastFocusRef.current = e.currentTarget as HTMLElement; setModalTurn(t); setModalSrc('live') }} />
                ))}
              </div>
           </div>
@@ -248,22 +251,22 @@ export default function App(){
                     <div>
                       {cmpA?.speaks?.[t] ? (
                         <TurnCard sp={cmpA.speaks[t]} rag={cmpA.rag?.[t]} beat={cmpA.directors?.[t]?.beat}
-                          onSelect={()=> { setSelected(t); setSelectedSrc('A') }}
-                          onViewPrompts={()=> { setModalTurn(t); setModalSrc('A') }} />
+                          onSelect={()=> { setSelected(t); setSelectedSrc('A'); requestAnimationFrame(()=>{ const el=document.getElementById(`rag-${t}`); el?.scrollIntoView({block:'center', behavior:'smooth'}) }) }}
+                          onViewPrompts={(e)=> { lastFocusRef.current = e.currentTarget as HTMLElement; setModalTurn(t); setModalSrc('A') }} />
                       ) : (
                         <TurnCard sp={{ ts:'', event:'speak', run_id: runA||'', turn: t, speaker: 'A', text: '∅' }} beat={cmpA?.directors?.[t]?.beat}
-                          onSelect={()=> { setSelected(t); setSelectedSrc('A') }}
+                          onSelect={()=> { setSelected(t); setSelectedSrc('A'); requestAnimationFrame(()=>{ const el=document.getElementById(`rag-${t}`); el?.scrollIntoView({block:'center', behavior:'smooth'}) }) }}
                         />
                       )}
                     </div>
                     <div>
                       {cmpB?.speaks?.[t] ? (
                         <TurnCard sp={cmpB.speaks[t]} rag={cmpB.rag?.[t]} beat={cmpB.directors?.[t]?.beat}
-                          onSelect={()=> { setSelected(t); setSelectedSrc('B') }}
-                          onViewPrompts={()=> { setModalTurn(t); setModalSrc('B') }} />
+                          onSelect={()=> { setSelected(t); setSelectedSrc('B'); requestAnimationFrame(()=>{ const el=document.getElementById(`rag-${t}`); el?.scrollIntoView({block:'center', behavior:'smooth'}) }) }}
+                          onViewPrompts={(e)=> { lastFocusRef.current = e.currentTarget as HTMLElement; setModalTurn(t); setModalSrc('B') }} />
                       ) : (
                         <TurnCard sp={{ ts:'', event:'speak', run_id: runB||'', turn: t, speaker: 'A', text: '∅' }} beat={cmpB?.directors?.[t]?.beat}
-                          onSelect={()=> { setSelected(t); setSelectedSrc('B') }}
+                          onSelect={()=> { setSelected(t); setSelectedSrc('B'); requestAnimationFrame(()=>{ const el=document.getElementById(`rag-${t}`); el?.scrollIntoView({block:'center', behavior:'smooth'}) }) }}
                         />
                       )}
                     </div>
@@ -277,7 +280,7 @@ export default function App(){
         </section>
       </div>
     </div>
-    <PromptModal open={modalTurn!==undefined} onClose={()=> setModalTurn(undefined)} turn={modalTurnData} />
+    <PromptModal open={modalTurn!==undefined} onClose={()=> { setModalTurn(undefined); lastFocusRef.current?.focus() }} turn={modalTurnData} />
     </>
   )
 }

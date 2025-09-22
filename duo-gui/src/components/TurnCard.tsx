@@ -3,7 +3,7 @@ import { covRate } from '../hooks/useCov'
 import { covColor, pct } from '../lib/format'
 import type { Beat, RAGEvent, SpeakEvent } from '../lib/types'
 
-export default function TurnCard({ sp, rag, beat, onSelect, onViewPrompts }:{ sp: SpeakEvent, rag?: RAGEvent, beat?: Beat, onSelect?: ()=>void, onViewPrompts?: ()=>void }){
+export default function TurnCard({ sp, rag, beat, onSelect, onViewPrompts }:{ sp: SpeakEvent, rag?: RAGEvent, beat?: Beat, onSelect?: ()=>void, onViewPrompts?: (e: React.MouseEvent<HTMLButtonElement>)=>void }){
   const canon = rag?.canon?.preview||''
   const lore  = rag?.lore?.preview||''
   const patt  = rag?.pattern?.preview||''
@@ -22,7 +22,7 @@ export default function TurnCard({ sp, rag, beat, onSelect, onViewPrompts }:{ sp
         </div>
         <div className="flex items-center gap-2">
           <button type="button" className="text-xs px-2 py-1 border rounded hover:bg-slate-50"
-            onClick={(e)=>{ e.stopPropagation(); onViewPrompts?.() }}>View Prompts</button>
+            onClick={(e)=>{ e.stopPropagation(); onViewPrompts?.(e) }}>View Prompts</button>
         </div>
       </div>
       <div className="mt-2 whitespace-pre-wrap leading-relaxed">{sp.text}</div>
