@@ -7,6 +7,7 @@ import CovSpark from './components/CovSpark'
 import { useSSE } from './hooks/useSSE'
 import { covRate } from './hooks/useCov'
 import type { DirectorEvent, RAGEvent, SpeakEvent, PromptDbg } from './lib/types'
+import PromptModal from './components/PromptModal'
 
 const API = (import.meta as any).env?.VITE_API_BASE || ''
 
@@ -114,22 +115,41 @@ export default function App(){
     return <span className={`px-2 py-0.5 rounded text-xs ${cls}`}>{Math.round(c*100)}%</span>
   }
 
-  function extractHints(turn:number){
-    const tail = prompts[turn]||''
-    const lines = tail.split(/\n/).filter(l=> /\[?内蔵ヒント\]?/.test(l))
-    return lines.join('\n') || '(no hints)'
-  }
-
-  function highlight(text:string, turn:number, src:'live'|'A'|'B'='live'){
-    const hints = src==='A' ? (cmpA?.prompts?.[turn]||'') : src==='B' ? (cmpB?.prompts?.[turn]||'') : extractHints(turn)
-    const toks = new Set(hints.match(/[A-Za-z0-9ぁ-んァ-ン一-龯]{2,}/g) || [])
-    let out = text.replace(/&/g,'&amp;').replace(/</g,'&lt;')
-    Array.from(toks).sort((a,b)=> b.length - a.length).forEach(tok=>{
-      const re = new RegExp(tok.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g')
-      out = out.replace(re, m=> `<mark>${m}</mark>`)
-    })
-    return out
-  }
+  // Prompt modal composing helper
+  const modalTurnData = useMemo(()=>{
+    if (modalTurn===undefined) return undefined
+    if (modalSrc==='A'){
+      const sp = cmpA?.speaks?.[modalTurn]
+      return sp? {
+        turn: modalTurn,
+        speaker: sp.speaker,
+        beat: cmpA?.directors?.[modalTurn]?.beat,
+        rag: cmpA?.rag?.[modalTurn],
+        prompt_tail: cmpA?.prompts?.[modalTurn],
+        text: sp.text,
+      } : undefined
+    }
+    if (modalSrc==='B'){
+      const sp = cmpB?.speaks?.[modalTurn]
+      return sp? {
+        turn: modalTurn,
+        speaker: sp.speaker,
+        beat: cmpB?.directors?.[modalTurn]?.beat,
+        rag: cmpB?.rag?.[modalTurn],
+        prompt_tail: cmpB?.prompts?.[modalTurn],
+        text: sp.text,
+      } : undefined
+    }
+    const sp = speaks[modalTurn]
+    return sp? {
+      turn: modalTurn,
+      speaker: sp.speaker,
+      beat: directors[modalTurn]?.beat,
+      rag: rag[modalTurn],
+      prompt_tail: prompts[modalTurn],
+      text: sp.text,
+    } : undefined
+  }, [modalTurn, modalSrc, cmpA, cmpB, speaks, rag, directors, prompts])
 
   return (
     <>
@@ -257,28 +277,7 @@ export default function App(){
         </section>
       </div>
     </div>
-    {modalTurn!==undefined && (
-      <div className="fixed inset-0 bg-black/40 flex items-center justify-center" onClick={()=> setModalTurn(undefined)}>
-        <div className="bg-white text-slate-900 max-w-4xl w-full rounded shadow p-4" onClick={e=>e.stopPropagation()}>
-          <div className="flex items-center justify-between mb-2">
-            <h3 className="font-semibold">Prompts vs Utterance — Turn {modalTurn}</h3>
-            <button className="text-sm px-2 py-1 border rounded" onClick={()=> setModalTurn(undefined)}>Close</button>
-          </div>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-            <pre className="whitespace-pre-wrap p-2 border rounded bg-slate-50">{
-              modalSrc==='A' ? (cmpA?.prompts?.[modalTurn] || '(no hints)') :
-              modalSrc==='B' ? (cmpB?.prompts?.[modalTurn] || '(no hints)') :
-              extractHints(modalTurn)
-            }</pre>
-            <div className="p-2 border rounded bg-slate-50" dangerouslySetInnerHTML={{__html:
-              modalSrc==='A' ? highlight(cmpA?.speaks?.[modalTurn!]?.text||'', modalTurn!, 'A') :
-              modalSrc==='B' ? highlight(cmpB?.speaks?.[modalTurn!]?.text||'', modalTurn!, 'B') :
-              highlight(speaks[modalTurn!]?.text||'', modalTurn!, 'live')
-            }} />
-          </div>
-        </div>
-      </div>
-    )}
+    <PromptModal open={modalTurn!==undefined} onClose={()=> setModalTurn(undefined)} turn={modalTurnData} />
     </>
   )
 }
