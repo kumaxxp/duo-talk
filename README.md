@@ -1,28 +1,31 @@
 # duo-talk
 
 二人の AI キャラクターの掛け合いを演出する最小〜拡張システム。
-Step1(MVP) → Step2(演出) → Step3(RAG) の順に段階実装し、ログと簡易GUIで“効き”を見える化します。
+MVP → 演出 → RAG → 評価 の順に小さく積み上げ、ログとGUIで“効き”を見える化します。
 
 **主な機能**
 
-- A/B 二人の AI キャラが交互に会話（最大ターンで終了）
-- 制約の強制: 5文以内・合いの手最大1回（再生成＋最終トリム）
-- Step2: ビート配布（BANter/PIVOT/PAYOFF）、カット合図（TAG）
-- Step3: RAG（canon/lore/pattern）を各ターン最大1件ずつ注入
-- ログ: JSONL（run_id 付き）。検証用の選定ログ・プロンプト末尾も出力
-- 簡易GUI: ラン開始、タイムライン、RAG パネル、影響度（cov%）
+- A/B が交互に会話（最大ターンで終了）。制約の強制: 最大5文・合いの手最大1回
+- ディレクター機能: ビート配布（3ビート or 短縮7ビート）、カット合図（TAG）
+- 役作りの隠しステップ（role_prep）＋ 軽量リフレクト（reflect）を毎ターン実行
+- RAG（canon/lore/pattern）を各ターン最大1件ずつ注入。ビート別で注入順を切替
+- ログ: JSONL（run_id 付き）。`director`/`rag_select`/`prompt_debug`/`reflect` を出力
+- GUI: ラン開始、タイムライン、RAG パネル、影響度（cov%）、RAG Score(F1/Cite)、style遵守率
 
 
 **ディレクトリ**
 
-- `duo_chat_mvp.py` … Step1: 最小の交互会話＋制約
-- `duo_chat_entertain.py` … Step2/3: ビート配布、RAG 注入、ログ拡張
-- `persona/char_a.system.txt` / `persona/char_b.system.txt` … キャラのSystemプロンプト
-- `rag_data/**` … RAGの元データ（canon/lore/pattern）
-- `server/main.py` / `server/static/index.html` … FastAPI + 簡易GUI（/ui）
-- `scripts/check_leak.py` … 演出ノート/ヒント漏れ検出
-- `scripts/rag_influence_report.py` … RAGの“効き”の簡易スコア
-- `tests/` … ステップ別の最小テスト
+- `duo_chat_mvp.py` … 最小の交互会話＋制約
+- `duo_chat_entertain.py` … ビート／RAG 注入、役作り、リフレクト、ログ拡張
+- `persona/char_a.system.txt` / `persona/char_b.system.txt` … コア/スタイル/境界の短文化（三項目）
+- `policy/beats_short.yaml` … 7ビート（短縮版）の定義（任意）
+- `rag_data/**` … RAGデータ（canon/lore/pattern）。`scripts/ingest.py` で投入
+- `rag/rag_min.py` … 依存最小のRAG（rapidfuzzベースのスコアリング）
+- `scripts/ingest.py` / `scripts/rag_gc.py` … 取り込み＆GC候補出し
+- `scripts/rag_eval.py` … オフライン評価（F1/Citation）。`runs/rag_eval_summary.json` を出力
+- `metrics/quick_check.py` … 文数/合いの手から style遵守率を算出
+- `server/main.py` … FastAPI（SSE配信＋API）。`/ui` に最小ビュー
+- `duo-gui/**` … React製の開発用GUI（ヘッダにRAG Scoreとstyle遵守率）
 
 
 **インストール**
@@ -66,17 +69,19 @@ python duo_chat_mvp.py --max-turns 8 --model gemma3:12b --topic "駅前イベン
 - `sanitize(text) -> str`（演出ノート/危険表現の緩和）
 
 
-**Step2: Entertainment（ビート/カット）**
+**Step2: Entertainment（ビート/カット/役作り/リフレクト）**
 
 ```
 python duo_chat_entertain.py --max-turns 8 --model gemma3:12b --topic "駅前イベントの小型自走車" --seed 42
 ```
 
-- `beats/beat_policy.yaml` を読み込み（無ければ安全デフォルト）
-- 3ターンごと `PIVOT`、6ターン以降 `PAYOFF`、最終 `TAG`
+- `beats/beat_policy.yaml`（3ビート） or `policy/beats_short.yaml`（7ビート）があれば使用
+- 3ビート: 3ターンごとPIVOT・6ターン以降PAYOFF・最終TAG
+- 7ビート: Setup → Theme Stated → Fun&Games → Midpoint(PIVOT) → BadTurns → Aha(PAYOFF準備) → Finale(TAG)
+- 役作り（role_prep）を毎ターンの直前に1行生成（台詞には出さない）。軽量リフレクト（reflect）も生成
 - 合意/総括ワードの検出→一回だけ再生成→残れば弱め表現に置換
 - ループ検知（先頭一致＋8-gram重複率）→ 脱出の一行を追記
-- すべての出力は `hard_enforce()` → `sanitize()` 
+- すべての出力は `hard_enforce()` → `sanitize()`（［演出ノート］/［内蔵ヒント］/［役作り］/［リフレクト］は除去）
 
 公開API（テスト用）:
 
@@ -90,7 +95,8 @@ python duo_chat_entertain.py --max-turns 8 --model gemma3:12b --topic "駅前イ
 
 - 各ターンで `rag/rag_min.py` の `retrieve()` を用い、以下を最大1件ずつ注入:
   - canon（A/B優先）/ lore / pattern（PAYOFFでは pattern を先頭に）
-- ヒントはプロンプト末尾に `［内蔵ヒント］…（台詞に出さない）` で注入（台詞への漏れは `sanitize()` が除去）
+- ビート別注入順: Fun&Games は `lore → canon → pattern`、Finale/PAYOFF は `pattern` 最優先
+- ヒントはプロンプト末尾に `［内蔵ヒント］…（台詞に出さない）` として注入（sanitizeで除去）
 - `rag_select` イベントで選定結果（path/preview）をログ
 
 `rag/rag_min.py`:
@@ -107,6 +113,7 @@ python duo_chat_entertain.py --max-turns 8 --model gemma3:12b --topic "駅前イ
   - `run_start` / `run_end` … モード・topic・model を含む
   - `director` … `{"turn": n, "beat": "PIVOT", "cut_cue": null}`
   - `rag_select` … `canon/lore/pattern` の `path/preview`
+  - `reflect` / `review` … リフレクトと遅延レビュー（レビューはダミー）
   - `prompt_debug` … LLM 呼び直前のプロンプト末尾（500字）
   - `speak` … `speaker(A/B), turn, beat(optional), text`
   - `llm_call` / `llm_response` / `error`
@@ -129,7 +136,7 @@ jq -r --arg RID "$RID" '
 ```
 
 
-**簡易GUI（最小版）**
+**GUI**
 
 FastAPI + SSE + 静的HTMLで、ランの起動とライブ可視化が可能です。
 
@@ -144,23 +151,32 @@ http://127.0.0.1:5179/ui  # 簡易GUI（Start / Runs / Timeline / RAG Panel / co
 
 API:
 
-- `POST /api/run/start` … 本体プロセス起動（body: topic/model/maxTurns/seed/noRag）。best-effort で `run_id` を返却
+- `POST /api/run/start` … 本体プロセス起動（body: topic/model/maxTurns/seed/noRag）
 - `GET /api/run/list` … 直近の run 一覧
-- `GET /api/run/stream?run_id=...` … SSE（履歴を最初に再生→tail で追従）
+- `GET /api/run/events?run_id=...` … 指定 run の全イベント
+- `GET /api/run/stream?run_id=...` … SSE（履歴→tail）
+- `GET /api/run/style?run_id=...` … style遵守率（文数/合いの手）
+- `GET /api/rag/score` … オフライン評価のサマリ（F1/CitationRate）
 
 
 **スクリプト**
 
-- 演出ノート/ヒント漏れ検出:
+- 取り込み（RAG ingest）:
 
 ```
-python scripts/check_leak.py runs/duo_runs.jsonl
+python scripts/ingest.py --in raw_docs --out rag_data
 ```
 
-- 影響度（cov）レポート（token/chargram/mix）:
+- GC候補リスト（CSV; dry-run）:
 
 ```
-python scripts/rag_influence_report.py runs/duo_runs.jsonl --mode mix
+python scripts/rag_gc.py  # -> runs/rag_gc_candidates.csv
+```
+
+- RAG評価（F1/Citation; サマリは GUI ヘッダに反映）:
+
+```
+python scripts/rag_eval.py --qa eval/qa.jsonl  # -> runs/rag_eval_summary.json
 ```
 
 
@@ -173,10 +189,12 @@ pytest -q
 
 **トラブルシュート**
 
-- モデル未検出: `.env` の `OPENAI_MODEL` が実モデル名（Ollama の `ollama list` と一致）か確認
-- 5文を超える: enforce() + hard_enforce() で最終的にトリムします。`OPENAI_TEMPERATURE` を少し下げると安定
-- Timeline が空: `/api/run/stream` は履歴再生→tailに対応。Run選択/フィルタ設定/ログ更新を確認
-- ルートが 404: `uvicorn server.main:app --reload` での起動を推奨。`python server/main.py` でも `/` と `/ui` が動作
+- RAG Score が 0% のまま: `scripts/rag_eval.py` を実行し、`runs/rag_eval_summary.json` を生成。GUI は10秒ごとに再取得
+- grep でイベントが見つからない: JSONは `"event": "xxx"` のようにコロン後にスペース。`grep -E '"event":\s*"rag_select"'` を使用
+- モデル未検出: `.env` の `OPENAI_MODEL` が実モデル名（Ollama の `ollama list` 等と一致）か確認
+- 5文を超える: `enforce()` + `hard_enforce()` で最終トリム。`OPENAI_TEMPERATURE` を少し下げると安定
+- Timeline が空: `/api/run/stream` は履歴→tail。Run選択/フィルタ設定/ログ更新を確認
+- ルートが 404: `uvicorn server.main:app --reload` での起動を推奨（`python server/main.py` でも `/` と `/ui` が動作）
 
 
 **ライセンス**
