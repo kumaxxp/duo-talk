@@ -19,6 +19,12 @@ export default function App(){
   const [selected, setSelected] = useState<number|undefined>()
   const [prompts, setPrompts] = useState<Record<number, string>>({})
   const [modalTurn, setModalTurn] = useState<number|undefined>()
+  // Filters (speaker & beat)
+  const [showA, setShowA] = useState(true)
+  const [showB, setShowB] = useState(true)
+  const [showBAN, setShowBAN] = useState(true)
+  const [showPIV, setShowPIV] = useState(true)
+  const [showPAY, setShowPAY] = useState(true)
 
   const listRuns = async ()=>{
     const r = await fetch(`${API}/api/run/list`)
@@ -37,7 +43,18 @@ export default function App(){
   })
 
   const turns = useMemo(()=> Object.keys(speaks).map(n=>parseInt(n,10)).sort((a,b)=>a-b), [speaks])
-  const covValues = useMemo(()=> turns.map(t=> {
+  const filteredTurns = useMemo(()=> {
+    return turns.filter(t => {
+      const sp = speaks[t]
+      const dt = directors[t]
+      if (!sp) return false
+      if ((sp.speaker==='A' && !showA) || (sp.speaker==='B' && !showB)) return false
+      const beat = dt?.beat
+      if ((beat==='BANter' && !showBAN) || (beat==='PIVOT' && !showPIV) || (beat==='PAYOFF' && !showPAY)) return false
+      return true
+    })
+  }, [turns, speaks, directors, showA, showB, showBAN, showPIV, showPAY])
+  const covValues = useMemo(()=> filteredTurns.map(t=> {
     const sp = speaks[t]; const rg = rag[t]
     if(!sp) return 0
     return Math.max(
@@ -45,10 +62,10 @@ export default function App(){
       covRate(rg?.lore?.preview||'', sp.text),
       covRate(rg?.pattern?.preview||'', sp.text),
     )
-  }), [turns, speaks, rag])
+  }), [filteredTurns, speaks, rag])
 
   const avg = useMemo(()=> covValues.length? covValues.reduce((a,b)=>a+b,0)/covValues.length : 0, [covValues])
-  const payoffValues = useMemo(()=> turns.filter(t=> directors[t]?.beat==='PAYOFF').map(t=> {
+  const payoffValues = useMemo(()=> filteredTurns.filter(t=> directors[t]?.beat==='PAYOFF').map(t=> {
     const sp = speaks[t]
     const rg = rag[t]
     if(!sp) return 0
@@ -57,7 +74,7 @@ export default function App(){
       covRate(rg?.lore?.preview||'', sp.text),
       covRate(rg?.pattern?.preview||'', sp.text),
     )
-  }), [turns, directors, rag, speaks])
+  }), [filteredTurns, directors, rag, speaks])
   const payoffAvg = useMemo(()=> payoffValues.length? payoffValues.reduce((a,b)=>a+b,0)/payoffValues.length : 0, [payoffValues])
   const maxCov = useMemo(()=> covValues.length? Math.max(...covValues) : 0, [covValues])
 
@@ -103,7 +120,23 @@ export default function App(){
           </div>
           <div className="p-4 bg-white rounded-lg shadow">
             <h2 className="font-medium mb-2">Runs</h2>
-            <RunList rows={runs} onPick={setRid} />
+            <div className="max-h-64 overflow-auto md:max-h-80">
+              <RunList rows={runs} onPick={setRid} />
+            </div>
+          </div>
+          <div className="p-4 bg-white rounded-lg shadow">
+            <h2 className="font-medium mb-2">Filters</h2>
+            <div className="flex flex-wrap gap-2 text-sm">
+              <label className="flex items-center gap-1"><input type="checkbox" checked={showA} onChange={e=>setShowA(e.target.checked)} /> Speaker A</label>
+              <label className="flex items-center gap-1"><input type="checkbox" checked={showB} onChange={e=>setShowB(e.target.checked)} /> Speaker B</label>
+              <label className="flex items-center gap-1"><input type="checkbox" checked={showBAN} onChange={e=>setShowBAN(e.target.checked)} /> BANter</label>
+              <label className="flex items-center gap-1"><input type="checkbox" checked={showPIV} onChange={e=>setShowPIV(e.target.checked)} /> PIVOT</label>
+              <label className="flex items-center gap-1"><input type="checkbox" checked={showPAY} onChange={e=>setShowPAY(e.target.checked)} /> PAYOFF</label>
+            </div>
+          </div>
+          <div className="p-4 bg-white rounded-lg shadow">
+            <h2 className="font-medium mb-2">RAG Panel</h2>
+            <RagPanel rag={selected? rag[selected]: undefined} beat={selected? directors[selected]?.beat: undefined} />
           </div>
         </section>
         <section className="lg:col-span-2 space-y-3">
@@ -113,14 +146,10 @@ export default function App(){
               <CovSpark values={covValues} />
             </div>
             <div className="space-y-3">
-              {turns.map(t=> (
+              {filteredTurns.map(t=> (
                 <TurnCard key={t} sp={speaks[t]} rag={rag[t]} beat={directors[t]?.beat} onSelect={()=> setSelected(t)} onViewPrompts={()=> setModalTurn(t)} />
               ))}
             </div>
-          </div>
-          <div className="p-4 bg-white rounded-lg shadow">
-            <h2 className="font-medium mb-2">RAG Panel</h2>
-            <RagPanel rag={selected? rag[selected]: undefined} beat={selected? directors[selected]?.beat: undefined} />
           </div>
         </section>
       </div>

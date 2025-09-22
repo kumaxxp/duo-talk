@@ -31,7 +31,7 @@
 
           <div class="p-4 bg-white rounded-lg shadow">
             <h2 class="font-medium mb-2">Runs</h2>
-            <div id="runs" class="space-y-1 text-sm"></div>
+            <div id="runs" class="space-y-1 text-sm max-h-64 overflow-auto md:max-h-80"></div>
           </div>
 
           <div class="p-4 bg-white rounded-lg shadow">
@@ -44,6 +44,11 @@
               <label class="flex items-center gap-1"><input type="checkbox" id="fPAY" checked /> PAYOFF</label>
             </div>
           </div>
+
+          <div class="p-4 bg-white rounded-lg shadow">
+            <h2 class="font-medium mb-2">RAG Panel</h2>
+            <div id="ragPanel" class="grid grid-cols-1 gap-3"></div>
+          </div>
         </section>
 
         <section class="lg:col-span-2 space-y-3">
@@ -55,11 +60,7 @@
             <div id="timeline" class="space-y-3"></div>
           </div>
         </section>
-
-        <section class="lg:col-span-3 p-4 bg-white rounded-lg shadow">
-          <h2 class="font-medium mb-2">RAG Panel</h2>
-          <div id="ragPanel" class="grid grid-cols-1 md:grid-cols-3 gap-3"></div>
-        </section>
+        
       </div>
     </div>
 
