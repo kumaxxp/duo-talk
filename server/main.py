@@ -1,6 +1,7 @@
 import json
 import asyncio
 import subprocess
+import sys
 from pathlib import Path
 from typing import AsyncIterator, Dict, List, Iterable
 
@@ -30,7 +31,8 @@ async def start_run(p: Dict):
 
     Body example: {"topic": str, "model": str, "maxTurns": int, "seed": int, "noRag": bool}
     """
-    cmd = ["python", "duo_chat_entertain.py", "--max-turns", str(p.get("maxTurns", 8))]
+    python_exec = sys.executable or "python3"
+    cmd = [python_exec, "duo_chat_entertain.py", "--max-turns", str(p.get("maxTurns", 8))]
     if (m := p.get("model")):
         cmd += ["--model", str(m)]
     if (t := p.get("topic")):

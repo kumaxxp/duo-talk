@@ -19,7 +19,7 @@ from duo_chat_mvp import (
     too_many_sentences,
     too_many_aizuchi,
 )
-from duo_chat_mvp import _write_event, set_run_id  # reuse logging helper
+from duo_chat_mvp import _write_event, set_run_id, RUN_ID  # reuse logging helper
 from rag.rag_min import build as rag_build, retrieve as rag_retrieve
 
 
@@ -203,6 +203,9 @@ def _compose_user(partner_last: Optional[str], topic: Optional[str], beat: str, 
     )
     base = []
     base.append(constraints)
+    # For the first turn (no partner text), avoid agreement one-liners like "せやなー"
+    if not partner_last:
+        base.append("初手は同意ワード（『せやなー』『せやせや』）を使用しない。")
     if topic:
         base.append(f"会話のトピック: {topic}")
     if partner_last:
@@ -284,6 +287,29 @@ def run_duo(
     next_reflect: Optional[str] = None
     # For delayed reviewer hook (dummy)
     last_for_review: Optional[Tuple[int, str, str]] = None  # (turn, who, text)
+
+    # Optional external provider for A (Sumigaseyana HTTP)
+    try:
+        from providers.factory import create_speaker_a  # type: ignore
+    except Exception:
+        create_speaker_a = None  # type: ignore
+    provider_a = create_speaker_a() if create_speaker_a else None
+
+    def _parse_filters_env() -> dict:
+        s = os.getenv("SPEAKER_A_FILTERS_JSON")
+        if not s:
+            return {}
+        try:
+            import json as _json
+
+            obj = _json.loads(s)
+            return obj if isinstance(obj, dict) else {}
+        except Exception:
+            return {}
+
+    a_timeout_ms = int(os.getenv("SPEAKER_A_TIMEOUT_MS", "12000"))
+    a_topk = int(os.getenv("SPEAKER_A_TOP_K", "5"))
+    a_filters = _parse_filters_env()
 
     for turn in range(1, max_turns + 1):
         beat = pick_beat(turn, policy, short_beats=short_beats)
@@ -412,16 +438,65 @@ def run_duo(
             })
         except Exception:
             pass
-        try:
-            text = call(
-                model=resolved_model,
-                system=system,
-                user=user,
-                temperature=resolved_temperature,
-                max_tokens=resolved_max_tokens,
-            )
-        except Exception as e:
-            # retry once
+        provider_meta: Optional[dict] = None
+        if who == "A" and provider_a is not None:
+            # Use external provider for A-side when available
+            try:
+                reply, provider_meta = provider_a.generate(
+                    user,
+                    run_id=(RUN_ID or ""),
+                    top_k=a_topk,
+                    filters=a_filters,
+                    timeout_ms=a_timeout_ms,
+                )
+                text = reply or ""
+            except Exception as e:
+                text = "少し待って、続けて。"
+                provider_meta = {
+                    "error": str(e),
+                    "warnings": ["provider_error"],
+                    "source": "A_http",
+                }
+
+            # Safety net: discourage agreement openers on the very first turn
+            if turn == 1:
+                r0 = (text or "").strip()
+                if r0.startswith("せやなー") or r0.startswith("せやせや"):
+                    try:
+                        regen_prompt = (
+                            user
+                            + "\n補足: 初手は同意ワード（『せやなー』『せやせや』）を使わず、1〜2文で自己紹介から自然に始めて。"
+                        )
+                        text2, meta2 = provider_a.generate(
+                            regen_prompt,
+                            run_id=(RUN_ID or ""),
+                            top_k=a_topk,
+                            filters=a_filters,
+                            timeout_ms=a_timeout_ms,
+                        )
+                        if text2:
+                            text = text2
+                        if provider_meta is not None and isinstance(meta2, dict):
+                            warnings = provider_meta.setdefault("warnings", [])
+                            for w in (meta2.get("warnings") or []):
+                                if w not in warnings:
+                                    warnings.append(w)
+                    except Exception:
+                        pass
+
+            if too_many_sentences(text) or too_many_aizuchi(text):
+                text = hard_enforce(text)
+                if provider_meta is not None:
+                    try:
+                        provider_meta.setdefault("warnings", []).append("trimmed_to_5_sentences_or_aizuchi")
+                    except Exception:
+                        pass
+            # Log provider usage for observability
+            try:
+                _write_event({"event": "provider", "which": "A_http", "turn": turn, "meta": provider_meta})
+            except Exception:
+                pass
+        else:
             try:
                 text = call(
                     model=resolved_model,
@@ -430,9 +505,19 @@ def run_duo(
                     temperature=resolved_temperature,
                     max_tokens=resolved_max_tokens,
                 )
-            except Exception as e2:
-                _write_event({"event": "error", "stage": "call", "turn": turn, "speaker": who, "message": str(e2)})
-                raise
+            except Exception as e:
+                # retry once
+                try:
+                    text = call(
+                        model=resolved_model,
+                        system=system,
+                        user=user,
+                        temperature=resolved_temperature,
+                        max_tokens=resolved_max_tokens,
+                    )
+                except Exception as e2:
+                    _write_event({"event": "error", "stage": "call", "turn": turn, "speaker": who, "message": str(e2)})
+                    raise
 
         # Avoid summary/consensus words: one regeneration; if still present, soften by replacement
         if contains_agree(text, agree_words):

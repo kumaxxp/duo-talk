@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.local/mcp/tools.ingest.result.schema.json",
+  "title": "ingest_result",
+  "type": "object",
+  "properties": {
+    "id": { "type": "string" },
+    "dedup": { "type": "boolean" },
+    "hash_sha1": { "type": ["string", "null"] },
+    "phash": { "type": ["string", "null"] },
+    "run_id": { "type": "string" },
+    "trace_id": { "type": "string" },
+    "server_version": { "type": "string" },
+    "policy_version": { "type": "string" }
+  },
+  "required": ["id"],
+  "additionalProperties": true
+}
+

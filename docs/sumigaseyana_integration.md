@@ -149,6 +149,15 @@ class SpeakerProvider(Protocol):
 - リソース: `logs/today` は read-only resource として公開（要オプトイン）。
 - `context.sessionId/runId` はそのまま受け渡し。
 
+準備済みスキーマ（本リポジトリ内）:
+- `docs/mcp/tools.chat.schema.json` / `docs/mcp/tools.chat.result.schema.json`
+- `docs/mcp/tools.search.schema.json` / `docs/mcp/tools.search.result.schema.json`
+- `docs/mcp/tools.ingest.schema.json` / `docs/mcp/tools.ingest.result.schema.json`
+- `docs/mcp/errors.schema.json`
+
+クライアント側のMCPプロバイダは準備用スタブを追加済み（未実装）:
+- `providers/speaker_mcp.py`（起動すると NotImplemented を投げます）
+
 ---
 
 ## テスト計画
@@ -187,4 +196,3 @@ class SpeakerProvider(Protocol):
 - 数値や配列の上限/下限はサーバ・クライアント双方でバリデーション。
 
 以上。Phase 1 の実装に着手可能です。OpenAPI 雛形が必要なら本ドキュメントから抽出して同梱します。
-

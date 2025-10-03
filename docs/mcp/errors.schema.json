@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.local/mcp/errors.schema.json",
+  "title": "CommonError",
+  "type": "object",
+  "required": ["error"],
+  "properties": {
+    "error": {
+      "type": "object",
+      "required": ["code", "message"],
+      "properties": {
+        "code": { "type": "string" },
+        "message": { "type": "string" },
+        "retryable": { "type": "boolean" }
+      },
+      "additionalProperties": true
+    },
+    "run_id": { "type": "string" },
+    "trace_id": { "type": "string" }
+  },
+  "additionalProperties": true
+}
+

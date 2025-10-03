@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.local/mcp/tools.search.schema.json",
+  "title": "search",
+  "type": "object",
+  "properties": {
+    "query_text": { "type": ["string", "null"] },
+    "filters": {
+      "type": "object",
+      "properties": {
+        "category": { "type": "string" },
+        "region": { "type": "string" },
+        "brewery": { "type": "string" }
+      },
+      "additionalProperties": false,
+      "default": {}
+    },
+    "k": { "type": "integer", "minimum": 1, "maximum": 20, "default": 5 },
+    "sort_by": { "type": "string", "enum": ["relevance", "recency"], "default": "relevance" },
+    "page": { "type": ["integer", "null"] },
+    "page_size": { "type": ["integer", "null"] }
+  },
+  "additionalProperties": false
+}
+

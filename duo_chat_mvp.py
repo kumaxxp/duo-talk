@@ -78,6 +78,15 @@ _AIZUCHI_WORDS = [
     "なる",
 ]
 
+# Heuristic for strong-judgment detection (align with server policy)
+_STRONG_OPINION_HINTS = [
+    "最強", "一番", "最高", "最低", "神", "微妙", "論破", "絶対", "間違いない", "うまい", "旨い", "まずい",
+]
+
+def _is_strong_judgment(text: str) -> bool:
+    t = (text or "").strip()
+    return any(h in t for h in _STRONG_OPINION_HINTS)
+
 
 def _count_aizuchi(text: str) -> int:
     if not text:
@@ -415,20 +424,131 @@ def run_duo(
     resolved_max_tokens = int(max_tokens if max_tokens is not None else os.getenv("OPENAI_MAX_TOKENS", "400"))
     resolved_topic = topic or os.getenv("TOPIC") or None
 
+    # Optional: external A-side provider (e.g., Sumigaseyana HTTP)
+    try:
+        from providers.factory import create_speaker_a  # type: ignore
+    except Exception:
+        create_speaker_a = None  # type: ignore
+    provider_a = create_speaker_a() if create_speaker_a else None
+    # Provider-related env
+    def _parse_filters_env() -> dict:
+        s = os.getenv("SPEAKER_A_FILTERS_JSON")
+        if not s:
+            return {}
+        try:
+            obj = json.loads(s)
+            return obj if isinstance(obj, dict) else {}
+        except Exception:
+            return {}
+
+    a_timeout_ms = int(os.getenv("SPEAKER_A_TIMEOUT_MS", "12000"))
+    a_topk = int(os.getenv("SPEAKER_A_TOP_K", "5"))
+    a_filters = _parse_filters_env()
+
     # Alternate A -> B -> A ...
     while turn < max_turns:
         if turn % 2 == 0:
             # A speaks using B's last line
-            text_a = _speaker(
-                a_sys,
-                name="A",
-                partner_last=last_b,
-                model=resolved_model,
-                temperature=resolved_temperature,
-                max_tokens=resolved_max_tokens,
-                topic=resolved_topic,
-                turn=turn + 1,
-            )
+            if provider_a is not None:
+                # Compose a first-turn friendly instruction if partner text is missing
+                constraints = (
+                    "絶対条件: 最大5文、合いの手は最大1回。箇条書きや前置きは禁止。返答のみを日本語で簡潔に。"
+                )
+                if last_b:
+                    if resolved_topic:
+                        user_text = (
+                            f"{constraints}\n"
+                            f"会話のトピック: {resolved_topic}\n"
+                            f"相手の直前の発言: \n{last_b}\n\n"
+                            "このトピックの範囲で自然に返答してください。"
+                        )
+                    else:
+                        user_text = f"{constraints}\n相手の直前の発言: \n{last_b}\n\nこれに応じて自然に返答してください。"
+                else:
+                    if resolved_topic:
+                        user_text = (
+                            f"{constraints}\n"
+                            f"会話のトピック: {resolved_topic}\n"
+                            "トピックに軽く触れつつ自己紹介して会話を始めてください。\n"
+                            "初手は同意ワード（『せやなー』『せやせや』）を使用しない。"
+                        )
+                    else:
+                        user_text = (
+                            f"{constraints}\n"
+                            "軽く自己紹介して会話を始めてください。\n"
+                            "初手は同意ワード（『せやなー』『せやせや』）を使用しない。"
+                        )
+                try:
+                    reply, meta = provider_a.generate(
+                        user_text,
+                        run_id=(RUN_ID or ""),
+                        top_k=a_topk,
+                        filters=a_filters,
+                        timeout_ms=a_timeout_ms,
+                    )
+                except Exception as e:
+                    # Fallback: short fixed line
+                    reply = "少し待って、続けて。"
+                    meta = {"error": str(e), "warnings": ["provider_error"], "source": "http_provider"}
+                # Safety net: enforce duo constraints without extra LLM calls
+                warnings: list[str] = list(meta.get("warnings", [])) if isinstance(meta.get("warnings"), list) else []
+                # First turn: if LLM still opens with agreement-only, ask for one regeneration without fixed fallback
+                if turn == 0:
+                    r0 = (reply or "").strip()
+                    if r0.startswith("せやなー") or r0.startswith("せやせや"):
+                        try:
+                            # reinforce instruction and regenerate once
+                            regen_prompt = user_text + "\n補足: 初手は同意ワード（『せやなー』『せやせや』）を使わず、1〜2文で自己紹介から自然に始めて。"
+                            reply, meta2 = provider_a.generate(
+                                regen_prompt,
+                                run_id=(RUN_ID or ""),
+                                top_k=a_topk,
+                                filters=a_filters,
+                                timeout_ms=a_timeout_ms,
+                            )
+                            # merge warnings minimally
+                            if isinstance(meta2.get("warnings"), list):
+                                warnings.extend([w for w in meta2["warnings"] if w not in warnings])
+                        except Exception:
+                            pass
+                # Any turn: if the whole reply is just "せやなー" but partner text doesn't warrant it, try one regeneration
+                if (reply or "").strip() == "せやなー" and not _is_strong_judgment(last_b or ""):
+                    try:
+                        regen2 = user_text + "\n補足: 単独の『せやなー』は禁止。1〜2文で具体的に返して。"
+                        reply2, meta3 = provider_a.generate(
+                            regen2,
+                            run_id=(RUN_ID or ""),
+                            top_k=a_topk,
+                            filters=a_filters,
+                            timeout_ms=a_timeout_ms,
+                        )
+                        if reply2:
+                            reply = reply2
+                        if isinstance(meta3.get("warnings"), list):
+                            warnings.extend([w for w in meta3["warnings"] if w not in warnings])
+                    except Exception:
+                        pass
+                if too_many_sentences(reply) or too_many_aizuchi(reply):
+                    reply = hard_enforce(reply)
+                    warnings.append("trimmed_to_5_sentences_or_aizuchi")
+                text_a = sanitize(reply)
+                # Normalize provider label
+                prov = "A_mcp" if (meta.get("source") == "mcp_stdio") else "A_http"
+                ev = {"event": "speak", "speaker": "A", "text": text_a, "a_meta": meta, "provider": prov}
+                ev["a_meta"]["warnings"] = warnings
+                ev["turn"] = turn + 1
+                _write_event(ev)
+            else:
+                text_a = _speaker(
+                    a_sys,
+                    name="A",
+                    partner_last=last_b,
+                    model=resolved_model,
+                    temperature=resolved_temperature,
+                    max_tokens=resolved_max_tokens,
+                    topic=resolved_topic,
+                    turn=turn + 1,
+                )
             if last_a is not None and is_loop(last_a, text_a):
                 _write_event({"event": "loop_detected", "speaker": "A"})
             print(f"A: {text_a}")

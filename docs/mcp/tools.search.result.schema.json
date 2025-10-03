@@ -1,0 +1,42 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.local/mcp/tools.search.result.schema.json",
+  "title": "search_result",
+  "type": "object",
+  "properties": {
+    "hits": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string" },
+          "brand_name": { "type": "string" },
+          "product_name": { "type": "string" },
+          "brewery": { "type": "string" },
+          "region": { "type": "string" },
+          "label_features": { "type": "array", "items": { "type": "string" } },
+          "file_path": { "type": "string" },
+          "debug": {
+            "type": "object",
+            "properties": {
+              "score": { "type": ["number", "null"] },
+              "cosine": { "type": ["number", "null"] },
+              "meta_bonus": { "type": ["number", "null"] }
+            },
+            "additionalProperties": false
+          }
+        },
+        "additionalProperties": true
+      },
+      "default": []
+    },
+    "next_page": { "type": ["integer", "null"] },
+    "run_id": { "type": "string" },
+    "trace_id": { "type": "string" },
+    "server_version": { "type": "string" },
+    "policy_version": { "type": "string" }
+  },
+  "required": ["hits"],
+  "additionalProperties": true
+}
+

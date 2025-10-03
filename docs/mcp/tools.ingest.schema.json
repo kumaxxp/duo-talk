@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.local/mcp/tools.ingest.schema.json",
+  "title": "ingest",
+  "type": "object",
+  "properties": {
+    "image": { "type": "string", "description": "URI or handle to image content" },
+    "category": { "type": "string", "enum": ["sake", "juice"] },
+    "region": { "type": "string" }
+  },
+  "required": ["image", "category"],
+  "additionalProperties": false
+}
+

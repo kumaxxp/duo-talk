@@ -1,0 +1,34 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.local/mcp/tools.chat.schema.json",
+  "title": "chat",
+  "type": "object",
+  "properties": {
+    "user_text": { "type": "string" },
+    "use_rag": { "type": "boolean", "default": true },
+    "top_k": { "type": "integer", "minimum": 1, "maximum": 10, "default": 5 },
+    "filters": {
+      "type": "object",
+      "properties": {
+        "category": { "type": "string" },
+        "region": { "type": "string" },
+        "brewery": { "type": "string" }
+      },
+      "additionalProperties": false,
+      "default": {}
+    },
+    "context": {
+      "type": "object",
+      "properties": {
+        "turn": { "type": "integer" },
+        "topic": { "type": "string" },
+        "run_id": { "type": "string" }
+      },
+      "additionalProperties": true,
+      "default": {}
+    }
+  },
+  "required": ["user_text"],
+  "additionalProperties": false
+}
+
