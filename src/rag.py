@@ -20,7 +20,9 @@ class RAGDatabase:
             char_id: "A" or "B"
         """
         self.char_id = char_id
-        self.domain_path = config.get_rag_domain_path(char_id)
+        # Convert to lowercase for directory path
+        char_id_lower = char_id.lower()
+        self.domain_path = config.rag_data_dir / f"char_{char_id_lower}_domain"
         self.knowledge: List[Tuple[str, str, str]] = []  # (domain, path, content)
         self._load_knowledge()
 
@@ -73,8 +75,23 @@ class RAGDatabase:
 
     def _score_similarity(self, query: str, content: str) -> float:
         """Score similarity between query and content"""
-        # Use token set ratio for robustness
-        return fuzz.token_set_ratio(query, content) / 100.0
+        # Simple keyword matching for Japanese text compatibility
+        query_lower = query.lower()
+        content_lower = content.lower()
+
+        # Check if query keywords appear in content
+        if query_lower in content_lower:
+            return 1.0
+
+        # Token-based scoring (split by space/punctuation)
+        query_tokens = set(query_lower.split())
+        content_tokens = set(content_lower.split())
+
+        if not query_tokens:
+            return 0.0
+
+        intersection = len(query_tokens & content_tokens)
+        return intersection / len(query_tokens)
 
     def _extract_snippet(self, content: str, max_length: int = 200) -> str:
         """Extract a meaningful snippet from content"""
