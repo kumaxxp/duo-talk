@@ -136,21 +136,30 @@ Respond ONLY with JSON:
         domains: list = None,
     ) -> str:
         """Build the evaluation prompt for the LLM"""
+        char_desc = "Elder Sister (action-driven, quick-witted)" if speaker == "A" else "Younger Sister (logical, reflective)"
+        domains_str = ", ".join(domains or [])
+
         prompt = f"""
 【Current Frame】
 {frame_description}
 
 【Character】
-{speaker} ({'Elder Sister (action-driven, quick-witted)' if speaker == 'A' else 'Younger Sister (logical, reflective)'})
+{speaker} ({char_desc})
 
 【Knowledge Domains】
-{', '.join(domains or [])}
+{domains_str}
 
 【Character's Response to Evaluate】
 {response}
+"""
 
-{'【Partner\'s Previous Speech】\n' + partner_speech if partner_speech else ''}
+        if partner_speech:
+            prompt += f"""
+【Partner's Previous Speech】
+{partner_speech}
+"""
 
+        prompt += """
 【Evaluation Tasks】
 1. PROGRESS: Does this response directly address or naturally react to the frame content?
 2. PARTICIPATION: Is the character actively engaged (not passive)?
