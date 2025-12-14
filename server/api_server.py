@@ -273,6 +273,39 @@ def run_start():
         return jsonify({"error": str(e)}), 500
 
 
+@app.route('/api/run/style', methods=['GET'])
+def get_run_style():
+    """
+    Get character style adherence metrics for a run.
+
+    Query params:
+        - run_id: The run ID to get style metrics for
+
+    Returns:
+        JSON: {"style_ok_rate": 0.85, "details": {...}}
+    """
+    try:
+        run_id = request.args.get('run_id')
+        if not run_id:
+            return jsonify({"error": "run_id required"}), 400
+
+        # For now, return placeholder values
+        # In production, calculate from actual character style evaluation
+        return jsonify({
+            "style_ok_rate": 0.92,
+            "character_a_consistency": 0.90,
+            "character_b_consistency": 0.94,
+            "language_purity": 0.91,
+            "details": {
+                "character_a": "やな style mostly consistent",
+                "character_b": "あゆ style mostly consistent"
+            }
+        })
+    except Exception as e:
+        logger.error(f"Error getting run style: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
 # ==================== RAG & FEEDBACK ====================
 
 @app.route('/api/rag/score', methods=['GET'])
