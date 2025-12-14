@@ -226,6 +226,7 @@ def run_start():
     """
     from datetime import datetime
     import json as json_module
+    import threading
 
     try:
         data = request.get_json()
@@ -260,8 +261,49 @@ def run_start():
 
         logger.info(f"Run started: {run_id} - Topic: {topic}")
 
-        # For now, return success immediately
-        # In production, would process asynchronously
+        # Start narration pipeline in background thread
+        def run_pipeline():
+            try:
+                logger.info(f"Starting pipeline for {run_id}")
+
+                # Use a default test image or generate synthetic one
+                image_path = config.project_root / "tests" / "images" / "temple_sample.jpg"
+
+                # Initialize pipeline if needed
+                pipeline = NarrationPipeline()
+
+                # Process with the topic as scene description
+                result = pipeline.process_image(
+                    str(image_path),
+                    topic,
+                    max_iterations=max_turns
+                )
+
+                # Log completion
+                if result.get('status') == 'success':
+                    completion_event = {
+                        "event": "narration_complete",
+                        "run_id": run_id,
+                        "topic": topic,
+                        "status": "success",
+                        "timestamp": datetime.now().isoformat()
+                    }
+                    with open(runs_file, 'a', encoding='utf-8') as f:
+                        f.write(json_module.dumps(completion_event, ensure_ascii=False) + '\n')
+                    logger.info(f"Pipeline completed for {run_id}")
+                else:
+                    logger.warning(f"Pipeline did not succeed for {run_id}: {result.get('status')}")
+
+            except Exception as e:
+                logger.error(f"Error in pipeline for {run_id}: {e}")
+                import traceback
+                traceback.print_exc()
+
+        # Start pipeline in background thread
+        thread = threading.Thread(target=run_pipeline, daemon=True)
+        thread.start()
+
+        # Return success immediately
         return jsonify({
             "run_id": run_id,
             "topic": topic,
