@@ -5,6 +5,7 @@ Vision LLM (Llama 3.2 Vision) を使用して画像を分析し、
 
 import base64
 import json
+import os
 from pathlib import Path
 from typing import Optional
 import ollama
@@ -16,12 +17,13 @@ class VisionProcessor:
     観光地ナレーション向けの詳細な視覚情報を生成。
     """
 
-    def __init__(self, model: str = "llama2-vision"):
+    def __init__(self, model: str = None):
         """
         Args:
-            model: 使用する Vision モデル（デフォルト: llama2-vision）
+            model: 使用する Vision モデル
+                  指定なしの場合は .env の VISION_MODEL または "qwen3:8b"
         """
-        self.model = model
+        self.model = model or os.getenv("VISION_MODEL", "qwen3:8b")
 
     def analyze_image(self, image_path: str) -> dict:
         """
