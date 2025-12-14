@@ -209,6 +209,70 @@ def start_narration():
         return jsonify({"error": str(e)}), 500
 
 
+@app.route('/api/run/start', methods=['POST'])
+def run_start():
+    """
+    Alternative endpoint for legacy GUI compatibility.
+
+    Body (JSON):
+        - topic: Narration topic/scene description
+        - model: LLM model to use (e.g., "gemma3:12b")
+        - maxTurns: Maximum number of turns (default: 8)
+        - seed: Random seed for reproducibility
+        - noRag: Boolean, whether to disable RAG (default: false)
+
+    Returns:
+        JSON: {"run_id": "...", "topic": "..."}
+    """
+    from datetime import datetime
+    import json as json_module
+
+    try:
+        data = request.get_json()
+        topic = data.get('topic', '')
+        model = data.get('model', 'qwen2.5:7b-instruct-q4_K_M')
+        max_turns = data.get('maxTurns', 8)
+        seed = data.get('seed')
+        no_rag = data.get('noRag', False)
+
+        if not topic:
+            return jsonify({"error": "topic required"}), 400
+
+        # Generate run ID
+        run_id = f"run_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+
+        # Create run metadata event
+        run_event = {
+            "event": "narration_start",
+            "run_id": run_id,
+            "topic": topic,
+            "model": model,
+            "maxTurns": max_turns,
+            "seed": seed,
+            "noRag": no_rag,
+            "timestamp": datetime.now().isoformat()
+        }
+
+        # Write run start event to log
+        runs_file = config.log_dir / "commentary_runs.jsonl"
+        with open(runs_file, 'a', encoding='utf-8') as f:
+            f.write(json_module.dumps(run_event, ensure_ascii=False) + '\n')
+
+        logger.info(f"Run started: {run_id} - Topic: {topic}")
+
+        # For now, return success immediately
+        # In production, would process asynchronously
+        return jsonify({
+            "run_id": run_id,
+            "topic": topic,
+            "status": "queued"
+        })
+
+    except Exception as e:
+        logger.error(f"Error in /api/run/start: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
 # ==================== RAG & FEEDBACK ====================
 
 @app.route('/api/rag/score', methods=['GET'])
