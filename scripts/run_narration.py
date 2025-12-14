@@ -237,10 +237,10 @@ def main():
     """
     pipeline = NarrationPipeline()
 
-    # テスト用の画像リスト（実際のテスト時に調整）
+    # テスト用の画像リスト
     test_images = [
-        # (image_path, scene_description)
-        # 例: ("path/to/image1.jpg", "観光地1について説明してください"),
+        ("tests/images/temple_sample.jpg", "古い寺院の境内。参拝客が少なく、静かな時間帯のようです。"),
+        ("tests/images/nature_sample.jpg", "緑豊かな山間の風景。自然に包まれた観光地です。"),
     ]
 
     if not test_images:
