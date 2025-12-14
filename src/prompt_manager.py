@@ -25,7 +25,12 @@ class PromptManager:
             char_id: "A", "B", or "director"
         """
         self.char_id = char_id.lower() if char_id in ["A", "B"] else char_id
-        self.base_path = config.project_root / "persona" / f"char_{self.char_id}"
+
+        # Special handling for director vs character paths
+        if self.char_id == "director":
+            self.base_path = config.project_root / "persona" / "director"
+        else:
+            self.base_path = config.project_root / "persona" / f"char_{self.char_id}"
 
         # Load prompt parts
         self.fixed = self._load_file("system_fixed.txt")
