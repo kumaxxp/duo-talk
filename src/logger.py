@@ -17,6 +17,7 @@ class Logger:
         self.log_dir = log_dir or config.log_dir
         self.log_dir.mkdir(parents=True, exist_ok=True)
         self.log_file = self.log_dir / "commentary_runs.jsonl"
+        self.feedback_file = self.log_dir / "feedback.jsonl"
 
     def log_event(self, event: Dict[str, Any]) -> None:
         """
@@ -29,7 +30,13 @@ class Logger:
         if "timestamp" not in event:
             event["timestamp"] = datetime.now().isoformat()
 
-        with open(self.log_file, "a", encoding="utf-8") as f:
+        # Separate feedback events to their own file
+        if event.get("event") == "feedback":
+            log_file = self.feedback_file
+        else:
+            log_file = self.log_file
+
+        with open(log_file, "a", encoding="utf-8") as f:
             f.write(json.dumps(event, ensure_ascii=False) + "\n")
 
     def log_turn(

@@ -4,3 +4,13 @@
 {"event": "prompt_update", "char_id": "a", "section": "knowledge", "old_length": 0, "new_length": 14, "reason": "Added test knowledge: test", "timestamp": "2025-12-14T05:49:33.535875"}
 {"event": "feedback", "run_id": "test", "turn": 1, "speaker": "A", "issue_type": "test", "description": "test", "suggested_fix": null, "timestamp": "2025-12-14T05:49:33.536455"}
 {"test": "ok", "timestamp": "2025-12-14T05:49:56.813985"}
+{"event": "feedback", "run_id": "run_001", "turn": 2, "speaker": "A", "issue_type": "tone_drift", "description": "やなの感情マーカー「わ！」「へ？」が少なかった", "suggested_fix": "より感情的な反応を増やす", "timestamp": "2025-12-14T15:02:16.267117"}
+{"event": "feedback", "run_id": "run_001", "turn": 4, "speaker": "B", "issue_type": "knowledge_overstep", "description": "あゆがガジェット・GPU について話し始めてしまった（バイト中）", "suggested_fix": "テック知識は観光ナレーション中は避ける", "timestamp": "2025-12-14T15:02:16.267433"}
+{"event": "feedback", "run_id": "run_002", "turn": 1, "speaker": "A", "issue_type": "character_break", "description": "やなが敬語を使ってしまった（キャラ崩壊）", "suggested_fix": "カジュアルな日本語に統一する", "timestamp": "2025-12-14T15:02:16.267699"}
+{"event": "feedback", "run_id": "run_002", "turn": 3, "speaker": "B", "issue_type": "tone_drift", "description": "あゆが「です」マーカーなしで話している", "suggested_fix": "敬語マーカーを常に含める", "timestamp": "2025-12-14T15:02:16.267959"}
+{"event": "feedback", "run_id": "run_003", "turn": 2, "speaker": "A", "issue_type": "slow_progress", "description": "やなの応答が短すぎて観光地の説明が進まない", "suggested_fix": "もっと詳しく、複数の視点から説明する", "timestamp": "2025-12-14T15:02:16.268166"}
+{"event": "feedback", "run_id": "run_003", "turn": 5, "speaker": "B", "issue_type": "tone_drift", "description": "あゆが「姉様」を使わずに名前で呼んでしまった", "suggested_fix": "必ず「姉様」で呼びかける", "timestamp": "2025-12-14T15:02:16.268416"}
+{"event": "feedback", "run_id": "run_004", "turn": 1, "speaker": "A", "issue_type": "tone_drift", "description": "やなの声がカジュアル過ぎて子どもっぽい", "suggested_fix": "大人っぽいトーンを保つ", "timestamp": "2025-12-14T15:02:16.268622"}
+{"event": "feedback", "run_id": "run_004", "turn": 3, "speaker": "B", "issue_type": "knowledge_overstep", "description": "あゆが建築知識を大きくはみ出して家具の話をしている", "suggested_fix": "建築・地理・歴史・科学の範囲内に留める", "timestamp": "2025-12-14T15:02:16.268813"}
+{"event": "feedback", "run_id": "test_001", "turn": 1, "speaker": "A", "issue_type": "tone_drift", "description": "Test tone drift issue", "suggested_fix": "Add more emotion markers", "timestamp": "2025-12-14T15:02:59.035993"}
+{"event": "feedback", "run_id": "test_001", "turn": 2, "speaker": "B", "issue_type": "knowledge_overstep", "description": "Test knowledge overstep", "suggested_fix": "Stay within domains", "timestamp": "2025-12-14T15:02:59.036363"}
