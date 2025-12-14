@@ -150,32 +150,41 @@ class NarrationPipeline:
 
             # Step 3: Director による品質判定
             print(f"    > Director is judging quality...")
-            full_dialogue = " ".join([speech for _, speech in dialogue_history])
 
-            director_verdict = self.director.judge(
-                dialogue=full_dialogue,
-                char_a_domain=self.char_a.domains,
-                char_b_domain=self.char_b.domains,
+            # 最後の発言を評価対象とする
+            last_speaker, last_speech = dialogue_history[-1]
+            previous_speech = dialogue_history[-2][1] if len(dialogue_history) > 1 else None
+
+            director_evaluation = self.director.evaluate_response(
+                frame_description=scene_description,
+                speaker=last_speaker,
+                response=last_speech,
+                partner_previous_speech=previous_speech,
+                speaker_domains=self.char_a.domains if last_speaker == "A" else self.char_b.domains,
             )
 
-            result["director_verdict"] = director_verdict
-            print(f"      Status: {director_verdict['status']}")
-            print(f"      Reason: {director_verdict['reason']}")
+            result["director_verdict"] = {
+                "status": str(director_evaluation.status.name),
+                "reason": director_evaluation.reason,
+                "suggestion": director_evaluation.suggestion,
+            }
+            print(f"      Status: {director_evaluation.status.name}")
+            print(f"      Reason: {director_evaluation.reason}")
 
             # PASS なら終了
-            if director_verdict["status"] == "PASS":
+            if result["director_verdict"]["status"] == "PASS":
                 print("\n✅ Dialogue PASSED director judgment!")
                 result["status"] = "success"
                 break
 
             # MODIFY なら終了（修正指示必要）
-            elif director_verdict["status"] == "MODIFY":
+            elif result["director_verdict"]["status"] == "MODIFY":
                 print("\n⚠️  Director requested modification. Skipping.")
                 result["status"] = "skip"
                 break
 
             # RETRY なら次のイテレーションへ
-            elif director_verdict["status"] == "RETRY":
+            elif result["director_verdict"]["status"] == "RETRY":
                 print("  ↻ Retrying with director feedback...")
                 if iteration < max_iterations - 1:
                     continue
