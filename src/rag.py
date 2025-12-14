@@ -74,24 +74,37 @@ class RAGDatabase:
         return [(domain, snippet) for _, domain, snippet in scored_results[:top_k]]
 
     def _score_similarity(self, query: str, content: str) -> float:
-        """Score similarity between query and content"""
-        # Simple keyword matching for Japanese text compatibility
+        """Score similarity between query and content (Japanese-aware)"""
+        # Check exact match
+        if query in content:
+            return 1.0
+
+        # Check if any part of query appears in content
         query_lower = query.lower()
         content_lower = content.lower()
 
-        # Check if query keywords appear in content
         if query_lower in content_lower:
             return 1.0
 
-        # Token-based scoring (split by space/punctuation)
-        query_tokens = set(query_lower.split())
-        content_tokens = set(content_lower.split())
+        # For Japanese text: character n-gram matching
+        # Extract 2-character sequences from query
+        query_chars = set()
+        for i in range(len(query) - 1):
+            query_chars.add(query[i:i+2])
 
-        if not query_tokens:
+        if not query_chars:
             return 0.0
 
-        intersection = len(query_tokens & content_tokens)
-        return intersection / len(query_tokens)
+        # Count how many query n-grams appear in content
+        content_chars = set()
+        for i in range(len(content) - 1):
+            content_chars.add(content[i:i+2])
+
+        if not content_chars:
+            return 0.0
+
+        intersection = len(query_chars & content_chars)
+        return intersection / len(query_chars)
 
     def _extract_snippet(self, content: str, max_length: int = 200) -> str:
         """Extract a meaningful snippet from content"""

@@ -32,9 +32,24 @@ class Character:
         # Character metadata
         self.name = "Elder Sister" if char_id == "A" else "Younger Sister"
         self.domains = (
-            ["tourism", "action", "phenomena"]
+            [
+                "sake",
+                "tourism_aesthetics",
+                "cultural_philosophy",
+                "human_action_reaction",
+                "phenomena",
+                "action",
+            ]
             if char_id == "A"
-            else ["geography", "history", "architecture"]
+            else [
+                "geography",
+                "history",
+                "architecture",
+                "natural_science",
+                "etiquette_and_manners",
+                "gadgets_and_tech",
+                "ai_base_construction",
+            ]
         )
 
     def speak(
