@@ -42,6 +42,7 @@ class Character:
         frame_description: str,
         partner_speech: Optional[str] = None,
         director_instruction: Optional[str] = None,
+        vision_info: Optional[str] = None,
     ) -> str:
         """
         Generate a response for this character.
@@ -50,6 +51,7 @@ class Character:
             frame_description: Description of the current frame
             partner_speech: The other character's previous speech (if any)
             director_instruction: Special instruction from director (if any)
+            vision_info: Vision processor output (【映像情報】... format) (optional)
 
         Returns:
             Character's response text
@@ -66,6 +68,7 @@ class Character:
             partner_speech=partner_speech,
             director_instruction=director_instruction,
             rag_hints=rag_hints,
+            vision_info=vision_info,
         )
 
         # Call LLM
@@ -118,6 +121,7 @@ class Character:
         partner_speech: Optional[str] = None,
         director_instruction: Optional[str] = None,
         rag_hints: List[str] = None,
+        vision_info: Optional[str] = None,
     ) -> str:
         """Build the user prompt for LLM"""
         lines = []
@@ -125,6 +129,10 @@ class Character:
         lines.append("【Current Scene】")
         lines.append(frame_description)
         lines.append("")
+
+        if vision_info:
+            lines.append(vision_info)
+            lines.append("")
 
         if partner_speech:
             lines.append("【Partner's Previous Speech】")

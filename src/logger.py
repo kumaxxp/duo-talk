@@ -180,6 +180,44 @@ class Logger:
             "reason": reason,
         })
 
+    def log_narration(
+        self,
+        scene_description: str,
+        image_path: str,
+        vision_analysis: dict,
+        dialogue: dict,
+        director_verdict: dict,
+    ) -> str:
+        """
+        Log a complete narration session.
+
+        Args:
+            scene_description: Scene/theme description
+            image_path: Input image path
+            vision_analysis: Vision processor output
+            dialogue: Character dialogue (turn-by-turn)
+            director_verdict: Director's quality judgment
+
+        Returns:
+            Log ID (timestamp)
+        """
+        import uuid
+        log_id = str(uuid.uuid4())[:8] + "_" + datetime.now().strftime("%Y%m%d_%H%M%S")
+
+        self.log_event({
+            "event": "narration",
+            "log_id": log_id,
+            "scene_description": scene_description,
+            "image_path": image_path,
+            "vision_status": vision_analysis.get("status"),
+            "vision_main_subjects": vision_analysis.get("visual_info", {}).get("main_subjects", ""),
+            "dialogue_turns": len(dialogue),
+            "director_status": director_verdict.get("status") if director_verdict else None,
+            "director_reason": director_verdict.get("reason") if director_verdict else None,
+        })
+
+        return log_id
+
 
 # Global logger instance
 _logger: Logger = None
