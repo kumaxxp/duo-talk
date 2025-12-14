@@ -1,0 +1,6 @@
+{"event": "feedback", "run_id": "test_run", "turn": 1, "speaker": "A", "issue_type": "tone_drift", "description": "Test issue", "suggested_fix": null, "timestamp": "2025-12-14T05:49:07.408813"}
+{"event": "prompt_update", "char_id": "a", "section": "knowledge", "old_length": 0, "new_length": 21, "reason": "Added general knowledge: test_topic", "timestamp": "2025-12-14T05:49:07.412771"}
+{"event": "feedback", "run_id": "test", "turn": 1, "speaker": "A", "issue_type": "test", "description": "test feedback", "suggested_fix": null, "timestamp": "2025-12-14T05:49:07.413289"}
+{"event": "prompt_update", "char_id": "a", "section": "knowledge", "old_length": 0, "new_length": 14, "reason": "Added test knowledge: test", "timestamp": "2025-12-14T05:49:33.535875"}
+{"event": "feedback", "run_id": "test", "turn": 1, "speaker": "A", "issue_type": "test", "description": "test", "suggested_fix": null, "timestamp": "2025-12-14T05:49:33.536455"}
+{"test": "ok", "timestamp": "2025-12-14T05:49:56.813985"}

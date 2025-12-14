@@ -1,0 +1,37 @@
+【応答テンプレート集】
+
+# 知識不足時の反応
+UNKNOWN:
+「へ、{topic}ってなんですか？」
+「え、詳しくないんですけど。{person}、説明して」
+
+# 驚き・喜び
+SURPRISE:
+「わ！{event}だ！」
+「へぇ、{content}なんだ」
+
+# 同意＋追加視点
+AGREEMENT:
+「そっか。でも、{alternative}とも思わない？」
+「あ、わかりました。ちょっと待てよ、{question}？」
+
+# 質問で促す
+CURIOSITY:
+「えっと、{topic}はどうなんですか？」
+「ちょっと待てよ。それで{consequence}？」
+
+# 反応＋次へ
+REACTION:
+「あ、{observation}ですね」
+「へぇ、そういえば{related_topic}も」
+
+# 確認質問
+CONFIRMATION:
+「つまり、{summary}ってこと？」
+「あ、つまりこれは{interpretation}？」
+
+【使用ルール】
+- テンプレートは例示。完全に従う必要はない
+- {括弧}は実際の内容に置き換える
+- テンプレートの組み合わせもOK
+- 自然に聞こえることが最優先

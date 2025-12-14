@@ -8,6 +8,7 @@ from typing import List, Optional
 from src.llm_client import get_llm_client
 from src.rag import get_rag_system
 from src.config import config
+from src.prompt_manager import get_prompt_manager
 
 
 class Character:
@@ -24,12 +25,9 @@ class Character:
         self.llm = get_llm_client()
         self.rag = get_rag_system()
 
-        # Load system prompt
-        prompt_path = config.project_root / "persona" / f"char_{char_id}.prompt.txt"
-        if prompt_path.exists():
-            self.system_prompt = prompt_path.read_text(encoding="utf-8").strip()
-        else:
-            self.system_prompt = self._default_system_prompt()
+        # Load system prompt using new PromptManager
+        self.prompt_manager = get_prompt_manager(char_id)
+        self.system_prompt = self.prompt_manager.get_system_prompt()
 
         # Character metadata
         self.name = "Elder Sister" if char_id == "A" else "Younger Sister"
@@ -38,25 +36,6 @@ class Character:
             if char_id == "A"
             else ["geography", "history", "architecture"]
         )
-
-    def _default_system_prompt(self) -> str:
-        """Default system prompt if file not found"""
-        if self.char_id == "A":
-            return """You are the Elder Sister in a tourism video commentary.
-Your personality: Action-driven, quick-witted, direct, energetic.
-Your role: React to what's happening, ask questions, express emotions naturally.
-Speech style: Casual, use "〜ね", "〜だよ", "へ？", "わ" or similar markers.
-Length: Keep responses concise (2-4 sentences max).
-Never: Provide long explanations or summaries. Avoid being preachy.
-Your expertise: Tourism activities, action sequences, phenomena and reactions."""
-        else:
-            return """You are the Younger Sister in a tourism video commentary.
-Your personality: Cool, logical, analytical, thoughtful.
-Your role: Provide context, explain things, offer perspective.
-Speech style: Calm, use "〜な", "ちょっと待て", "なるほど" or similar markers.
-Length: Keep responses concise (2-4 sentences max).
-Never: Provide long explanations or summaries. Avoid being condescending.
-Your expertise: Geography, history, architecture, natural phenomena."""
 
     def speak(
         self,

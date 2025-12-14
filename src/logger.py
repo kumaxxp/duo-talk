@@ -123,6 +123,63 @@ class Logger:
             "message": message,
         })
 
+    def log_feedback(
+        self,
+        run_id: str,
+        turn_num: int,
+        speaker: str,
+        issue_type: str,
+        description: str,
+        suggested_fix: str = None,
+    ) -> None:
+        """
+        Log user feedback for a specific turn.
+
+        Args:
+            run_id: Run ID
+            turn_num: Turn number
+            speaker: "A" or "B"
+            issue_type: "tone_drift" | "knowledge_overstep" | "slow_progress" | "character_break" | "other"
+            description: User's description of the issue
+            suggested_fix: Optional suggestion for fixing
+        """
+        self.log_event({
+            "event": "feedback",
+            "run_id": run_id,
+            "turn": turn_num,
+            "speaker": speaker,
+            "issue_type": issue_type,
+            "description": description,
+            "suggested_fix": suggested_fix,
+        })
+
+    def log_prompt_update(
+        self,
+        char_id: str,
+        section: str,
+        old_content: str,
+        new_content: str,
+        reason: str,
+    ) -> None:
+        """
+        Log prompt update (variable part modification).
+
+        Args:
+            char_id: Character ID
+            section: "fixed" | "variable" | "templates"
+            old_content: Previous content
+            new_content: New content
+            reason: Reason for update
+        """
+        self.log_event({
+            "event": "prompt_update",
+            "char_id": char_id,
+            "section": section,
+            "old_length": len(old_content),
+            "new_length": len(new_content),
+            "reason": reason,
+        })
+
 
 # Global logger instance
 _logger: Logger = None

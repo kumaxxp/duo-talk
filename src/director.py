@@ -8,6 +8,7 @@ from typing import Optional
 from src.llm_client import get_llm_client
 from src.config import config
 from src.types import DirectorEvaluation, DirectorStatus
+from src.prompt_manager import get_prompt_manager
 
 
 class Director:
@@ -15,15 +16,12 @@ class Director:
 
     def __init__(self):
         self.llm = get_llm_client()
-        # Load director system prompt
-        director_prompt_path = config.project_root / "persona" / "director.prompt.txt"
-        if director_prompt_path.exists():
-            self.system_prompt = director_prompt_path.read_text(encoding="utf-8").strip()
-        else:
-            self.system_prompt = self._default_system_prompt()
+        # Load director system prompt using PromptManager
+        self.prompt_manager = get_prompt_manager("director")
+        self.system_prompt = self.prompt_manager.get_system_prompt()
 
     def _default_system_prompt(self) -> str:
-        """Default director prompt if file not found"""
+        """Default director prompt if file not found (deprecated)"""
         return """You are a film director orchestrating a natural dialogue between two characters watching a tourism video.
 
 Your role:
