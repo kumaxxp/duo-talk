@@ -266,6 +266,7 @@ export default function App(){
              <div className="space-y-3">
                {filteredTurns.map(t=> (
                  <TurnCard key={t} sp={speaks[t]} rag={rag[t]} beat={directors[t]?.beat}
+                   directorStatus={directors[t]?.status} directorReason={directors[t]?.reason}
                    onSelect={()=> { setSelected(t); setSelectedSrc('live'); requestAnimationFrame(()=>{ const el=document.getElementById(`rag-${t}`); el?.scrollIntoView({block:'center', behavior:'smooth'}) }) }}
                    onViewPrompts={(e)=> { lastFocusRef.current = e.currentTarget as HTMLElement; setModalTurn(t); setModalSrc('live') }} />
                ))}
@@ -285,6 +286,7 @@ export default function App(){
                     <div>
                       {cmpA?.speaks?.[t] ? (
                         <TurnCard sp={cmpA.speaks[t]} rag={cmpA.rag?.[t]} beat={cmpA.directors?.[t]?.beat}
+                          directorStatus={cmpA.directors?.[t]?.status} directorReason={cmpA.directors?.[t]?.reason}
                           onSelect={()=> { setSelected(t); setSelectedSrc('A'); requestAnimationFrame(()=>{ const el=document.getElementById(`rag-${t}`); el?.scrollIntoView({block:'center', behavior:'smooth'}) }) }}
                           onViewPrompts={(e)=> { lastFocusRef.current = e.currentTarget as HTMLElement; setModalTurn(t); setModalSrc('A') }} />
                       ) : (
@@ -296,6 +298,7 @@ export default function App(){
                     <div>
                       {cmpB?.speaks?.[t] ? (
                         <TurnCard sp={cmpB.speaks[t]} rag={cmpB.rag?.[t]} beat={cmpB.directors?.[t]?.beat}
+                          directorStatus={cmpB.directors?.[t]?.status} directorReason={cmpB.directors?.[t]?.reason}
                           onSelect={()=> { setSelected(t); setSelectedSrc('B'); requestAnimationFrame(()=>{ const el=document.getElementById(`rag-${t}`); el?.scrollIntoView({block:'center', behavior:'smooth'}) }) }}
                           onViewPrompts={(e)=> { lastFocusRef.current = e.currentTarget as HTMLElement; setModalTurn(t); setModalSrc('B') }} />
                       ) : (

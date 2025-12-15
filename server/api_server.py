@@ -132,10 +132,21 @@ def stream_run_events():
 
     def event_generator():
         """Generate SSE events from the run log file"""
+        import time
+
         runs_file = config.log_dir / "commentary_runs.jsonl"
         last_pos = 0
+        heartbeat_counter = 0
+        run_complete = False
+        timeout_counter = 0
+        max_timeout = 120  # 60 seconds max wait after no new events
 
-        while True:
+        # Send initial connection message
+        yield f"event: connected\n"
+        yield f"data: {{\"run_id\": \"{run_id}\", \"status\": \"connected\"}}\n\n"
+
+        while not run_complete and timeout_counter < max_timeout:
+            events_found = False
             try:
                 if runs_file.exists():
                     with open(runs_file, 'r', encoding='utf-8') as f:
@@ -144,18 +155,34 @@ def stream_run_events():
                             try:
                                 event = json.loads(line)
                                 if event.get('run_id') == run_id:
+                                    events_found = True
                                     # Format as SSE
                                     event_type = event.get('event', 'unknown')
                                     yield f"event: {event_type}\n"
                                     yield f"data: {json.dumps(event)}\n\n"
+
+                                    # Check if run is complete
+                                    if event_type == 'narration_complete':
+                                        run_complete = True
                             except json.JSONDecodeError:
                                 pass
                         last_pos = f.tell()
             except Exception as e:
                 logger.error(f"Error in SSE stream: {e}")
 
+            # Reset timeout if events were found, otherwise increment
+            if events_found:
+                timeout_counter = 0
+            else:
+                timeout_counter += 1
+
+            # Send heartbeat every 10 iterations (5 seconds)
+            heartbeat_counter += 1
+            if heartbeat_counter >= 10:
+                yield f": heartbeat\n\n"
+                heartbeat_counter = 0
+
             # Small delay to prevent busy waiting
-            import time
             time.sleep(0.5)
 
     return Response(event_generator(), mimetype='text/event-stream',
@@ -266,17 +293,17 @@ def run_start():
             try:
                 logger.info(f"Starting pipeline for {run_id}")
 
-                # Use a default test image or generate synthetic one
-                image_path = config.project_root / "tests" / "images" / "temple_sample.jpg"
-
-                # Initialize pipeline if needed
+                # Initialize pipeline
                 pipeline = NarrationPipeline()
 
-                # Process with the topic as scene description
+                # Process with the topic as scene description (skip vision analysis)
+                # Vision分析をスキップし、トピックのみで対話を生成
                 result = pipeline.process_image(
-                    str(image_path),
-                    topic,
-                    max_iterations=max_turns
+                    image_path=None,
+                    scene_description=topic,
+                    max_iterations=max_turns,
+                    run_id=run_id,
+                    skip_vision=True,  # トピックのみで対話生成
                 )
 
                 # Log completion
