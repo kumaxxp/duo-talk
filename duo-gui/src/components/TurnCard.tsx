@@ -9,7 +9,7 @@ const CHARACTER_INFO = {
   B: { name: 'あゆ', fullName: '澄ヶ瀬あゆ (妹)', color: 'bg-sky-500', bgColor: 'bg-sky-50 border-sky-200' },
 }
 
-export default function TurnCard({ sp, rag, beat, directorStatus, directorReason, onSelect, onViewPrompts }:{ sp: SpeakEvent, rag?: RAGEvent, beat?: Beat, directorStatus?: string, directorReason?: string, onSelect?: ()=>void, onViewPrompts?: (e: React.MouseEvent<HTMLButtonElement>)=>void }){
+export default function TurnCard({ sp, rag, beat, directorStatus, directorReason, directorGuidance, onSelect, onViewPrompts }:{ sp: SpeakEvent, rag?: RAGEvent, beat?: Beat, directorStatus?: string, directorReason?: string, directorGuidance?: string, onSelect?: ()=>void, onViewPrompts?: (e: React.MouseEvent<HTMLButtonElement>)=>void }){
   const canon = rag?.canon?.preview||''
   const lore  = rag?.lore?.preview||''
   const patt  = rag?.pattern?.preview||''
@@ -67,15 +67,23 @@ export default function TurnCard({ sp, rag, beat, directorStatus, directorReason
         <div className="whitespace-pre-wrap leading-relaxed text-gray-800">{sp.text}</div>
       </div>
 
-      {/* Director フィードバック（RETRY/MODIFY時に詳細表示） */}
-      {directorStatus && directorStatus !== 'PASS' && directorReason && (
+      {/* Director フィードバック（常に表示） */}
+      {directorStatus && directorReason && (
         <div className={`mt-2 p-2 rounded text-sm ${
+          directorStatus === 'PASS' ? 'bg-green-50 border border-green-200' :
           directorStatus === 'RETRY' ? 'bg-amber-50 border border-amber-200' : 'bg-red-50 border border-red-200'
         }`}>
           <div className="font-medium text-xs mb-1">
-            {directorStatus === 'RETRY' ? '🔄 再生成の理由:' : '⚠️ 問題点:'}
+            {directorStatus === 'PASS' ? '✓ Director判定:' :
+             directorStatus === 'RETRY' ? '🔄 再生成の理由:' : '⚠️ 問題点:'}
           </div>
           <div className="text-slate-600 text-xs">{directorReason}</div>
+          {directorGuidance && (
+            <div className="mt-1 pt-1 border-t border-green-200/50">
+              <span className="text-slate-500 text-xs">💡 次ターン: </span>
+              <span className="text-slate-600 text-xs">{directorGuidance.length > 80 ? directorGuidance.slice(0, 80) + '...' : directorGuidance}</span>
+            </div>
+          )}
         </div>
       )}
 

@@ -57,21 +57,41 @@ def list_runs():
                 for line in f:
                     try:
                         event = json.loads(line)
-                        if event.get('event') == 'narration_complete':
-                            run_id = event.get('run_id')
-                            if run_id and run_id not in run_ids:
+                        run_id = event.get('run_id')
+                        if not run_id:
+                            continue
+
+                        # narration_start イベントからtopicを取得
+                        if event.get('event') == 'narration_start':
+                            if run_id not in run_ids:
                                 run_ids[run_id] = {
                                     'run_id': run_id,
-                                    'scene': event.get('scene', 'Unknown'),
+                                    'topic': event.get('topic'),
                                     'timestamp': event.get('timestamp'),
-                                    'status': event.get('status', 'unknown')
+                                    'status': 'running'
                                 }
+                            else:
+                                # topicを更新（narration_startが後から来た場合）
+                                run_ids[run_id]['topic'] = event.get('topic') or run_ids[run_id].get('topic')
+
+                        # narration_complete イベントでステータスを更新
+                        elif event.get('event') == 'narration_complete':
+                            if run_id not in run_ids:
+                                run_ids[run_id] = {
+                                    'run_id': run_id,
+                                    'topic': event.get('topic') or event.get('scene'),
+                                    'timestamp': event.get('timestamp'),
+                                    'status': event.get('status', 'completed')
+                                }
+                            else:
+                                run_ids[run_id]['status'] = event.get('status', 'completed')
+
                     except json.JSONDecodeError:
                         continue
 
             # Return most recent first
             runs = sorted(run_ids.values(),
-                         key=lambda x: x['timestamp'],
+                         key=lambda x: x.get('timestamp') or '',
                          reverse=True)
 
         return jsonify(runs)

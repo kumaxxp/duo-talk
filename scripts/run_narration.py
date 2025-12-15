@@ -57,6 +57,7 @@ class NarrationPipeline:
         cut_cue: Optional[str] = None,
         status: Optional[str] = None,
         reason: Optional[str] = None,
+        guidance: Optional[str] = None,
     ) -> None:
         """GUI用のdirectorイベントを発行"""
         from datetime import datetime
@@ -68,6 +69,7 @@ class NarrationPipeline:
             "cut_cue": cut_cue,
             "status": status,
             "reason": reason,
+            "guidance": guidance,  # 次ターンへの指示
             "ts": datetime.now().isoformat(),
         })
 
@@ -326,7 +328,21 @@ class NarrationPipeline:
             beat_map = {"PASS": "PAYOFF", "RETRY": "BANter", "MODIFY": "PIVOT"}
             beat = beat_map.get(director_evaluation.status.name, "BANter")
 
-            # GUI用 director イベントを発行
+            # 次のターンへのDirector Guidanceを生成（PASSの場合）
+            next_turn_guidance = None
+            if director_evaluation.status.name == "PASS" and turn < max_iterations - 1:
+                next_turn_guidance = self.director.get_instruction_for_next_turn(
+                    frame_description=scene_description,
+                    conversation_so_far=dialogue_history,
+                    turn_number=turn_counter + 1,
+                )
+                if next_turn_guidance:
+                    print(f"    💡 Director guidance for next turn: {next_turn_guidance[:50]}...")
+                director_guidance = next_turn_guidance
+            else:
+                director_guidance = director_evaluation.suggestion
+
+            # GUI用 director イベントを発行（guidance生成後）
             self._emit_director_event(
                 run_id,
                 turn_counter,
@@ -334,19 +350,8 @@ class NarrationPipeline:
                 director_evaluation.suggestion,
                 status=director_evaluation.status.name,
                 reason=director_evaluation.reason,
+                guidance=next_turn_guidance,
             )
-
-            # 次のターンへのDirector Guidanceを生成（PASSの場合）
-            if director_evaluation.status.name == "PASS" and turn < max_iterations - 1:
-                director_guidance = self.director.get_instruction_for_next_turn(
-                    frame_description=scene_description,
-                    conversation_so_far=dialogue_history,
-                    turn_number=turn_counter + 1,
-                )
-                if director_guidance:
-                    print(f"    💡 Director guidance for next turn: {director_guidance[:50]}...")
-            else:
-                director_guidance = director_evaluation.suggestion
 
             # 最終ターンの場合のみ verdict を記録
             if turn == max_iterations - 1:
