@@ -9,6 +9,7 @@ from src.llm_client import get_llm_client
 from src.config import config
 from src.types import DirectorEvaluation, DirectorStatus
 from src.prompt_manager import get_prompt_manager
+from src.beat_tracker import get_beat_tracker
 
 
 class Director:
@@ -19,6 +20,10 @@ class Director:
         # Load director system prompt using PromptManager
         self.prompt_manager = get_prompt_manager("director")
         self.system_prompt = self.prompt_manager.get_system_prompt()
+        # Initialize beat tracker for pattern management
+        self.beat_tracker = get_beat_tracker()
+        # Track recent patterns to avoid repetition
+        self.recent_patterns: list[str] = []
 
     def _default_system_prompt(self) -> str:
         """Default director prompt if file not found (deprecated)"""
@@ -45,6 +50,7 @@ Respond ONLY with JSON:
         partner_previous_speech: Optional[str] = None,
         speaker_domains: list = None,
         conversation_history: list = None,
+        turn_number: int = 1,
     ) -> DirectorEvaluation:
         """
         Evaluate a character's response.
@@ -56,10 +62,14 @@ Respond ONLY with JSON:
             partner_previous_speech: The other character's previous speech
             speaker_domains: List of domains this character should know (e.g., ["geography", "history"])
             conversation_history: List of (speaker, text) tuples for context
+            turn_number: Current turn number for beat tracking
 
         Returns:
-            DirectorEvaluation with status and reasoning
+            DirectorEvaluation with status, reasoning, and next pattern/instruction
         """
+        # Get current beat stage from turn number
+        current_beat = self.beat_tracker.get_current_beat(turn_number)
+        beat_info = self.beat_tracker.get_beat_info(current_beat)
         if speaker_domains is None:
             speaker_domains = (
                 [
@@ -112,6 +122,9 @@ Respond ONLY with JSON:
             domains=speaker_domains,
             conversation_history=conversation_history,
             tone_markers_found=tone_info["found"],
+            turn_number=turn_number,
+            current_beat=current_beat,
+            beat_info=beat_info,
         )
 
         try:
@@ -171,17 +184,44 @@ Respond ONLY with JSON:
             else:
                 reason_with_issues = reason
 
+            # Extract new orchestration fields
+            next_pattern = result.get("next_pattern")
+            next_instruction = result.get("next_instruction")
+            beat_stage = result.get("beat_stage", current_beat)
+
+            # Validate and track pattern
+            if next_pattern and next_pattern in ["A", "B", "C", "D", "E"]:
+                # Check if pattern is allowed
+                if not self.beat_tracker.is_pattern_allowed(next_pattern, self.recent_patterns):
+                    # Suggest alternative pattern
+                    next_pattern = self.beat_tracker.suggest_pattern(turn_number, self.recent_patterns)
+                self.recent_patterns.append(next_pattern)
+                # Keep only last 5 patterns
+                if len(self.recent_patterns) > 5:
+                    self.recent_patterns = self.recent_patterns[-5:]
+            else:
+                # Fallback: use beat tracker to suggest pattern
+                next_pattern = self.beat_tracker.suggest_pattern(turn_number, self.recent_patterns)
+                self.recent_patterns.append(next_pattern)
+
             return DirectorEvaluation(
                 status=status,
                 reason=reason_with_issues,
                 suggestion=result.get("suggestion"),
+                next_pattern=next_pattern,
+                next_instruction=next_instruction,
+                beat_stage=beat_stage,
             )
 
         except Exception as e:
-            # Fallback evaluation
+            # Fallback evaluation with beat tracking
+            fallback_pattern = self.beat_tracker.suggest_pattern(turn_number, self.recent_patterns)
+            self.recent_patterns.append(fallback_pattern)
             return DirectorEvaluation(
                 status=DirectorStatus.PASS,
                 reason=f"Director evaluation error: {str(e)}",
+                next_pattern=fallback_pattern,
+                beat_stage=current_beat,
             )
 
     def _build_evaluation_prompt(
@@ -193,8 +233,11 @@ Respond ONLY with JSON:
         domains: list = None,
         conversation_history: list = None,
         tone_markers_found: list = None,
+        turn_number: int = 1,
+        current_beat: str = "SETUP",
+        beat_info: dict = None,
     ) -> str:
-        """Build comprehensive evaluation prompt checking all 5 criteria"""
+        """Build comprehensive evaluation prompt checking all 5 criteria with beat orchestration"""
         char_desc = "Elder Sister (やな) - action-driven, quick-witted" if speaker == "A" else "Younger Sister (あゆ) - logical, reflective, formal"
         domains_str = ", ".join(domains or [])
 
@@ -212,12 +255,35 @@ Respond ONLY with JSON:
             else "地理・歴史・建築・自然科学・作法・マナー、テック知識（但し長説は制止されるまで許容）"
         )
 
+        # Get beat-specific information
+        if beat_info is None:
+            beat_info = {}
+        beat_goal = beat_info.get("goal", "シーンの進行")
+        beat_tone = beat_info.get("tone", "自然")
+        preferred_patterns = beat_info.get("preferred_patterns", ["A", "B"])
+        preferred_patterns_str = ", ".join(preferred_patterns)
+
+        # Pattern descriptions for LLM guidance
+        pattern_guide = """
+対話パターン説明:
+  A: 発見→補足（やな:発見・驚き → あゆ:情報補足）
+  B: 疑問→解説（やな:質問 → あゆ:回答）
+  C: 誤解→訂正（やな:勘違い → あゆ:訂正）
+  D: 脱線→修正（やな:話題脱線 → あゆ:軌道修正）
+  E: 共感→発展（やな:感想 → あゆ:発展情報）"""
+
         prompt = f"""
 【Current Frame】
 {frame_description}
 
 【Character】
 {speaker} ({char_desc})
+
+【Turn Info】
+ターン {turn_number} / ビート段階: {current_beat}
+ビート目標: {beat_goal}
+推奨パターン: {preferred_patterns_str}
+{pattern_guide}
 
 【Expected Knowledge Domains】
 {domain_expectations}
@@ -285,8 +351,15 @@ JSON ONLY:
   "status": "PASS" | "RETRY" | "MODIFY",
   "reason": "簡潔な理由（日本語OK、30-50字）",
   "issues": ["項目1の問題", "項目2の問題"],
-  "suggestion": "修正案（RETRY/MODIFYの場合、具体的な改善点）"
+  "suggestion": "修正案（RETRY/MODIFYの場合、具体的な改善点）",
+  "next_pattern": "A" | "B" | "C" | "D" | "E",
+  "next_instruction": "次の発言者への具体的指示（1-2文、日本語）",
+  "beat_stage": "{current_beat}"
 }}
+
+【振付指示について】
+- next_pattern: 現在のビート段階に合った推奨パターン（{preferred_patterns_str}）から選択
+- next_instruction: 次の発言者が何に注目・反応すべきか具体的に指示
 """
         return prompt.strip()
 

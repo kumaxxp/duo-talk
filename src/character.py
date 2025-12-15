@@ -9,6 +9,7 @@ from src.llm_client import get_llm_client
 from src.rag import get_rag_system
 from src.config import config
 from src.prompt_manager import get_prompt_manager
+from src.beat_tracker import get_beat_tracker
 
 
 class Character:
@@ -31,6 +32,7 @@ class Character:
 
         # Character metadata
         self.name = "Elder Sister" if char_id == "A" else "Younger Sister"
+        self.char_name = "やな" if char_id == "A" else "あゆ"
         self.domains = (
             [
                 "sake",
@@ -55,6 +57,9 @@ class Character:
         # 最後に使用したRAGヒントを保存（外部からアクセス可能）
         self.last_rag_hints: List[str] = []
 
+        # Initialize beat tracker for pattern information
+        self.beat_tracker = get_beat_tracker()
+
     def speak(
         self,
         frame_description: str,
@@ -62,6 +67,8 @@ class Character:
         director_instruction: Optional[str] = None,
         vision_info: Optional[str] = None,
         conversation_context: Optional[str] = None,
+        dialogue_pattern: Optional[str] = None,
+        beat_stage: Optional[str] = None,
     ) -> str:
         """
         Generate a response for this character.
@@ -72,6 +79,8 @@ class Character:
             director_instruction: Special instruction from director (if any)
             vision_info: Vision processor output (【映像情報】... format) (optional)
             conversation_context: Recent conversation history for context (optional)
+            dialogue_pattern: Pattern type ("A", "B", "C", "D", "E") from director
+            beat_stage: Current beat stage ("SETUP", "EXPLORATION", etc.)
 
         Returns:
             Character's response text
@@ -93,6 +102,8 @@ class Character:
             rag_hints=rag_hints,
             vision_info=vision_info,
             conversation_context=conversation_context,
+            dialogue_pattern=dialogue_pattern,
+            beat_stage=beat_stage,
         )
 
         # Call LLM
@@ -147,13 +158,40 @@ class Character:
         rag_hints: List[str] = None,
         vision_info: Optional[str] = None,
         conversation_context: Optional[str] = None,
+        dialogue_pattern: Optional[str] = None,
+        beat_stage: Optional[str] = None,
     ) -> str:
-        """Build the user prompt for LLM"""
+        """Build the user prompt for LLM with pattern guidance"""
         lines = []
 
         lines.append("【Current Scene】")
         lines.append(frame_description)
         lines.append("")
+
+        # Add dialogue pattern guidance if provided
+        if dialogue_pattern:
+            pattern_info = self.beat_tracker.get_pattern_info(dialogue_pattern)
+            if pattern_info:
+                role_key = "yana_role" if self.char_id == "A" else "ayu_role"
+                my_role = pattern_info.get(role_key, "")
+                pattern_name = pattern_info.get("name", "")
+                example = pattern_info.get("example", "")
+
+                lines.append("【対話パターン指示】")
+                lines.append(f"パターン{dialogue_pattern}: {pattern_name}")
+                lines.append(f"あなた（{self.char_name}）の役割: {my_role}")
+                if example:
+                    lines.append(f"例: {example}")
+                lines.append("")
+
+        # Add beat stage context if provided
+        if beat_stage:
+            beat_info = self.beat_tracker.get_beat_info(beat_stage)
+            if beat_info:
+                lines.append("【ビート段階】")
+                lines.append(f"{beat_stage}: {beat_info.get('goal', '')}")
+                lines.append(f"トーン: {beat_info.get('tone', '')}")
+                lines.append("")
 
         if vision_info:
             lines.append(vision_info)

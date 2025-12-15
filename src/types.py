@@ -33,6 +33,23 @@ class CharacterConfig:
     id: str = field(default="A")
 
 
+class BeatStage(str, Enum):
+    """Beat stage in dialogue progression"""
+    SETUP = "SETUP"
+    EXPLORATION = "EXPLORATION"
+    PERSONAL = "PERSONAL"
+    WRAP_UP = "WRAP_UP"
+
+
+class DialoguePattern(str, Enum):
+    """Dialogue pattern types"""
+    A = "A"  # 発見→補足
+    B = "B"  # 疑問→解説
+    C = "C"  # 誤解→訂正
+    D = "D"  # 脱線→修正
+    E = "E"  # 共感→発展
+
+
 @dataclass
 class DirectorEvaluation:
     """Director's evaluation of a response"""
@@ -40,6 +57,10 @@ class DirectorEvaluation:
     reason: str
     suggestion: Optional[str] = None
     confidence: float = 0.8
+    # New fields for dialogue orchestration
+    next_pattern: Optional[str] = None  # "A", "B", "C", "D", "E"
+    next_instruction: Optional[str] = None  # Specific instruction for next speaker
+    beat_stage: Optional[str] = None  # "SETUP", "EXPLORATION", "PERSONAL", "WRAP_UP"
 
 
 @dataclass
