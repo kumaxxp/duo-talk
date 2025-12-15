@@ -3,6 +3,12 @@ import { covRate } from '../hooks/useCov'
 import { covColor, pct } from '../lib/format'
 import type { Beat, DirectorEvent, RAGEvent, SpeakEvent } from '../lib/types'
 
+// キャラクター情報
+const CHARACTER_INFO = {
+  A: { name: 'やな', fullName: '澄ヶ瀬やな (姉)', color: 'bg-rose-500', bgColor: 'bg-rose-50 border-rose-200' },
+  B: { name: 'あゆ', fullName: '澄ヶ瀬あゆ (妹)', color: 'bg-sky-500', bgColor: 'bg-sky-50 border-sky-200' },
+}
+
 export default function TurnCard({ sp, rag, beat, directorStatus, directorReason, onSelect, onViewPrompts }:{ sp: SpeakEvent, rag?: RAGEvent, beat?: Beat, directorStatus?: string, directorReason?: string, onSelect?: ()=>void, onViewPrompts?: (e: React.MouseEvent<HTMLButtonElement>)=>void }){
   const canon = rag?.canon?.preview||''
   const lore  = rag?.lore?.preview||''
@@ -12,6 +18,9 @@ export default function TurnCard({ sp, rag, beat, directorStatus, directorReason
   const cPatt  = covRate(patt, sp.text)
   const cov = Math.max(cCanon, cLore, cPatt)
   const tip = `c=${cCanon.toFixed(2)} l=${cLore.toFixed(2)} p=${cPatt.toFixed(2)}`
+
+  const charInfo = CHARACTER_INFO[sp.speaker as 'A' | 'B'] || CHARACTER_INFO.A
+
   function beatColor(b?: string){
     if (!b) return 'bg-slate-200 text-slate-700'
     if (b==='BANter' || b==='Setup' || b.includes('Theme')) return 'bg-gray-200 text-gray-800'
@@ -20,35 +29,63 @@ export default function TurnCard({ sp, rag, beat, directorStatus, directorReason
     if (b.includes('Fun&Games')) return 'bg-emerald-200 text-emerald-800'
     return 'bg-slate-200 text-slate-700'
   }
+
+  function directorIcon(status?: string){
+    if (status === 'PASS') return '✓'
+    if (status === 'RETRY') return '🔄'
+    if (status === 'MODIFY') return '⚠️'
+    return ''
+  }
+
   return (
-    <div className="border rounded p-3" onClick={onSelect}>
+    <div className={`border rounded-lg p-3 transition-all hover:shadow-md cursor-pointer ${charInfo.bgColor}`} onClick={onSelect}>
       <div className="flex items-center justify-between text-sm">
         <div className="flex items-center gap-2">
-          <span className="font-mono">Turn {sp.turn}</span>
-          <span className="px-1.5 py-0.5 rounded bg-slate-800 text-white">{sp.speaker}</span>
-          <span className={`px-2 py-0.5 rounded ${beatColor(beat)}`}>{beat||'-'}</span>
+          <span className="font-mono text-slate-500">#{sp.turn}</span>
+          <span className={`px-2 py-1 rounded-full text-white text-xs font-bold ${charInfo.color}`}>
+            {charInfo.name}
+          </span>
+          <span className={`px-2 py-0.5 rounded text-xs ${beatColor(beat)}`}>{beat||'-'}</span>
+          {directorStatus && (
+            <span className={`px-2 py-0.5 rounded text-xs font-medium ${
+              directorStatus === 'PASS' ? 'bg-green-100 text-green-700' :
+              directorStatus === 'RETRY' ? 'bg-amber-100 text-amber-700' :
+              'bg-red-100 text-red-700'
+            }`}>
+              {directorIcon(directorStatus)} {directorStatus}
+            </span>
+          )}
         </div>
         <div className="flex items-center gap-2">
-          <button type="button" className="text-xs px-2 py-1 border rounded hover:bg-slate-50"
-            onClick={(e)=>{ e.stopPropagation(); onViewPrompts?.(e) }}>View Prompts</button>
+          <button type="button" className="text-xs px-2 py-1 border rounded hover:bg-white/50 transition-colors"
+            onClick={(e)=>{ e.stopPropagation(); onViewPrompts?.(e) }}>詳細</button>
         </div>
       </div>
-      <div className="mt-2 whitespace-pre-wrap leading-relaxed">{sp.text}</div>
-      {directorStatus && (
-        <div className="mt-2 p-2 bg-slate-50 rounded text-sm">
-          <span className={`px-2 py-0.5 rounded text-xs font-medium ${
-            directorStatus === 'PASS' ? 'bg-green-100 text-green-800' :
-            directorStatus === 'RETRY' ? 'bg-yellow-100 text-yellow-800' :
-            'bg-red-100 text-red-800'
-          }`}>Director: {directorStatus}</span>
-          {directorReason && <span className="ml-2 text-slate-600">{directorReason}</span>}
+
+      {/* セリフ表示 */}
+      <div className="mt-3 p-3 bg-white/80 rounded-lg shadow-sm">
+        <div className="whitespace-pre-wrap leading-relaxed text-gray-800">{sp.text}</div>
+      </div>
+
+      {/* Director フィードバック（RETRY/MODIFY時に詳細表示） */}
+      {directorStatus && directorStatus !== 'PASS' && directorReason && (
+        <div className={`mt-2 p-2 rounded text-sm ${
+          directorStatus === 'RETRY' ? 'bg-amber-50 border border-amber-200' : 'bg-red-50 border border-red-200'
+        }`}>
+          <div className="font-medium text-xs mb-1">
+            {directorStatus === 'RETRY' ? '🔄 再生成の理由:' : '⚠️ 問題点:'}
+          </div>
+          <div className="text-slate-600 text-xs">{directorReason}</div>
         </div>
       )}
+
+      {/* RAG カバレッジバー */}
       <div className="mt-3 flex items-center gap-2" title={tip}>
-        <div className="w-full bg-slate-100 rounded h-2">
-          <div className={`h-2 rounded ${covColor(cov)}`} style={{ width: pct(cov) }} />
+        <span className="text-xs text-slate-500 w-12">RAG</span>
+        <div className="flex-1 bg-slate-200/50 rounded h-1.5">
+          <div className={`h-1.5 rounded ${covColor(cov)}`} style={{ width: pct(cov) }} />
         </div>
-        <span className="text-xs text-slate-500">{pct(cov)}</span>
+        <span className="text-xs text-slate-500 w-10 text-right">{pct(cov)}</span>
       </div>
     </div>
   )

@@ -44,6 +44,7 @@ Respond ONLY with JSON:
         response: str,
         partner_previous_speech: Optional[str] = None,
         speaker_domains: list = None,
+        conversation_history: list = None,
     ) -> DirectorEvaluation:
         """
         Evaluate a character's response.
@@ -54,6 +55,7 @@ Respond ONLY with JSON:
             response: The character's response to evaluate
             partner_previous_speech: The other character's previous speech
             speaker_domains: List of domains this character should know (e.g., ["geography", "history"])
+            conversation_history: List of (speaker, text) tuples for context
 
         Returns:
             DirectorEvaluation with status and reasoning
@@ -80,12 +82,23 @@ Respond ONLY with JSON:
                 ]
             )
 
+        # 口調マーカーの事前チェック
+        tone_check = self._check_tone_markers(speaker, response)
+        if not tone_check["passed"]:
+            # 口調マーカーが欠けている場合はRETRYを推奨
+            return DirectorEvaluation(
+                status=DirectorStatus.RETRY,
+                reason=f"口調マーカー不足: {tone_check['missing']}",
+                suggestion=f"以下のマーカーを含めてください: {', '.join(tone_check['expected'])}",
+            )
+
         user_prompt = self._build_evaluation_prompt(
             frame_description=frame_description,
             speaker=speaker,
             response=response,
             partner_speech=partner_previous_speech,
             domains=speaker_domains,
+            conversation_history=conversation_history,
         )
 
         try:
@@ -155,6 +168,7 @@ Respond ONLY with JSON:
         response: str,
         partner_speech: Optional[str] = None,
         domains: list = None,
+        conversation_history: list = None,
     ) -> str:
         """Build comprehensive evaluation prompt checking all 5 criteria"""
         char_desc = "Elder Sister (やな) - action-driven, quick-witted" if speaker == "A" else "Younger Sister (あゆ) - logical, reflective, formal"
@@ -191,6 +205,15 @@ Respond ONLY with JSON:
 {response}
 """
 
+        # 対話履歴を追加（文脈の一貫性を評価するため）
+        if conversation_history and len(conversation_history) > 1:
+            recent_history = conversation_history[-4:]  # 直近4ターン
+            history_text = "\n".join([f"{s}: {t}" for s, t in recent_history])
+            prompt += f"""
+【Recent Conversation History】
+{history_text}
+"""
+
         if partner_speech:
             prompt += f"""
 【Partner's Previous Speech】
@@ -209,6 +232,7 @@ Respond ONLY with JSON:
    - 受け身ではなく能動的に発言
    - 対話の流れを保ちながら参加
    - 相手の発言に自然に応答
+   - 同じフレーズや言い回しを繰り返していない
 
 3. **知識領域 (Knowledge Domain)**: 専門領域内か
    - {speaker}が話すべき領域：{domain_expectations}
@@ -219,15 +243,17 @@ Respond ONLY with JSON:
    - 必須マーカー：{tone_markers}
    - 話し方のスタイルが一貫
    - 適切な敬語・カジュアル度
+   - 【重要】マーカーが1つも含まれていない場合はRETRY
 
 5. **ナレーション品質 (Narration Quality)**: 面白く、簡潔か
    - 5文以内
    - 面白いコメント・視点がある
    - 観光ナレーション向きの内容
+   - 相手の発言を適切に拾い、発展させている
 
 【判定ルール】
 - PASS: 5項目すべてクリア、自然で流れのある対話
-- RETRY: 1-2つの小さな問題、同じ指示で改めてやらせる
+- RETRY: 1-2つの小さな問題（特に口調マーカー不足）、同じ指示で改めてやらせる
 - MODIFY: 大きな問題がある、修正指示を与えるか前に進める
 
 【応答フォーマット】
@@ -236,7 +262,7 @@ JSON ONLY:
   "status": "PASS" | "RETRY" | "MODIFY",
   "reason": "簡潔な理由（日本語OK、30-50字）",
   "issues": ["項目1の問題", "項目2の問題"],
-  "suggestion": "修正案（MODIFY時のみ）"
+  "suggestion": "修正案（RETRY/MODIFYの場合、具体的な改善点）"
 }}
 """
         return prompt.strip()
@@ -258,28 +284,45 @@ JSON ONLY:
         Returns:
             Instruction string to inject into character prompt
         """
+        next_speaker = 'A' if turn_number % 2 == 0 else 'B'
+        next_char = "やな（姉）" if next_speaker == 'A' else "あゆ（妹）"
+        char_style = (
+            "カジュアルで感情的、「〜ね」「へ？」「わ！」を使う"
+            if next_speaker == 'A'
+            else "丁寧で論理的、「です」「ですよ」「姉様」を使う"
+        )
+
+        # 直近の会話を取得
+        recent_conv = conversation_so_far[-3:] if len(conversation_so_far) > 3 else conversation_so_far
+        conv_text = "\n".join([f"{'やな' if s == 'A' else 'あゆ'}: {t}" for s, t in recent_conv])
+
         user_prompt = f"""
-【Frame】
+【シーン】
 {frame_description}
 
-【Conversation so far】
-{self._format_conversation(conversation_so_far)}
+【直近の対話】
+{conv_text}
 
-【Next speaker】
-{'A' if turn_number % 2 == 1 else 'B'}
+【次の話者】
+{next_char}（{char_style}）
 
-Provide a brief (1-2 sentence) instruction for the next speaker to keep dialogue natural and engaging.
-Focus on: What angle should they take? Should they question, expand, or challenge?
+【指示作成のポイント】
+- 相手の発言をどう拾うべきか
+- どんな角度で話を発展させるか
+- 質問、同意、反論、追加情報のどれが自然か
+- キャラクターの専門領域を活かせる点
+
+上記を踏まえて、次の発言者への簡潔な指示（1-2文、日本語）を作成してください。
 """
 
         try:
             instruction = self.llm.call(
-                system="You are a dialogue director. Provide brief, natural instructions.",
+                system="あなたは対話の演出家です。キャラクター同士の対話を自然に進めるための簡潔な指示を出してください。",
                 user=user_prompt,
                 temperature=0.5,
-                max_tokens=100,
+                max_tokens=150,
             )
-            return instruction
+            return instruction.strip()
         except Exception:
             return ""  # Empty instruction on error
 
@@ -290,3 +333,49 @@ Focus on: What angle should they take? Should they question, expand, or challeng
         for speaker, text in conversation:
             lines.append(f"{speaker}: {text}")
         return "\n".join(lines)
+
+    def _check_tone_markers(self, speaker: str, response: str) -> dict:
+        """
+        口調マーカーの存在をチェックする。
+
+        Args:
+            speaker: "A" or "B"
+            response: 評価対象の発言
+
+        Returns:
+            {
+                "passed": bool,
+                "expected": list[str],
+                "found": list[str],
+                "missing": str
+            }
+        """
+        if speaker == "A":
+            # やな（姉）の口調マーカー
+            markers = ["ね", "へ？", "わ！", "あ、", "そっか", "よね", "かな", "だね"]
+            expected_desc = ["〜ね", "へ？", "わ！", "あ、そっか", "〜よね", "〜かな"]
+        else:
+            # あゆ（妹）の口調マーカー
+            markers = ["です", "ですよ", "ですね", "姉様", "ございます", "でしょう"]
+            expected_desc = ["です", "ですよ", "ですね", "姉様"]
+
+        found = []
+        for marker in markers:
+            if marker in response:
+                found.append(marker)
+
+        # 最低1つのマーカーが必要
+        passed = len(found) >= 1
+
+        # 特別なケース: あゆは「です」系のいずれかが必須
+        if speaker == "B":
+            desu_variants = ["です", "ございます"]
+            has_desu = any(m in response for m in desu_variants)
+            passed = passed and has_desu
+
+        return {
+            "passed": passed,
+            "expected": expected_desc,
+            "found": found,
+            "missing": "マーカーが見つかりません" if not found else "",
+        }

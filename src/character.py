@@ -52,12 +52,16 @@ class Character:
             ]
         )
 
+        # 最後に使用したRAGヒントを保存（外部からアクセス可能）
+        self.last_rag_hints: List[str] = []
+
     def speak(
         self,
         frame_description: str,
         partner_speech: Optional[str] = None,
         director_instruction: Optional[str] = None,
         vision_info: Optional[str] = None,
+        conversation_context: Optional[str] = None,
     ) -> str:
         """
         Generate a response for this character.
@@ -67,6 +71,7 @@ class Character:
             partner_speech: The other character's previous speech (if any)
             director_instruction: Special instruction from director (if any)
             vision_info: Vision processor output (【映像情報】... format) (optional)
+            conversation_context: Recent conversation history for context (optional)
 
         Returns:
             Character's response text
@@ -77,6 +82,9 @@ class Character:
             partner_speech=partner_speech,
         )
 
+        # RAGヒントを保存（外部からアクセス可能にする）
+        self.last_rag_hints = rag_hints
+
         # Build user prompt
         user_prompt = self._build_user_prompt(
             frame_description=frame_description,
@@ -84,6 +92,7 @@ class Character:
             director_instruction=director_instruction,
             rag_hints=rag_hints,
             vision_info=vision_info,
+            conversation_context=conversation_context,
         )
 
         # Call LLM
@@ -137,6 +146,7 @@ class Character:
         director_instruction: Optional[str] = None,
         rag_hints: List[str] = None,
         vision_info: Optional[str] = None,
+        conversation_context: Optional[str] = None,
     ) -> str:
         """Build the user prompt for LLM"""
         lines = []
@@ -149,6 +159,12 @@ class Character:
             lines.append(vision_info)
             lines.append("")
 
+        # 対話履歴の文脈を追加（直近の会話の流れを理解するため）
+        if conversation_context:
+            lines.append("【Recent Conversation】")
+            lines.append(conversation_context)
+            lines.append("")
+
         if partner_speech:
             lines.append("【Partner's Previous Speech】")
             lines.append(partner_speech)
@@ -157,6 +173,7 @@ class Character:
         if director_instruction:
             lines.append("【Director's Guidance】")
             lines.append(director_instruction)
+            lines.append("※上記の指示を意識して応答してください")
             lines.append("")
 
         if rag_hints:
@@ -165,6 +182,18 @@ class Character:
                 lines.append(f"- {hint}")
             lines.append("")
 
-        lines.append("Respond naturally based on the above. Keep it brief (2-4 sentences).")
+        # キャラクターごとの口調リマインダー
+        if self.char_id == "A":
+            lines.append("【口調リマインダー】")
+            lines.append("あなたは「やな」です。カジュアルで感情的な口調で話してください。")
+            lines.append("必ず「〜ね」「へ？」「わ！」「あ、そっか」などのマーカーを含めてください。")
+            lines.append("")
+        else:
+            lines.append("【口調リマインダー】")
+            lines.append("あなたは「あゆ」です。丁寧で論理的な口調で話してください。")
+            lines.append("必ず「です」「ですよ」「ですね」を使い、姉を「姉様」と呼んでください。")
+            lines.append("")
+
+        lines.append("上記を踏まえて、自然に応答してください。簡潔に（2-4文）。")
 
         return "\n".join(lines)
