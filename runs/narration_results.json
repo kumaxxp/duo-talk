@@ -1,0 +1,28 @@
+[
+  {
+    "status": "error",
+    "scene_description": "古い寺院の境内。参拝客が少なく、静かな時間帯のようです。",
+    "image_path": "tests/images/temple_sample.jpg",
+    "vision_analysis": {
+      "status": "error",
+      "image_path": "tests/images/temple_sample.jpg",
+      "error": "Failed to connect to Ollama. Please check that Ollama is downloaded, running and accessible. https://ollama.com/download"
+    },
+    "dialogue": {},
+    "director_verdict": null,
+    "log_id": null
+  },
+  {
+    "status": "error",
+    "scene_description": "緑豊かな山間の風景。自然に包まれた観光地です。",
+    "image_path": "tests/images/nature_sample.jpg",
+    "vision_analysis": {
+      "status": "error",
+      "image_path": "tests/images/nature_sample.jpg",
+      "error": "Failed to connect to Ollama. Please check that Ollama is downloaded, running and accessible. https://ollama.com/download"
+    },
+    "dialogue": {},
+    "director_verdict": null,
+    "log_id": null
+  }
+]

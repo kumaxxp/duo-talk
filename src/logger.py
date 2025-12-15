@@ -17,6 +17,7 @@ class Logger:
         self.log_dir = log_dir or config.log_dir
         self.log_dir.mkdir(parents=True, exist_ok=True)
         self.log_file = self.log_dir / "commentary_runs.jsonl"
+        self.feedback_file = self.log_dir / "feedback.jsonl"
 
     def log_event(self, event: Dict[str, Any]) -> None:
         """
@@ -29,7 +30,13 @@ class Logger:
         if "timestamp" not in event:
             event["timestamp"] = datetime.now().isoformat()
 
-        with open(self.log_file, "a", encoding="utf-8") as f:
+        # Separate feedback events to their own file
+        if event.get("event") == "feedback":
+            log_file = self.feedback_file
+        else:
+            log_file = self.log_file
+
+        with open(log_file, "a", encoding="utf-8") as f:
             f.write(json.dumps(event, ensure_ascii=False) + "\n")
 
     def log_turn(
@@ -122,6 +129,101 @@ class Logger:
             "turn": turn_num,
             "message": message,
         })
+
+    def log_feedback(
+        self,
+        run_id: str,
+        turn_num: int,
+        speaker: str,
+        issue_type: str,
+        description: str,
+        suggested_fix: str = None,
+    ) -> None:
+        """
+        Log user feedback for a specific turn.
+
+        Args:
+            run_id: Run ID
+            turn_num: Turn number
+            speaker: "A" or "B"
+            issue_type: "tone_drift" | "knowledge_overstep" | "slow_progress" | "character_break" | "other"
+            description: User's description of the issue
+            suggested_fix: Optional suggestion for fixing
+        """
+        self.log_event({
+            "event": "feedback",
+            "run_id": run_id,
+            "turn": turn_num,
+            "speaker": speaker,
+            "issue_type": issue_type,
+            "description": description,
+            "suggested_fix": suggested_fix,
+        })
+
+    def log_prompt_update(
+        self,
+        char_id: str,
+        section: str,
+        old_content: str,
+        new_content: str,
+        reason: str,
+    ) -> None:
+        """
+        Log prompt update (variable part modification).
+
+        Args:
+            char_id: Character ID
+            section: "fixed" | "variable" | "templates"
+            old_content: Previous content
+            new_content: New content
+            reason: Reason for update
+        """
+        self.log_event({
+            "event": "prompt_update",
+            "char_id": char_id,
+            "section": section,
+            "old_length": len(old_content),
+            "new_length": len(new_content),
+            "reason": reason,
+        })
+
+    def log_narration(
+        self,
+        scene_description: str,
+        image_path: str,
+        vision_analysis: dict,
+        dialogue: dict,
+        director_verdict: dict,
+    ) -> str:
+        """
+        Log a complete narration session.
+
+        Args:
+            scene_description: Scene/theme description
+            image_path: Input image path
+            vision_analysis: Vision processor output
+            dialogue: Character dialogue (turn-by-turn)
+            director_verdict: Director's quality judgment
+
+        Returns:
+            Log ID (timestamp)
+        """
+        import uuid
+        log_id = str(uuid.uuid4())[:8] + "_" + datetime.now().strftime("%Y%m%d_%H%M%S")
+
+        self.log_event({
+            "event": "narration",
+            "log_id": log_id,
+            "scene_description": scene_description,
+            "image_path": image_path,
+            "vision_status": vision_analysis.get("status"),
+            "vision_main_subjects": vision_analysis.get("visual_info", {}).get("main_subjects", ""),
+            "dialogue_turns": len(dialogue),
+            "director_status": director_verdict.get("status") if director_verdict else None,
+            "director_reason": director_verdict.get("reason") if director_verdict else None,
+        })
+
+        return log_id
 
 
 # Global logger instance

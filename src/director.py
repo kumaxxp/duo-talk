@@ -8,6 +8,7 @@ from typing import Optional
 from src.llm_client import get_llm_client
 from src.config import config
 from src.types import DirectorEvaluation, DirectorStatus
+from src.prompt_manager import get_prompt_manager
 
 
 class Director:
@@ -15,15 +16,12 @@ class Director:
 
     def __init__(self):
         self.llm = get_llm_client()
-        # Load director system prompt
-        director_prompt_path = config.project_root / "persona" / "director.prompt.txt"
-        if director_prompt_path.exists():
-            self.system_prompt = director_prompt_path.read_text(encoding="utf-8").strip()
-        else:
-            self.system_prompt = self._default_system_prompt()
+        # Load director system prompt using PromptManager
+        self.prompt_manager = get_prompt_manager("director")
+        self.system_prompt = self.prompt_manager.get_system_prompt()
 
     def _default_system_prompt(self) -> str:
-        """Default director prompt if file not found"""
+        """Default director prompt if file not found (deprecated)"""
         return """You are a film director orchestrating a natural dialogue between two characters watching a tourism video.
 
 Your role:
@@ -62,9 +60,24 @@ Respond ONLY with JSON:
         """
         if speaker_domains is None:
             speaker_domains = (
-                ["tourism", "action", "phenomena"]
+                [
+                    "sake",
+                    "tourism_aesthetics",
+                    "cultural_philosophy",
+                    "human_action_reaction",
+                    "phenomena",
+                    "action",
+                ]
                 if speaker == "A"
-                else ["geography", "history", "architecture"]
+                else [
+                    "geography",
+                    "history",
+                    "architecture",
+                    "natural_science",
+                    "etiquette_and_manners",
+                    "gadgets_and_tech",
+                    "ai_base_construction",
+                ]
             )
 
         user_prompt = self._build_evaluation_prompt(
@@ -80,7 +93,7 @@ Respond ONLY with JSON:
                 system=self.system_prompt,
                 user=user_prompt,
                 temperature=0.3,  # Lower temperature for consistency
-                max_tokens=200,
+                max_tokens=300,  # Increased for detailed evaluation
             )
 
             # Parse JSON response
@@ -114,9 +127,17 @@ Respond ONLY with JSON:
                 else DirectorStatus.MODIFY
             )
 
+            # Build reason with issues if available
+            reason = result.get("reason", "")
+            issues = result.get("issues", [])
+            if issues and isinstance(issues, list):
+                reason_with_issues = f"{reason}\n- " + "\n- ".join(issues[:2])
+            else:
+                reason_with_issues = reason
+
             return DirectorEvaluation(
                 status=status,
-                reason=result.get("reason", ""),
+                reason=reason_with_issues,
                 suggestion=result.get("suggestion"),
             )
 
@@ -135,9 +156,23 @@ Respond ONLY with JSON:
         partner_speech: Optional[str] = None,
         domains: list = None,
     ) -> str:
-        """Build the evaluation prompt for the LLM"""
-        char_desc = "Elder Sister (action-driven, quick-witted)" if speaker == "A" else "Younger Sister (logical, reflective)"
+        """Build comprehensive evaluation prompt checking all 5 criteria"""
+        char_desc = "Elder Sister (やな) - action-driven, quick-witted" if speaker == "A" else "Younger Sister (あゆ) - logical, reflective, formal"
         domains_str = ", ".join(domains or [])
+
+        # Character-specific tone markers
+        tone_markers = (
+            "「〜ね」「へ？」「わ！」「あ、そっか」などの感情マーカー"
+            if speaker == "A"
+            else "「です」「ですよ」「ですね」「姉様」などの敬語マーカー"
+        )
+
+        # Knowledge domain expectations
+        domain_expectations = (
+            "観光地の見どころ、人間の行動パターン、自然現象への反応、酒の知識"
+            if speaker == "A"
+            else "地理・歴史・建築・自然科学・作法・マナー、テック知識（但し長説は制止されるまで許容）"
+        )
 
         prompt = f"""
 【Current Frame】
@@ -146,10 +181,13 @@ Respond ONLY with JSON:
 【Character】
 {speaker} ({char_desc})
 
-【Knowledge Domains】
+【Expected Knowledge Domains】
+{domain_expectations}
+
+【Actual Domains Listed】
 {domains_str}
 
-【Character's Response to Evaluate】
+【Response to Evaluate】
 {response}
 """
 
@@ -159,14 +197,47 @@ Respond ONLY with JSON:
 {partner_speech}
 """
 
-        prompt += """
-【Evaluation Tasks】
-1. PROGRESS: Does this response directly address or naturally react to the frame content?
-2. PARTICIPATION: Is the character actively engaged (not passive)?
-3. KNOWLEDGE: Does the response use knowledge from their domains naturally, or overstep?
-4. TONE: Does it match the character's speech pattern?
+        prompt += f"""
+【5つの評価基準】
 
-Respond ONLY with JSON having "status" (PASS/RETRY/MODIFY), "reason", and optionally "suggestion".
+1. **進行度 (Progress)**: 現フレーム/シーンに対応しているか
+   - 現フレームの内容に自然に反応している
+   - 前フレームのネタを引きずっていない
+   - 新しい話題に適切に対応している
+
+2. **参加度 (Participation)**: キャラクターが積極的か
+   - 受け身ではなく能動的に発言
+   - 対話の流れを保ちながら参加
+   - 相手の発言に自然に応答
+
+3. **知識領域 (Knowledge Domain)**: 専門領域内か
+   - {speaker}が話すべき領域：{domain_expectations}
+   - 領域外の話題は避ける
+   - 特例：あゆが新機材について話す場合、テック知識の「長説」は制止されるまで許容
+
+4. **口調・一貫性 (Tone Consistency)**: 口調が一貫しているか
+   - 必須マーカー：{tone_markers}
+   - 話し方のスタイルが一貫
+   - 適切な敬語・カジュアル度
+
+5. **ナレーション品質 (Narration Quality)**: 面白く、簡潔か
+   - 5文以内
+   - 面白いコメント・視点がある
+   - 観光ナレーション向きの内容
+
+【判定ルール】
+- PASS: 5項目すべてクリア、自然で流れのある対話
+- RETRY: 1-2つの小さな問題、同じ指示で改めてやらせる
+- MODIFY: 大きな問題がある、修正指示を与えるか前に進める
+
+【応答フォーマット】
+JSON ONLY:
+{{
+  "status": "PASS" | "RETRY" | "MODIFY",
+  "reason": "簡潔な理由（日本語OK、30-50字）",
+  "issues": ["項目1の問題", "項目2の問題"],
+  "suggestion": "修正案（MODIFY時のみ）"
+}}
 """
         return prompt.strip()
 

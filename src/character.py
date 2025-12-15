@@ -8,6 +8,7 @@ from typing import List, Optional
 from src.llm_client import get_llm_client
 from src.rag import get_rag_system
 from src.config import config
+from src.prompt_manager import get_prompt_manager
 
 
 class Character:
@@ -24,45 +25,39 @@ class Character:
         self.llm = get_llm_client()
         self.rag = get_rag_system()
 
-        # Load system prompt
-        prompt_path = config.project_root / "persona" / f"char_{char_id}.prompt.txt"
-        if prompt_path.exists():
-            self.system_prompt = prompt_path.read_text(encoding="utf-8").strip()
-        else:
-            self.system_prompt = self._default_system_prompt()
+        # Load system prompt using new PromptManager
+        self.prompt_manager = get_prompt_manager(char_id)
+        self.system_prompt = self.prompt_manager.get_system_prompt()
 
         # Character metadata
         self.name = "Elder Sister" if char_id == "A" else "Younger Sister"
         self.domains = (
-            ["tourism", "action", "phenomena"]
+            [
+                "sake",
+                "tourism_aesthetics",
+                "cultural_philosophy",
+                "human_action_reaction",
+                "phenomena",
+                "action",
+            ]
             if char_id == "A"
-            else ["geography", "history", "architecture"]
+            else [
+                "geography",
+                "history",
+                "architecture",
+                "natural_science",
+                "etiquette_and_manners",
+                "gadgets_and_tech",
+                "ai_base_construction",
+            ]
         )
-
-    def _default_system_prompt(self) -> str:
-        """Default system prompt if file not found"""
-        if self.char_id == "A":
-            return """You are the Elder Sister in a tourism video commentary.
-Your personality: Action-driven, quick-witted, direct, energetic.
-Your role: React to what's happening, ask questions, express emotions naturally.
-Speech style: Casual, use "〜ね", "〜だよ", "へ？", "わ" or similar markers.
-Length: Keep responses concise (2-4 sentences max).
-Never: Provide long explanations or summaries. Avoid being preachy.
-Your expertise: Tourism activities, action sequences, phenomena and reactions."""
-        else:
-            return """You are the Younger Sister in a tourism video commentary.
-Your personality: Cool, logical, analytical, thoughtful.
-Your role: Provide context, explain things, offer perspective.
-Speech style: Calm, use "〜な", "ちょっと待て", "なるほど" or similar markers.
-Length: Keep responses concise (2-4 sentences max).
-Never: Provide long explanations or summaries. Avoid being condescending.
-Your expertise: Geography, history, architecture, natural phenomena."""
 
     def speak(
         self,
         frame_description: str,
         partner_speech: Optional[str] = None,
         director_instruction: Optional[str] = None,
+        vision_info: Optional[str] = None,
     ) -> str:
         """
         Generate a response for this character.
@@ -71,6 +66,7 @@ Your expertise: Geography, history, architecture, natural phenomena."""
             frame_description: Description of the current frame
             partner_speech: The other character's previous speech (if any)
             director_instruction: Special instruction from director (if any)
+            vision_info: Vision processor output (【映像情報】... format) (optional)
 
         Returns:
             Character's response text
@@ -87,6 +83,7 @@ Your expertise: Geography, history, architecture, natural phenomena."""
             partner_speech=partner_speech,
             director_instruction=director_instruction,
             rag_hints=rag_hints,
+            vision_info=vision_info,
         )
 
         # Call LLM
@@ -139,6 +136,7 @@ Your expertise: Geography, history, architecture, natural phenomena."""
         partner_speech: Optional[str] = None,
         director_instruction: Optional[str] = None,
         rag_hints: List[str] = None,
+        vision_info: Optional[str] = None,
     ) -> str:
         """Build the user prompt for LLM"""
         lines = []
@@ -146,6 +144,10 @@ Your expertise: Geography, history, architecture, natural phenomena."""
         lines.append("【Current Scene】")
         lines.append(frame_description)
         lines.append("")
+
+        if vision_info:
+            lines.append(vision_info)
+            lines.append("")
 
         if partner_speech:
             lines.append("【Partner's Previous Speech】")

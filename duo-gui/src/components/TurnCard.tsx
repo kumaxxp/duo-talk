@@ -1,9 +1,9 @@
 import React from 'react'
 import { covRate } from '../hooks/useCov'
 import { covColor, pct } from '../lib/format'
-import type { Beat, RAGEvent, SpeakEvent } from '../lib/types'
+import type { Beat, DirectorEvent, RAGEvent, SpeakEvent } from '../lib/types'
 
-export default function TurnCard({ sp, rag, beat, onSelect, onViewPrompts }:{ sp: SpeakEvent, rag?: RAGEvent, beat?: Beat, onSelect?: ()=>void, onViewPrompts?: (e: React.MouseEvent<HTMLButtonElement>)=>void }){
+export default function TurnCard({ sp, rag, beat, directorStatus, directorReason, onSelect, onViewPrompts }:{ sp: SpeakEvent, rag?: RAGEvent, beat?: Beat, directorStatus?: string, directorReason?: string, onSelect?: ()=>void, onViewPrompts?: (e: React.MouseEvent<HTMLButtonElement>)=>void }){
   const canon = rag?.canon?.preview||''
   const lore  = rag?.lore?.preview||''
   const patt  = rag?.pattern?.preview||''
@@ -34,6 +34,16 @@ export default function TurnCard({ sp, rag, beat, onSelect, onViewPrompts }:{ sp
         </div>
       </div>
       <div className="mt-2 whitespace-pre-wrap leading-relaxed">{sp.text}</div>
+      {directorStatus && (
+        <div className="mt-2 p-2 bg-slate-50 rounded text-sm">
+          <span className={`px-2 py-0.5 rounded text-xs font-medium ${
+            directorStatus === 'PASS' ? 'bg-green-100 text-green-800' :
+            directorStatus === 'RETRY' ? 'bg-yellow-100 text-yellow-800' :
+            'bg-red-100 text-red-800'
+          }`}>Director: {directorStatus}</span>
+          {directorReason && <span className="ml-2 text-slate-600">{directorReason}</span>}
+        </div>
+      )}
       <div className="mt-3 flex items-center gap-2" title={tip}>
         <div className="w-full bg-slate-100 rounded h-2">
           <div className={`h-2 rounded ${covColor(cov)}`} style={{ width: pct(cov) }} />

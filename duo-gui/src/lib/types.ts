@@ -1,6 +1,6 @@
 export type Beat = string
 
-export type DirectorEvent = { ts:string; event:'director'; run_id:string; turn:number; beat:Beat; cut_cue?:string|null }
+export type DirectorEvent = { ts:string; event:'director'; run_id:string; turn:number; beat:Beat; cut_cue?:string|null; status?:string; reason?:string }
 export type SpeakEvent    = { ts:string; event:'speak';    run_id:string; turn:number; speaker:'A'|'B'; text:string; beat?:Beat }
 export type RAGEvent      = { ts:string; event:'rag_select'; run_id:string; turn:number;
   canon?:   { path?:string; preview?:string|null } | null;

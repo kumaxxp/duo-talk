@@ -1,0 +1,15 @@
+{
+  "analysis": {
+    "trends": {},
+    "by_character": {},
+    "top_issues": []
+  },
+  "suggestions": [],
+  "export_date": "1765721725.0",
+  "next_steps": [
+    "Review suggestions and decide on improvements",
+    "Update character knowledge bases with fixes",
+    "Run new narration tests",
+    "Collect feedback on improvements"
+  ]
+}
