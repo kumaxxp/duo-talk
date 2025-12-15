@@ -259,17 +259,18 @@ def start_narration():
 @app.route('/api/run/start', methods=['POST'])
 def run_start():
     """
-    Alternative endpoint for legacy GUI compatibility.
+    Start a new narration run with optional image analysis.
 
     Body (JSON):
-        - topic: Narration topic/scene description
+        - topic: Narration topic/scene description (optional if imagePath provided)
+        - imagePath: Path to uploaded image for vision analysis (optional)
         - model: LLM model to use (e.g., "gemma3:12b")
         - maxTurns: Maximum number of turns (default: 8)
         - seed: Random seed for reproducibility
         - noRag: Boolean, whether to disable RAG (default: false)
 
     Returns:
-        JSON: {"run_id": "...", "topic": "..."}
+        JSON: {"run_id": "...", "topic": "...", "hasImage": bool}
     """
     from datetime import datetime
     import json as json_module
@@ -278,13 +279,15 @@ def run_start():
     try:
         data = request.get_json()
         topic = data.get('topic', '')
+        image_path = data.get('imagePath')
         model = data.get('model', 'qwen2.5:7b-instruct-q4_K_M')
         max_turns = data.get('maxTurns', 8)
         seed = data.get('seed')
         no_rag = data.get('noRag', False)
 
-        if not topic:
-            return jsonify({"error": "topic required"}), 400
+        # Either topic or image is required
+        if not topic and not image_path:
+            return jsonify({"error": "topic or imagePath required"}), 400
 
         # Generate run ID
         run_id = f"run_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
@@ -293,7 +296,8 @@ def run_start():
         run_event = {
             "event": "narration_start",
             "run_id": run_id,
-            "topic": topic,
+            "topic": topic or "(画像から生成)",
+            "imagePath": image_path,
             "model": model,
             "maxTurns": max_turns,
             "seed": seed,
@@ -306,7 +310,8 @@ def run_start():
         with open(runs_file, 'a', encoding='utf-8') as f:
             f.write(json_module.dumps(run_event, ensure_ascii=False) + '\n')
 
-        logger.info(f"Run started: {run_id} - Topic: {topic}")
+        has_image = bool(image_path)
+        logger.info(f"Run started: {run_id} - Topic: {topic or '(from image)'} - Image: {has_image}")
 
         # Start narration pipeline in background thread
         def run_pipeline():
@@ -316,22 +321,36 @@ def run_start():
                 # Initialize pipeline
                 pipeline = NarrationPipeline()
 
-                # Process with the topic as scene description (skip vision analysis)
-                # Vision分析をスキップし、トピックのみで対話を生成
-                result = pipeline.process_image(
-                    image_path=None,
-                    scene_description=topic,
-                    max_iterations=max_turns,
-                    run_id=run_id,
-                    skip_vision=True,  # トピックのみで対話生成
-                )
+                # Determine if we should use vision analysis
+                skip_vision = not has_image
+
+                if has_image:
+                    logger.info(f"Processing with image: {image_path}")
+                    # Process with image - vision analysis will extract scene description
+                    result = pipeline.process_image(
+                        image_path=image_path,
+                        scene_description=topic if topic else None,
+                        max_iterations=max_turns,
+                        run_id=run_id,
+                        skip_vision=False,
+                    )
+                else:
+                    logger.info(f"Processing with topic only: {topic}")
+                    # Process with topic only (no vision analysis)
+                    result = pipeline.process_image(
+                        image_path=None,
+                        scene_description=topic,
+                        max_iterations=max_turns,
+                        run_id=run_id,
+                        skip_vision=True,
+                    )
 
                 # Log completion
                 if result.get('status') == 'success':
                     completion_event = {
                         "event": "narration_complete",
                         "run_id": run_id,
-                        "topic": topic,
+                        "topic": topic or "(画像から生成)",
                         "status": "success",
                         "timestamp": datetime.now().isoformat()
                     }
@@ -353,7 +372,8 @@ def run_start():
         # Return success immediately
         return jsonify({
             "run_id": run_id,
-            "topic": topic,
+            "topic": topic or "(画像から生成)",
+            "hasImage": has_image,
             "status": "queued"
         })
 
@@ -392,6 +412,60 @@ def get_run_style():
         })
     except Exception as e:
         logger.error(f"Error getting run style: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+# ==================== IMAGE UPLOAD ====================
+
+@app.route('/api/image/upload', methods=['POST'])
+def upload_image():
+    """
+    Upload an image for vision analysis.
+
+    Body (multipart/form-data):
+        - image: Image file
+
+    Returns:
+        JSON: {"path": "/path/to/uploaded/image", "filename": "..."}
+    """
+    import uuid
+    from werkzeug.utils import secure_filename
+
+    try:
+        if 'image' not in request.files:
+            return jsonify({"error": "No image file provided"}), 400
+
+        file = request.files['image']
+        if file.filename == '':
+            return jsonify({"error": "No selected file"}), 400
+
+        # Check if it's an image
+        allowed_extensions = {'png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp'}
+        ext = file.filename.rsplit('.', 1)[-1].lower() if '.' in file.filename else ''
+        if ext not in allowed_extensions:
+            return jsonify({"error": f"Invalid file type: {ext}. Allowed: {allowed_extensions}"}), 400
+
+        # Create upload directory
+        upload_dir = config.log_dir / "uploads"
+        upload_dir.mkdir(parents=True, exist_ok=True)
+
+        # Generate unique filename
+        safe_filename = secure_filename(file.filename)
+        unique_filename = f"{uuid.uuid4().hex[:8]}_{safe_filename}"
+        file_path = upload_dir / unique_filename
+
+        # Save file
+        file.save(str(file_path))
+        logger.info(f"Image uploaded: {file_path}")
+
+        return jsonify({
+            "path": str(file_path),
+            "filename": unique_filename,
+            "size": file_path.stat().st_size
+        })
+
+    except Exception as e:
+        logger.error(f"Error uploading image: {e}")
         return jsonify({"error": str(e)}), 500
 
 

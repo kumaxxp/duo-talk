@@ -118,7 +118,7 @@ class Character:
 
     def _get_rag_hints(
         self,
-        query: str,
+        query: Optional[str],
         partner_speech: Optional[str] = None,
         top_k: int = 2,
     ) -> List[str]:
@@ -133,9 +133,18 @@ class Character:
         Returns:
             List of knowledge snippets
         """
-        full_query = query
+        # Build query from available context
+        parts = []
+        if query:
+            parts.append(query)
         if partner_speech:
-            full_query = f"{query}\n{partner_speech}"
+            parts.append(partner_speech)
+
+        full_query = "\n".join(parts) if parts else None
+
+        # Return empty if no query context available
+        if not full_query:
+            return []
 
         results = self.rag.retrieve_for_character(
             char_id=self.char_id,

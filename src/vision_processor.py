@@ -21,9 +21,10 @@ class VisionProcessor:
         """
         Args:
             model: 使用する Vision モデル
-                  指定なしの場合は .env の VISION_MODEL または "qwen3:8b"
+                  指定なしの場合は .env の VISION_MODEL または "llava:latest"
+                  注意: Vision対応モデル (llava, llama3.2-vision等) が必要
         """
-        self.model = model or os.getenv("VISION_MODEL", "qwen3:8b")
+        self.model = model or os.getenv("VISION_MODEL", "llava:latest")
 
     def analyze_image(self, image_path: str) -> dict:
         """

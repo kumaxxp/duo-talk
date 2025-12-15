@@ -43,7 +43,7 @@ class RAGDatabase:
 
     def retrieve(
         self,
-        query: str,
+        query: Optional[str],
         top_k: int = 3,
         threshold: float = 0.4,
     ) -> List[Tuple[str, str]]:
@@ -59,6 +59,10 @@ class RAGDatabase:
             List of (domain, snippet) tuples
         """
         if not self.knowledge:
+            return []
+
+        # Guard against None or empty query
+        if not query:
             return []
 
         scored_results = []
