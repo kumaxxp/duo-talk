@@ -20,6 +20,7 @@ class VisionMode(str, Enum):
 
 class VLMType(str, Enum):
     """Available VLM models"""
+    LLAVA_LATEST = "llava:latest"
     LLAVA_7B = "llava:7b"
     LLAVA_13B = "llava:13b"
     LLAVA_34B = "llava:34b"
@@ -48,7 +49,7 @@ class VisionConfig:
     mode: VisionMode = VisionMode.SINGLE_VLM
 
     # VLM settings
-    vlm_type: VLMType = VLMType.LLAVA_7B
+    vlm_type: VLMType = VLMType.LLAVA_LATEST
     vlm_custom_model: str = ""  # For custom model specification
 
     # Segmentation settings
@@ -122,28 +123,28 @@ class VisionPreset:
 PRESETS: List[VisionPreset] = [
     VisionPreset(
         name="lightweight",
-        description="軽量モード - LLaVA 7B のみ（低VRAM環境向け）",
+        description="軽量モード - LLaVA（低VRAM環境向け）",
         config=VisionConfig(
             mode=VisionMode.SINGLE_VLM,
-            vlm_type=VLMType.LLAVA_7B,
+            vlm_type=VLMType.LLAVA_LATEST,
             segmentation_model=SegmentationModel.NONE,
         )
     ),
     VisionPreset(
         name="balanced",
-        description="バランスモード - LLaMA Vision 11B",
+        description="バランスモード - LLaVA",
         config=VisionConfig(
             mode=VisionMode.SINGLE_VLM,
-            vlm_type=VLMType.LLAMA_VISION_11B,
+            vlm_type=VLMType.LLAVA_LATEST,
             segmentation_model=SegmentationModel.NONE,
         )
     ),
     VisionPreset(
         name="high_quality",
-        description="高品質モード - Gemma 3 27B",
+        description="高品質モード - LLaVA（低温度）",
         config=VisionConfig(
             mode=VisionMode.SINGLE_VLM,
-            vlm_type=VLMType.GEMMA3_27B,
+            vlm_type=VLMType.LLAVA_LATEST,
             segmentation_model=SegmentationModel.NONE,
             vlm_temperature=0.2,
         )
@@ -153,7 +154,7 @@ PRESETS: List[VisionPreset] = [
         description="詳細検出モード - Florence-2 + LLM",
         config=VisionConfig(
             mode=VisionMode.SEGMENTATION_PLUS_LLM,
-            vlm_type=VLMType.LLAVA_7B,
+            vlm_type=VLMType.LLAVA_LATEST,
             segmentation_model=SegmentationModel.FLORENCE2_LARGE,
             include_coordinates=True,
             max_objects=30,
@@ -164,7 +165,7 @@ PRESETS: List[VisionPreset] = [
         description="フル解析モード - VLM + セグメンテーション併用",
         config=VisionConfig(
             mode=VisionMode.VLM_PLUS_SEGMENTATION,
-            vlm_type=VLMType.LLAMA_VISION_11B,
+            vlm_type=VLMType.LLAVA_LATEST,
             segmentation_model=SegmentationModel.FLORENCE2_LARGE,
             enable_ocr=True,
             include_coordinates=True,
@@ -210,10 +211,13 @@ class VisionConfigManager:
             return False
 
     def get_current(self) -> VisionConfig:
-        """Get current configuration"""
-        if self._current_config is None:
-            return self.load()
-        return self._current_config
+        """Get current configuration (always reload from file for freshness)"""
+        return self.load()
+
+    def reload(self) -> VisionConfig:
+        """Force reload configuration from file"""
+        self._current_config = None
+        return self.load()
 
     def apply_preset(self, preset_name: str) -> Optional[VisionConfig]:
         """Apply a preset configuration"""

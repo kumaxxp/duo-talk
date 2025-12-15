@@ -106,15 +106,59 @@ class Character:
             beat_stage=beat_stage,
         )
 
-        # Call LLM
-        response = self.llm.call(
-            system=self.system_prompt,
-            user=user_prompt,
-            temperature=config.temperature,
-            max_tokens=config.max_tokens,
-        )
+        # Call LLM with retry on repetition
+        max_attempts = 2
+        for attempt in range(max_attempts):
+            response = self.llm.call(
+                system=self.system_prompt,
+                user=user_prompt,
+                temperature=config.temperature + (0.2 * attempt),  # Increase temp on retry
+                max_tokens=config.max_tokens,
+            )
+            result = response.strip()
 
-        return response.strip()
+            # Check for repetition
+            if not self._has_repetition(result):
+                return result
+
+            print(f"    ⚠️ 繰り返し検出 (試行 {attempt + 1}/{max_attempts}): 再生成中...")
+
+        # If all attempts have repetition, return the last one anyway
+        return result
+
+    def _has_repetition(self, text: str, threshold: int = 5) -> bool:
+        """
+        テキストに異常な繰り返しがあるかチェック。
+
+        Args:
+            text: チェック対象のテキスト
+            threshold: 繰り返しと判定する回数
+
+        Returns:
+            繰り返しがある場合True
+        """
+        import re
+
+        if not text or len(text) < 10:
+            return False
+
+        # 同じ文字がthreshold回以上連続
+        prev_char = ""
+        count = 1
+        for char in text:
+            if char == prev_char:
+                count += 1
+                if count >= threshold:
+                    return True
+            else:
+                count = 1
+            prev_char = char
+
+        # 同じ2-4文字の単語が4回以上連続（例: "鳥鳥鳥鳥"）
+        if re.search(r'(.{2,4})\1{3,}', text):
+            return True
+
+        return False
 
     def _get_rag_hints(
         self,

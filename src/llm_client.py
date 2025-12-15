@@ -37,6 +37,8 @@ class LLMClient:
         temperature: float = 0.7,
         max_tokens: int = 400,
         retries: int = 2,
+        frequency_penalty: float = 0.5,
+        presence_penalty: float = 0.3,
     ) -> str:
         """
         Call the LLM and return the response text.
@@ -47,6 +49,8 @@ class LLMClient:
             temperature: Sampling temperature
             max_tokens: Maximum tokens in response
             retries: Number of retries on failure
+            frequency_penalty: Penalty for repeated tokens (0.0-2.0, higher = less repetition)
+            presence_penalty: Penalty for tokens already in text (0.0-2.0)
 
         Returns:
             Response text from the LLM
@@ -61,6 +65,8 @@ class LLMClient:
                     ],
                     temperature=temperature,
                     max_tokens=max_tokens,
+                    frequency_penalty=frequency_penalty,
+                    presence_penalty=presence_penalty,
                 )
                 return response.choices[0].message.content.strip()
             except Exception as e:

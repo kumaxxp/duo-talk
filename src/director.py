@@ -458,12 +458,61 @@ JSON ONLY:
             instruction = self.llm.call(
                 system="あなたは対話の演出家です。キャラクター同士の対話を自然に進めるための簡潔な指示を出してください。",
                 user=user_prompt,
-                temperature=0.5,
-                max_tokens=150,
+                temperature=0.7,  # Increased to reduce repetition
+                max_tokens=100,   # Reduced to prevent long repetitive output
             )
-            return instruction.strip()
+            result = instruction.strip()
+
+            # 繰り返し検出: 同じ文字が連続で5回以上出現する場合は無効
+            if self._has_repetition(result):
+                print("    ⚠️ 繰り返し検出: 指示を破棄")
+                return ""
+
+            return result
         except Exception:
             return ""  # Empty instruction on error
+
+    def _has_repetition(self, text: str, threshold: int = 5) -> bool:
+        """
+        テキストに異常な繰り返しがあるかチェック。
+
+        Args:
+            text: チェック対象のテキスト
+            threshold: 繰り返しと判定する回数
+
+        Returns:
+            繰り返しがある場合True
+        """
+        if not text:
+            return False
+
+        # 同じ文字がthreshold回以上連続
+        prev_char = ""
+        count = 1
+        for char in text:
+            if char == prev_char:
+                count += 1
+                if count >= threshold:
+                    return True
+            else:
+                count = 1
+            prev_char = char
+
+        # 同じ2文字パターンがthreshold回以上連続
+        for i in range(len(text) - 2 * threshold):
+            pattern = text[i:i+2]
+            if len(pattern) == 2 and pattern[0] != pattern[1]:
+                repeated = pattern * threshold
+                if repeated in text:
+                    return True
+
+        # 同じ単語が短い間隔で繰り返される（例: "鳥鳥鳥"）
+        import re
+        # 2-4文字の単語が4回以上連続
+        if re.search(r'(.{2,4})\1{3,}', text):
+            return True
+
+        return False
 
     @staticmethod
     def _format_conversation(conversation: list) -> str:
