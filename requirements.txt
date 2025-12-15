@@ -4,12 +4,21 @@ python-dotenv>=1.0.1,<2
 pydantic>=2.5,<3
 ollama>=0.0.11
 
-# Web Framework (Optional)
-fastapi>=0.110,<1
-uvicorn>=0.27,<1
+# Web Framework
+flask>=3.0,<4
+flask-cors>=4.0,<5
+werkzeug>=3.0,<4
 
 # Search & Matching
 rapidfuzz>=3.6,<4
+duckduckgo-search>=6.0,<7
 
 # Utilities
 requests>=2.31,<3
+
+# Vision Processing (optional - for Florence-2 segmentation)
+# Install with: pip install -r requirements-vision.txt
+# transformers>=4.40,<5
+# torch>=2.0,<3
+# pillow>=10.0,<11
+# timm>=0.9,<1

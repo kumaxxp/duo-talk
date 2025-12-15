@@ -4,6 +4,7 @@ import RunList from './components/RunList'
 import TurnCard from './components/TurnCard'
 import RagPanel from './components/RagPanel'
 import CovSpark from './components/CovSpark'
+import SettingsPanel from './components/SettingsPanel'
 import { useSSE } from './hooks/useSSE'
 import { covRate } from './hooks/useCov'
 import type { DirectorEvent, RAGEvent, SpeakEvent, PromptDbg } from './lib/types'
@@ -11,7 +12,10 @@ import PromptModal from './components/PromptModal'
 
 const API = (import.meta as any).env?.VITE_API_BASE || ''
 
+type TabType = 'runs' | 'settings'
+
 export default function App(){
+  const [activeTab, setActiveTab] = useState<TabType>('runs')
   const [runs, setRuns] = useState<{run_id:string, topic?:string|null}[]>([])
   const [rid, setRid] = useState<string|undefined>()
   const [directors, setDirectors] = useState<Record<number, DirectorEvent>>({})
@@ -141,63 +145,97 @@ export default function App(){
     <>
     <div className="max-w-7xl mx-auto p-4 space-y-4">
       <header className="flex items-center justify-between">
-        <h1 className="text-2xl font-semibold">DUO RUNS</h1>
-        <div className="flex items-center gap-2 text-sm">
-          {ragScore && <span className="px-2 py-0.5 rounded bg-slate-100">RAG Score F1 {(ragScore.f1!*100|0)}% / Cite {(ragScore.cite!*100|0)}%</span>}
-          {styleRate!==undefined && <span className="px-2 py-0.5 rounded bg-slate-100">style遵守 {(styleRate*100|0)}%</span>}
-          <span>avg</span>{covBadge(avg)}
-          <span>payoff</span>{covBadge(payoffAvg)}{payoffAvg>=0.20 && <span className="ml-1 px-2 py-0.5 rounded bg-emerald-100 text-emerald-800">Good</span>}
-          <span>max</span>{covBadge(maxCov)}
-          <nav className="text-slate-500 ml-2">Backend — <a className="underline" href="/docs">/docs</a></nav>
+        <div className="flex items-center gap-4">
+          <h1 className="text-2xl font-semibold">DUO-TALK</h1>
+          {/* Tab Navigation */}
+          <nav className="flex gap-1 bg-slate-100 p-1 rounded-lg">
+            <button
+              onClick={() => setActiveTab('runs')}
+              className={`px-4 py-1.5 rounded-md text-sm font-medium transition-colors ${
+                activeTab === 'runs' ? 'bg-white shadow text-slate-900' : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              Runs
+            </button>
+            <button
+              onClick={() => setActiveTab('settings')}
+              className={`px-4 py-1.5 rounded-md text-sm font-medium transition-colors ${
+                activeTab === 'settings' ? 'bg-white shadow text-slate-900' : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              Vision Settings
+            </button>
+          </nav>
         </div>
+        {activeTab === 'runs' && (
+          <div className="flex items-center gap-2 text-sm">
+            {ragScore && <span className="px-2 py-0.5 rounded bg-slate-100">RAG Score F1 {(ragScore.f1!*100|0)}% / Cite {(ragScore.cite!*100|0)}%</span>}
+            {styleRate!==undefined && <span className="px-2 py-0.5 rounded bg-slate-100">style遵守 {(styleRate*100|0)}%</span>}
+            <span>avg</span>{covBadge(avg)}
+            <span>payoff</span>{covBadge(payoffAvg)}{payoffAvg>=0.20 && <span className="ml-1 px-2 py-0.5 rounded bg-emerald-100 text-emerald-800">Good</span>}
+            <span>max</span>{covBadge(maxCov)}
+            <nav className="text-slate-500 ml-2">Backend — <a className="underline" href="/docs">/docs</a></nav>
+          </div>
+        )}
       </header>
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-        <section className="space-y-3">
-          <div className="p-4 bg-white rounded-lg shadow">
-            <h2 className="font-medium mb-2">New Run</h2>
-            <ControlPanel apiBase={API} onStarted={(r)=> { if(r){ autoPicked.current = true; setRid(r) } }} />
-          </div>
-          <div className="p-4 bg-white rounded-lg shadow">
-            <h2 className="font-medium mb-2">Runs</h2>
-            <div className="max-h-64 overflow-auto md:max-h-80">
-              <RunList rows={runs} onPick={(r)=> { autoPicked.current = true; setRid(r) }} />
+
+      {/* Runs Tab Content */}
+      {activeTab === 'runs' && (
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+          <section className="space-y-3">
+            <div className="p-4 bg-white rounded-lg shadow">
+              <h2 className="font-medium mb-2">New Run</h2>
+              <ControlPanel apiBase={API} onStarted={(r)=> { if(r){ autoPicked.current = true; setRid(r) } }} />
             </div>
-          </div>
-          <div className="p-4 bg-white rounded-lg shadow">
-            <h2 className="font-medium mb-2">Filters</h2>
-            <div className="flex flex-wrap gap-2 text-sm">
-              <label className="flex items-center gap-1"><input type="checkbox" checked={showA} onChange={e=>setShowA(e.target.checked)} /> Speaker A</label>
-              <label className="flex items-center gap-1"><input type="checkbox" checked={showB} onChange={e=>setShowB(e.target.checked)} /> Speaker B</label>
-              <label className="flex items-center gap-1"><input type="checkbox" checked={showBAN} onChange={e=>setShowBAN(e.target.checked)} /> BANter</label>
-              <label className="flex items-center gap-1"><input type="checkbox" checked={showPIV} onChange={e=>setShowPIV(e.target.checked)} /> PIVOT</label>
-              <label className="flex items-center gap-1"><input type="checkbox" checked={showPAY} onChange={e=>setShowPAY(e.target.checked)} /> PAYOFF</label>
+            <div className="p-4 bg-white rounded-lg shadow">
+              <h2 className="font-medium mb-2">Runs</h2>
+              <div className="max-h-64 overflow-auto md:max-h-80">
+                <RunList rows={runs} onPick={(r)=> { autoPicked.current = true; setRid(r) }} />
+              </div>
             </div>
-          </div>
-          <div className="p-4 bg-white rounded-lg shadow">
-            <h2 className="font-medium mb-2">RAG Panel</h2>
-            <div id={selected!==undefined? `rag-${selected}`: undefined}>
-              <RagPanel rag={selected!==undefined ? rag[selected] : undefined} beat={selected!==undefined ? directors[selected]?.beat : undefined} />
+            <div className="p-4 bg-white rounded-lg shadow">
+              <h2 className="font-medium mb-2">Filters</h2>
+              <div className="flex flex-wrap gap-2 text-sm">
+                <label className="flex items-center gap-1"><input type="checkbox" checked={showA} onChange={e=>setShowA(e.target.checked)} /> Speaker A</label>
+                <label className="flex items-center gap-1"><input type="checkbox" checked={showB} onChange={e=>setShowB(e.target.checked)} /> Speaker B</label>
+                <label className="flex items-center gap-1"><input type="checkbox" checked={showBAN} onChange={e=>setShowBAN(e.target.checked)} /> BANter</label>
+                <label className="flex items-center gap-1"><input type="checkbox" checked={showPIV} onChange={e=>setShowPIV(e.target.checked)} /> PIVOT</label>
+                <label className="flex items-center gap-1"><input type="checkbox" checked={showPAY} onChange={e=>setShowPAY(e.target.checked)} /> PAYOFF</label>
+              </div>
             </div>
-          </div>
-        </section>
-        <section className="lg:col-span-2 space-y-3">
-          <div className="p-4 bg-white rounded-lg shadow">
-            <div className="flex items-center justify-between mb-2">
-              <h2 className="font-medium">Timeline</h2>
-              <CovSpark values={covValues} />
+            <div className="p-4 bg-white rounded-lg shadow">
+              <h2 className="font-medium mb-2">RAG Panel</h2>
+              <div id={selected!==undefined? `rag-${selected}`: undefined}>
+                <RagPanel rag={selected!==undefined ? rag[selected] : undefined} beat={selected!==undefined ? directors[selected]?.beat : undefined} />
+              </div>
             </div>
-             <div className="space-y-3">
-               {filteredTurns.map(t=> (
-                 <TurnCard key={t} sp={speaks[t]} rag={rag[t]} beat={directors[t]?.beat}
-                   directorStatus={directors[t]?.status} directorReason={directors[t]?.reason}
-                   directorGuidance={directors[t]?.guidance}
-                   onSelect={()=> { setSelected(t); requestAnimationFrame(()=>{ const el=document.getElementById(`rag-${t}`); el?.scrollIntoView({block:'center', behavior:'smooth'}) }) }}
-                   onViewPrompts={(e)=> { lastFocusRef.current = e.currentTarget as HTMLElement; setModalTurn(t) }} />
-               ))}
-             </div>
-          </div>
-        </section>
-      </div>
+          </section>
+          <section className="lg:col-span-2 space-y-3">
+            <div className="p-4 bg-white rounded-lg shadow">
+              <div className="flex items-center justify-between mb-2">
+                <h2 className="font-medium">Timeline</h2>
+                <CovSpark values={covValues} />
+              </div>
+              <div className="space-y-3">
+                {filteredTurns.map(t=> (
+                  <TurnCard key={t} sp={speaks[t]} rag={rag[t]} beat={directors[t]?.beat}
+                    directorStatus={directors[t]?.status} directorReason={directors[t]?.reason}
+                    directorGuidance={directors[t]?.guidance}
+                    onSelect={()=> { setSelected(t); requestAnimationFrame(()=>{ const el=document.getElementById(`rag-${t}`); el?.scrollIntoView({block:'center', behavior:'smooth'}) }) }}
+                    onViewPrompts={(e)=> { lastFocusRef.current = e.currentTarget as HTMLElement; setModalTurn(t) }} />
+                ))}
+              </div>
+            </div>
+          </section>
+        </div>
+      )}
+
+      {/* Settings Tab Content */}
+      {activeTab === 'settings' && (
+        <div className="p-4 bg-white rounded-lg shadow">
+          <SettingsPanel apiBase={API} />
+        </div>
+      )}
     </div>
     <PromptModal open={modalTurn!==undefined} onClose={()=> { setModalTurn(undefined); lastFocusRef.current?.focus() }} turn={modalTurnData} />
     </>

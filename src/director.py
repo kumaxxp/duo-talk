@@ -1,6 +1,7 @@
 """
 Director LLM that orchestrates character dialogue.
 Monitors: 進行度 (progress), 参加度 (participation), 知識領域 (knowledge domain)
+Now includes fact-checking capability via web search.
 """
 
 from typing import Optional
@@ -10,12 +11,13 @@ from src.config import config
 from src.types import DirectorEvaluation, DirectorStatus
 from src.prompt_manager import get_prompt_manager
 from src.beat_tracker import get_beat_tracker
+from src.fact_checker import get_fact_checker, FactCheckResult
 
 
 class Director:
     """Director LLM that monitors and guides character responses"""
 
-    def __init__(self):
+    def __init__(self, enable_fact_check: bool = True):
         self.llm = get_llm_client()
         # Load director system prompt using PromptManager
         self.prompt_manager = get_prompt_manager("director")
@@ -24,6 +26,11 @@ class Director:
         self.beat_tracker = get_beat_tracker()
         # Track recent patterns to avoid repetition
         self.recent_patterns: list[str] = []
+        # Fact checker for verifying common sense
+        self.enable_fact_check = enable_fact_check
+        self.fact_checker = get_fact_checker() if enable_fact_check else None
+        # Store last fact check result for debugging/logging
+        self.last_fact_check: Optional[FactCheckResult] = None
 
     def _default_system_prompt(self) -> str:
         """Default director prompt if file not found (deprecated)"""
@@ -101,6 +108,15 @@ Respond ONLY with JSON:
                 suggestion=format_check["suggestion"],
             )
 
+        # 論理的矛盾のチェック（二重否定など）
+        logic_check = self._check_logical_consistency(response)
+        if not logic_check["passed"]:
+            return DirectorEvaluation(
+                status=DirectorStatus.RETRY,
+                reason=logic_check["issue"],
+                suggestion=logic_check["suggestion"],
+            )
+
         # 口調マーカーの事前チェック
         tone_check = self._check_tone_markers(speaker, response)
         if not tone_check["passed"]:
@@ -113,6 +129,21 @@ Respond ONLY with JSON:
 
         # 口調マーカーの詳細情報を取得（LLM評価用）
         tone_info = self._check_tone_markers(speaker, response)
+
+        # ファクトチェック（やなの発言のみ、次のあゆの発言で訂正させるため）
+        fact_check_result: Optional[FactCheckResult] = None
+        if self.enable_fact_check and self.fact_checker and speaker == "A":
+            print("    🔍 ファクトチェック実行中...")
+            fact_check_result = self.fact_checker.check_statement(
+                statement=response,
+                context=frame_description,
+            )
+            self.last_fact_check = fact_check_result
+
+            if fact_check_result.has_error:
+                print(f"    ⚠️  誤り検出: {fact_check_result.claim}")
+                print(f"    ✓  正しい情報: {fact_check_result.correct_info}")
+                print(f"    📊 確信度: {fact_check_result.search_confidence}")
 
         user_prompt = self._build_evaluation_prompt(
             frame_description=frame_description,
@@ -188,6 +219,18 @@ Respond ONLY with JSON:
             next_pattern = result.get("next_pattern")
             next_instruction = result.get("next_instruction")
             beat_stage = result.get("beat_stage", current_beat)
+
+            # ファクトチェックで誤りが見つかった場合、訂正パターンに切り替え
+            if fact_check_result and fact_check_result.has_error:
+                # パターンC（誤解→訂正）を強制
+                next_pattern = "C"
+                # 訂正指示を追加
+                correction_instruction = fact_check_result.correction_prompt
+                if next_instruction:
+                    next_instruction = f"{correction_instruction}\n\n（追加指示）{next_instruction}"
+                else:
+                    next_instruction = correction_instruction
+                print(f"    🎬 パターンを訂正モード(C)に変更")
 
             # Validate and track pattern
             if next_pattern and next_pattern in ["A", "B", "C", "D", "E"]:
@@ -415,12 +458,61 @@ JSON ONLY:
             instruction = self.llm.call(
                 system="あなたは対話の演出家です。キャラクター同士の対話を自然に進めるための簡潔な指示を出してください。",
                 user=user_prompt,
-                temperature=0.5,
-                max_tokens=150,
+                temperature=0.7,  # Increased to reduce repetition
+                max_tokens=100,   # Reduced to prevent long repetitive output
             )
-            return instruction.strip()
+            result = instruction.strip()
+
+            # 繰り返し検出: 同じ文字が連続で5回以上出現する場合は無効
+            if self._has_repetition(result):
+                print("    ⚠️ 繰り返し検出: 指示を破棄")
+                return ""
+
+            return result
         except Exception:
             return ""  # Empty instruction on error
+
+    def _has_repetition(self, text: str, threshold: int = 5) -> bool:
+        """
+        テキストに異常な繰り返しがあるかチェック。
+
+        Args:
+            text: チェック対象のテキスト
+            threshold: 繰り返しと判定する回数
+
+        Returns:
+            繰り返しがある場合True
+        """
+        if not text:
+            return False
+
+        # 同じ文字がthreshold回以上連続
+        prev_char = ""
+        count = 1
+        for char in text:
+            if char == prev_char:
+                count += 1
+                if count >= threshold:
+                    return True
+            else:
+                count = 1
+            prev_char = char
+
+        # 同じ2文字パターンがthreshold回以上連続
+        for i in range(len(text) - 2 * threshold):
+            pattern = text[i:i+2]
+            if len(pattern) == 2 and pattern[0] != pattern[1]:
+                repeated = pattern * threshold
+                if repeated in text:
+                    return True
+
+        # 同じ単語が短い間隔で繰り返される（例: "鳥鳥鳥"）
+        import re
+        # 2-4文字の単語が4回以上連続
+        if re.search(r'(.{2,4})\1{3,}', text):
+            return True
+
+        return False
 
     @staticmethod
     def _format_conversation(conversation: list) -> str:
@@ -452,7 +544,8 @@ JSON ONLY:
             expected_desc = ["〜ね", "へ？", "わ！", "あ、そっか", "〜よね", "〜かな"]
         else:
             # あゆ（妹）の口調マーカー（「姉様」は毎回不要なので必須から除外）
-            markers = ["です", "ですよ", "ですね", "ございます", "でしょう"]
+            # 「ございます」は禁止なので含めない
+            markers = ["です", "ですよ", "ですね", "でしょう"]
             expected_desc = ["です", "ですね", "ですよ"]
 
         found = []
@@ -486,6 +579,57 @@ JSON ONLY:
             "expected": expected_desc,
             "found": found,
             "missing": "マーカーが見つかりません" if not found else "",
+        }
+
+    def _check_logical_consistency(self, response: str) -> dict:
+        """
+        論理的な矛盾や不自然な表現をチェックする。
+
+        Args:
+            response: 評価対象の発言
+
+        Returns:
+            {
+                "passed": bool,
+                "issue": str,
+                "suggestion": str
+            }
+        """
+        import re
+
+        # 二重否定パターン（意味が逆になる）
+        double_negative_patterns = [
+            (r"まだ.{1,10}じゃない", "「まだ〇〇じゃない」は意味が逆になります"),
+            (r"まだ.{1,10}ではない", "「まだ〇〇ではない」は意味が逆になります"),
+            (r"もう.{1,10}じゃない", "「もう〇〇じゃない」は意味が曖昧です"),
+        ]
+
+        for pattern, message in double_negative_patterns:
+            if re.search(pattern, response):
+                match = re.search(pattern, response)
+                return {
+                    "passed": False,
+                    "issue": f"論理矛盾: {message}（検出: 「{match.group()}」）",
+                    "suggestion": "肯定形で言い換えてください。例: 「まだ未成年だよ」",
+                }
+
+        # 矛盾しやすい表現パターン
+        contradictory_patterns = [
+            (r"私.{0,5}未成年じゃない", "「私、未成年じゃない」は「私は成人だ」という意味になります"),
+        ]
+
+        for pattern, message in contradictory_patterns:
+            if re.search(pattern, response):
+                return {
+                    "passed": False,
+                    "issue": f"論理矛盾: {message}",
+                    "suggestion": "意図した意味になっているか確認してください",
+                }
+
+        return {
+            "passed": True,
+            "issue": "",
+            "suggestion": "",
         }
 
     def _check_format(self, response: str) -> dict:

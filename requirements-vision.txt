@@ -1,0 +1,17 @@
+# Vision Processing Dependencies
+# These are optional and may require significant storage/VRAM
+# Install with: pip install -r requirements-vision.txt
+
+# Florence-2 segmentation model
+transformers>=4.40,<5
+torch>=2.0,<3
+pillow>=10.0,<11
+timm>=0.9,<1
+
+# For GPU acceleration (optional - uncomment if you have CUDA)
+# Install with: pip install torch torchvision --index-url https://download.pytorch.org/whl/cu118
+# Or for CUDA 12.x: pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121
+
+# Additional vision utilities
+scipy>=1.10,<2
+einops>=0.7,<1

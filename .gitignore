@@ -24,3 +24,4 @@ duo-gui/dist/
 duo-gui/.vite/
 duo-gui/*.log
 duo-gui/.env*
+runs/uploads/

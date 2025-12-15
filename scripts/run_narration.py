@@ -197,7 +197,7 @@ class NarrationPipeline:
         }
 
         print(f"\n{'='*60}")
-        print(f"📷 Topic: {scene_description}")
+        print(f"📷 Topic: {scene_description or '(画像から自動生成)'}")
         if not skip_vision and image_path:
             print(f"🖼️  Image: {image_path}")
         print(f"🆔 Run ID: {run_id}")
@@ -205,9 +205,14 @@ class NarrationPipeline:
 
         # Step 1: Vision 分析（skip_vision=True の場合はスキップ）
         vision_text = None
+        effective_scene = scene_description  # Will be updated from vision if needed
+
         if skip_vision or not image_path:
             print("\n[Step 1] Skipping Vision analysis (topic-only mode)")
             result["vision_analysis"] = {"status": "skipped", "reason": "topic-only mode"}
+            # トピックのみモードの場合、scene_descriptionが必須
+            if not effective_scene:
+                effective_scene = "観光地を訪れている場面"
         else:
             print("\n[Step 1] Analyzing image with Vision LLM...")
             vision_result = self.vision_processor.analyze_image(image_path)
@@ -226,6 +231,26 @@ class NarrationPipeline:
                 vision_result["visual_info"]
             )
 
+            # トピックが指定されていない場合、Vision分析結果からシーン説明を生成
+            if not effective_scene:
+                visual_info = vision_result.get("visual_info", {})
+                main_subjects = visual_info.get("main_subjects", "")
+                environment = visual_info.get("environment", "")
+
+                # メイン被写体と環境からシーン説明を構築
+                if main_subjects:
+                    effective_scene = main_subjects
+                    if environment:
+                        effective_scene = f"{main_subjects}。{environment}"
+                elif environment:
+                    effective_scene = environment
+                else:
+                    # フォールバック: raw_textの最初の部分を使用
+                    raw_text = vision_result.get("raw_text", "")
+                    effective_scene = raw_text[:100] if raw_text else "画像に映る風景"
+
+                print(f"📝 Generated scene from image: {effective_scene[:50]}...")
+
         # Step 2: キャラクター対話生成
         # max_iterations = 対話ターン数（A→B→A→B...）
         print("\n[Step 2] Generating character dialogue...")
@@ -237,7 +262,7 @@ class NarrationPipeline:
         print(f"\n  Turn {turn_counter + 1}/{max_iterations}")
         print("    > 澄ヶ瀬やな (姉) is speaking...")
         char_a_speech = self.char_a.speak(
-            frame_description=scene_description,
+            frame_description=effective_scene,
             vision_info=vision_text,
         )
         print(f"      {char_a_speech}")
@@ -282,7 +307,7 @@ class NarrationPipeline:
 
                 # Director Guidanceを渡して発言生成
                 speech = current_char.speak(
-                    frame_description=scene_description,
+                    frame_description=effective_scene,
                     partner_speech=last_speech,
                     director_instruction=director_guidance,
                     vision_info=vision_text,
@@ -295,7 +320,7 @@ class NarrationPipeline:
                 previous_speech = dialogue_history[-1][1] if len(dialogue_history) > 0 else None
 
                 director_evaluation = self.director.evaluate_response(
-                    frame_description=scene_description,
+                    frame_description=effective_scene,
                     speaker=current_speaker,
                     response=speech,
                     partner_previous_speech=previous_speech,
@@ -332,7 +357,7 @@ class NarrationPipeline:
             next_turn_guidance = None
             if director_evaluation.status.name == "PASS" and turn < max_iterations - 1:
                 next_turn_guidance = self.director.get_instruction_for_next_turn(
-                    frame_description=scene_description,
+                    frame_description=effective_scene,
                     conversation_so_far=dialogue_history,
                     turn_number=turn_counter + 1,
                 )

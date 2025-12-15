@@ -1,0 +1,19 @@
+{
+  "mode": "segmentation_llm",
+  "vlm_type": "llava:latest",
+  "vlm_custom_model": "",
+  "segmentation_model": "florence2-base",
+  "segmentation_confidence_threshold": 0.5,
+  "enable_ocr": false,
+  "enable_depth_estimation": false,
+  "max_objects": 20,
+  "vlm_temperature": 0.3,
+  "vlm_max_tokens": 1024,
+  "use_gpu": true,
+  "batch_size": 1,
+  "output_language": "ja",
+  "include_coordinates": true,
+  "include_confidence": true,
+  "custom_detection_prompt": "",
+  "custom_description_prompt": ""
+}
