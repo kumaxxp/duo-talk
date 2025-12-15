@@ -5,6 +5,8 @@ interface VisionConfig {
   mode: string
   vlm_type: string
   vlm_custom_model: string
+  text_llm_type: string
+  text_llm_custom_model: string
   segmentation_model: string
   segmentation_confidence_threshold: number
   enable_ocr: boolean
@@ -12,6 +14,8 @@ interface VisionConfig {
   max_objects: number
   vlm_temperature: number
   vlm_max_tokens: number
+  llm_temperature: number
+  llm_max_tokens: number
   use_gpu: boolean
   batch_size: number
   output_language: string
@@ -29,14 +33,17 @@ interface Preset {
 
 interface ModelOptions {
   vlm_types: { value: string; label: string }[]
+  text_llm_types: { value: string; label: string }[]
   segmentation_models: { value: string; label: string }[]
   modes: { value: string; label: string }[]
 }
 
 const defaultConfig: VisionConfig = {
   mode: 'single_vlm',
-  vlm_type: 'llava:7b',
+  vlm_type: 'llava:latest',
   vlm_custom_model: '',
+  text_llm_type: 'gemma3:12b',
+  text_llm_custom_model: '',
   segmentation_model: 'none',
   segmentation_confidence_threshold: 0.5,
   enable_ocr: false,
@@ -44,6 +51,8 @@ const defaultConfig: VisionConfig = {
   max_objects: 20,
   vlm_temperature: 0.3,
   vlm_max_tokens: 1024,
+  llm_temperature: 0.5,
+  llm_max_tokens: 512,
   use_gpu: true,
   batch_size: 1,
   output_language: 'ja',
@@ -79,7 +88,7 @@ export default function SettingsPanel({ apiBase }: { apiBase: string }) {
         const presetsData = await presetsRes.json()
         const modelsData = await modelsRes.json()
 
-        if (configData.config) setConfig(configData.config)
+        if (configData.config) setConfig({ ...defaultConfig, ...configData.config })
         if (presetsData.presets) setPresets(presetsData.presets)
         if (modelsData.models) setModels(modelsData.models)
       } catch (e) {
@@ -125,7 +134,7 @@ export default function SettingsPanel({ apiBase }: { apiBase: string }) {
       })
       const data = await res.json()
       if (data.config) {
-        setConfig(data.config)
+        setConfig({ ...defaultConfig, ...data.config })
         setMessage({ type: 'success', text: `Preset "${presetName}" applied` })
       }
     } catch (e) {
@@ -166,6 +175,11 @@ export default function SettingsPanel({ apiBase }: { apiBase: string }) {
   const updateConfig = <K extends keyof VisionConfig>(key: K, value: VisionConfig[K]) => {
     setConfig(prev => ({ ...prev, [key]: value }))
   }
+
+  // Check if mode uses segmentation
+  const usesSegmentation = config.mode === 'vlm_segmentation' || config.mode === 'segmentation_llm'
+  // Check if mode uses text LLM (not VLM)
+  const usesTextLLM = config.mode === 'segmentation_llm'
 
   if (loading) {
     return (
@@ -230,36 +244,55 @@ export default function SettingsPanel({ apiBase }: { apiBase: string }) {
         </div>
       </div>
 
+      {/* Mode Selection */}
+      <div className="p-4 bg-white border rounded-lg">
+        <h3 className="font-medium mb-3">Processing Mode</h3>
+        <select
+          value={config.mode}
+          onChange={e => updateConfig('mode', e.target.value)}
+          className="w-full px-3 py-2 border rounded"
+        >
+          {models?.modes.map(m => (
+            <option key={m.value} value={m.value}>
+              {m.label}
+            </option>
+          ))}
+        </select>
+        <div className="mt-3 p-3 bg-slate-50 rounded text-sm">
+          {config.mode === 'single_vlm' && (
+            <div>
+              <strong>VLMのみモード:</strong> 画像をVLM (LLaVA, LLaMA Vision等) に入力し、直接説明を生成します。
+              <br />シンプルで高速ですが、位置情報は概略的です。
+            </div>
+          )}
+          {config.mode === 'vlm_segmentation' && (
+            <div>
+              <strong>VLM + セグメンテーション併用:</strong> VLMで全体説明を生成しつつ、Florence-2で詳細な物体検出を行います。
+              <br />両方の結果を統合して、位置情報付きの詳細な説明を提供します。
+            </div>
+          )}
+          {config.mode === 'segmentation_llm' && (
+            <div>
+              <strong>セグメンテーション → テキストLLMモード:</strong> Florence-2で物体を検出し、その構造化データをテキストLLM (Gemma3等) に渡して説明を生成します。
+              <br />VLMなしで動作し、正確な位置情報を活用した説明が可能です。
+            </div>
+          )}
+        </div>
+      </div>
+
       {/* Main Settings */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-        {/* Mode Selection */}
-        <div className="p-4 bg-white border rounded-lg">
-          <h3 className="font-medium mb-3">Processing Mode</h3>
-          <select
-            value={config.mode}
-            onChange={e => updateConfig('mode', e.target.value)}
-            className="w-full px-3 py-2 border rounded"
-          >
-            {models?.modes.map(m => (
-              <option key={m.value} value={m.value}>
-                {m.label}
-              </option>
-            ))}
-          </select>
-          <p className="text-xs text-slate-500 mt-2">
-            {config.mode === 'single_vlm' && 'Single VLM for both detection and description'}
-            {config.mode === 'vlm_segmentation' && 'VLM + Segmentation model for detailed analysis'}
-            {config.mode === 'segmentation_llm' && 'Segmentation first, then LLM for description'}
-          </p>
-        </div>
-
         {/* VLM Selection */}
-        <div className="p-4 bg-white border rounded-lg">
-          <h3 className="font-medium mb-3">VLM Model</h3>
+        <div className={`p-4 bg-white border rounded-lg ${usesTextLLM ? 'opacity-50' : ''}`}>
+          <h3 className="font-medium mb-3">
+            VLM Model
+            {usesTextLLM && <span className="text-xs text-slate-500 ml-2">(not used in current mode)</span>}
+          </h3>
           <select
             value={config.vlm_type}
             onChange={e => updateConfig('vlm_type', e.target.value)}
             className="w-full px-3 py-2 border rounded"
+            disabled={usesTextLLM}
           >
             {models?.vlm_types.map(m => (
               <option key={m.value} value={m.value}>
@@ -274,18 +307,54 @@ export default function SettingsPanel({ apiBase }: { apiBase: string }) {
               value={config.vlm_custom_model}
               onChange={e => updateConfig('vlm_custom_model', e.target.value)}
               className="w-full px-3 py-2 border rounded mt-2"
+              disabled={usesTextLLM}
             />
           )}
+          <p className="text-xs text-slate-500 mt-2">Vision Language Model (画像入力対応)</p>
+        </div>
+
+        {/* Text LLM Selection */}
+        <div className={`p-4 bg-white border rounded-lg ${!usesTextLLM ? 'opacity-50' : ''}`}>
+          <h3 className="font-medium mb-3">
+            Text LLM Model
+            {!usesTextLLM && <span className="text-xs text-slate-500 ml-2">(only for segmentation_llm mode)</span>}
+          </h3>
+          <select
+            value={config.text_llm_type}
+            onChange={e => updateConfig('text_llm_type', e.target.value)}
+            className="w-full px-3 py-2 border rounded"
+            disabled={!usesTextLLM}
+          >
+            {models?.text_llm_types?.map(m => (
+              <option key={m.value} value={m.value}>
+                {m.label} ({m.value})
+              </option>
+            ))}
+          </select>
+          {config.text_llm_type === 'custom' && (
+            <input
+              type="text"
+              placeholder="Custom model name (e.g., my-llm:latest)"
+              value={config.text_llm_custom_model}
+              onChange={e => updateConfig('text_llm_custom_model', e.target.value)}
+              className="w-full px-3 py-2 border rounded mt-2"
+              disabled={!usesTextLLM}
+            />
+          )}
+          <p className="text-xs text-slate-500 mt-2">Text LLM (セグメンテーション結果の説明生成用)</p>
         </div>
 
         {/* Segmentation Model */}
-        <div className="p-4 bg-white border rounded-lg">
-          <h3 className="font-medium mb-3">Segmentation Model</h3>
+        <div className={`p-4 bg-white border rounded-lg ${!usesSegmentation ? 'opacity-50' : ''}`}>
+          <h3 className="font-medium mb-3">
+            Segmentation Model
+            {!usesSegmentation && <span className="text-xs text-slate-500 ml-2">(not used in current mode)</span>}
+          </h3>
           <select
             value={config.segmentation_model}
             onChange={e => updateConfig('segmentation_model', e.target.value)}
             className="w-full px-3 py-2 border rounded"
-            disabled={config.mode === 'single_vlm'}
+            disabled={!usesSegmentation}
           >
             {models?.segmentation_models.map(m => (
               <option key={m.value} value={m.value}>
@@ -293,24 +362,31 @@ export default function SettingsPanel({ apiBase }: { apiBase: string }) {
               </option>
             ))}
           </select>
-          {config.mode === 'single_vlm' && (
-            <p className="text-xs text-slate-500 mt-2">Change mode to enable segmentation</p>
-          )}
+          <p className="text-xs text-slate-500 mt-2">
+            Florence-2: 軽量で高速な物体検出
+            <br />
+            Grounded SAM 2: 高精度セグメンテーション
+          </p>
         </div>
 
-        {/* VLM Parameters */}
+        {/* Parameters */}
         <div className="p-4 bg-white border rounded-lg">
-          <h3 className="font-medium mb-3">VLM Parameters</h3>
+          <h3 className="font-medium mb-3">Model Parameters</h3>
           <div className="space-y-3">
             <div>
-              <label className="text-sm text-slate-600">Temperature: {config.vlm_temperature}</label>
+              <label className="text-sm text-slate-600">
+                {usesTextLLM ? 'LLM' : 'VLM'} Temperature: {usesTextLLM ? config.llm_temperature : config.vlm_temperature}
+              </label>
               <input
                 type="range"
                 min="0"
                 max="1"
                 step="0.1"
-                value={config.vlm_temperature}
-                onChange={e => updateConfig('vlm_temperature', parseFloat(e.target.value))}
+                value={usesTextLLM ? config.llm_temperature : config.vlm_temperature}
+                onChange={e => updateConfig(
+                  usesTextLLM ? 'llm_temperature' : 'vlm_temperature',
+                  parseFloat(e.target.value)
+                )}
                 className="w-full"
               />
             </div>
@@ -318,8 +394,11 @@ export default function SettingsPanel({ apiBase }: { apiBase: string }) {
               <label className="text-sm text-slate-600">Max Tokens</label>
               <input
                 type="number"
-                value={config.vlm_max_tokens}
-                onChange={e => updateConfig('vlm_max_tokens', parseInt(e.target.value) || 1024)}
+                value={usesTextLLM ? config.llm_max_tokens : config.vlm_max_tokens}
+                onChange={e => updateConfig(
+                  usesTextLLM ? 'llm_max_tokens' : 'vlm_max_tokens',
+                  parseInt(e.target.value) || 512
+                )}
                 className="w-full px-3 py-2 border rounded"
               />
             </div>
@@ -480,6 +559,24 @@ export default function SettingsPanel({ apiBase }: { apiBase: string }) {
             )}
           </div>
         )}
+      </div>
+
+      {/* Installation Note */}
+      <div className="p-4 bg-amber-50 border border-amber-200 rounded-lg text-sm">
+        <h4 className="font-medium text-amber-800 mb-2">Installation Note</h4>
+        <p className="text-amber-700">
+          Florence-2 segmentation requires additional dependencies:
+        </p>
+        <code className="block mt-2 p-2 bg-white rounded text-xs">
+          pip install -r requirements-vision.txt
+        </code>
+        <p className="text-amber-700 mt-2">
+          Also ensure required Ollama models are installed:
+        </p>
+        <code className="block mt-2 p-2 bg-white rounded text-xs">
+          ollama pull llava:latest<br/>
+          ollama pull gemma3:12b
+        </code>
       </div>
     </div>
   )

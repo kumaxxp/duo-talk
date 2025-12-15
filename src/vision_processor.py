@@ -19,6 +19,7 @@ from src.vision_config import (
     VisionConfig,
     VisionMode,
     VLMType,
+    TextLLMType,
     SegmentationModel,
     get_current_vision_config,
 )
@@ -426,39 +427,53 @@ class VisionProcessor:
         structured_data: str,
         objects: List[DetectedObject]
     ) -> tuple[Dict[str, str], str]:
-        """Generate natural description from detected objects using LLM"""
-        prompt = f"""以下の検出結果を元に、観光地ナレーション向けの視覚情報を生成してください。
+        """Generate natural description from detected objects using text LLM.
+
+        This method is used in SEGMENTATION_PLUS_LLM mode where:
+        1. Florence-2 or similar model detects objects with positions
+        2. Text LLM (not VLM) generates natural descriptions from the structured data
+        """
+        lang = "日本語" if self.config.output_language == "ja" else "English"
+
+        prompt = f"""あなたは観光地ナレーションの専門家です。
+以下の画像解析結果を元に、観光地ナレーション向けの視覚情報を{lang}で生成してください。
 
 {structured_data}
 
 以下の形式で出力してください：
 
 【メイン被写体】
-（最も重要な被写体について）
+（最も重要な被写体について、位置情報を含めて説明）
 
 【環境・背景】
 （周囲の状況について）
 
 【人物・活動】
-（人がいる場合）
+（人がいる場合はその様子）
 
 【特筆すべき詳細】
-（ナレーションで言及すると面白い点）"""
+（ナレーションで言及すると面白い点）
+
+各項目について、簡潔かつ具体的に記述してください。"""
 
         try:
+            # Use text LLM (not VLM) for generating descriptions from structured data
+            text_llm_model = self.config.get_text_llm_model_name()
+
             response = ollama.generate(
-                model=self.config.get_vlm_model_name(),
+                model=text_llm_model,
                 prompt=prompt,
                 stream=False,
                 options={
-                    "temperature": self.config.vlm_temperature,
-                    "num_predict": self.config.vlm_max_tokens,
+                    "temperature": self.config.llm_temperature,
+                    "num_predict": self.config.llm_max_tokens,
                 }
             )
             raw_text = response.get("response", "")
             visual_info = self._parse_vision_response(raw_text)
             return visual_info, raw_text
         except Exception as e:
+            print(f"Text LLM error: {e}")
             return self._create_visual_info_from_objects(objects), str(e)
 
     def _get_default_vlm_prompt(self) -> str:

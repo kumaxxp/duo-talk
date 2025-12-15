@@ -13,22 +13,33 @@ from typing import Optional, List
 
 class VisionMode(str, Enum):
     """Vision processing mode"""
-    SINGLE_VLM = "single_vlm"           # Single VLM for both detection and description
-    VLM_PLUS_SEGMENTATION = "vlm_segmentation"  # VLM + segmentation model
-    SEGMENTATION_PLUS_LLM = "segmentation_llm"  # Segmentation → structured data → LLM
+    SINGLE_VLM = "single_vlm"                    # VLMのみで画像解析と説明生成
+    VLM_PLUS_SEGMENTATION = "vlm_segmentation"   # VLM + セグメンテーションモデル併用
+    SEGMENTATION_PLUS_LLM = "segmentation_llm"   # セグメンテーション → テキストLLMで説明生成
 
 
 class VLMType(str, Enum):
-    """Available VLM models"""
-    LLAVA_LATEST = "llava:latest"
+    """Available Vision Language Models (画像入力対応モデルのみ)"""
     LLAVA_7B = "llava:7b"
     LLAVA_13B = "llava:13b"
     LLAVA_34B = "llava:34b"
+    LLAVA_LATEST = "llava:latest"
     LLAMA_VISION_11B = "llama3.2-vision:11b"
     LLAMA_VISION_90B = "llama3.2-vision:90b"
+    BAKLLAVA = "bakllava:latest"
+    MOONDREAM = "moondream:latest"
+    CUSTOM = "custom"
+
+
+class TextLLMType(str, Enum):
+    """Available Text LLMs (セグメンテーション結果の説明生成用)"""
+    GEMMA3_4B = "gemma3:4b"
     GEMMA3_12B = "gemma3:12b"
     GEMMA3_27B = "gemma3:27b"
-    QWEN_VL_7B = "qwen-vl:7b"
+    QWEN2_5_7B = "qwen2.5:7b"
+    QWEN2_5_14B = "qwen2.5:14b"
+    MISTRAL_7B = "mistral:7b"
+    LLAMA3_8B = "llama3:8b"
     CUSTOM = "custom"
 
 
@@ -48,9 +59,13 @@ class VisionConfig:
     # Mode selection
     mode: VisionMode = VisionMode.SINGLE_VLM
 
-    # VLM settings
+    # VLM settings (for modes using VLM)
     vlm_type: VLMType = VLMType.LLAVA_LATEST
-    vlm_custom_model: str = ""  # For custom model specification
+    vlm_custom_model: str = ""  # Custom VLM model name
+
+    # Text LLM settings (for SEGMENTATION_PLUS_LLM mode)
+    text_llm_type: TextLLMType = TextLLMType.GEMMA3_12B
+    text_llm_custom_model: str = ""  # Custom text LLM model name
 
     # Segmentation settings
     segmentation_model: SegmentationModel = SegmentationModel.NONE
@@ -64,6 +79,8 @@ class VisionConfig:
     # Performance settings
     vlm_temperature: float = 0.3
     vlm_max_tokens: int = 1024
+    llm_temperature: float = 0.5
+    llm_max_tokens: int = 512
     use_gpu: bool = True
     batch_size: int = 1
 
@@ -77,10 +94,16 @@ class VisionConfig:
     custom_description_prompt: str = ""
 
     def get_vlm_model_name(self) -> str:
-        """Get actual model name for Ollama"""
+        """Get actual VLM model name for Ollama"""
         if self.vlm_type == VLMType.CUSTOM:
             return self.vlm_custom_model
         return self.vlm_type.value
+
+    def get_text_llm_model_name(self) -> str:
+        """Get actual text LLM model name for Ollama"""
+        if self.text_llm_type == TextLLMType.CUSTOM:
+            return self.text_llm_custom_model
+        return self.text_llm_type.value
 
     def to_dict(self) -> dict:
         """Convert to dictionary for JSON serialization"""
@@ -88,20 +111,28 @@ class VisionConfig:
         # Convert enums to strings
         data["mode"] = self.mode.value
         data["vlm_type"] = self.vlm_type.value
+        data["text_llm_type"] = self.text_llm_type.value
         data["segmentation_model"] = self.segmentation_model.value
         return data
 
     @classmethod
     def from_dict(cls, data: dict) -> "VisionConfig":
         """Create from dictionary"""
+        # Make a copy to avoid modifying the original
+        data = data.copy()
         # Convert strings back to enums
         if "mode" in data:
             data["mode"] = VisionMode(data["mode"])
         if "vlm_type" in data:
             data["vlm_type"] = VLMType(data["vlm_type"])
+        if "text_llm_type" in data:
+            data["text_llm_type"] = TextLLMType(data["text_llm_type"])
         if "segmentation_model" in data:
             data["segmentation_model"] = SegmentationModel(data["segmentation_model"])
-        return cls(**data)
+        # Filter out unknown fields
+        valid_fields = {f.name for f in cls.__dataclass_fields__.values()}
+        filtered_data = {k: v for k, v in data.items() if k in valid_fields}
+        return cls(**filtered_data)
 
 
 @dataclass
@@ -123,7 +154,7 @@ class VisionPreset:
 PRESETS: List[VisionPreset] = [
     VisionPreset(
         name="lightweight",
-        description="軽量モード - LLaVA（低VRAM環境向け）",
+        description="軽量モード - LLaVA のみ（低VRAM環境向け、約5GB）",
         config=VisionConfig(
             mode=VisionMode.SINGLE_VLM,
             vlm_type=VLMType.LLAVA_LATEST,
@@ -132,29 +163,20 @@ PRESETS: List[VisionPreset] = [
     ),
     VisionPreset(
         name="balanced",
-        description="バランスモード - LLaVA",
+        description="バランスモード - LLaMA 3.2 Vision 11B（約7GB）",
         config=VisionConfig(
             mode=VisionMode.SINGLE_VLM,
-            vlm_type=VLMType.LLAVA_LATEST,
+            vlm_type=VLMType.LLAMA_VISION_11B,
             segmentation_model=SegmentationModel.NONE,
-        )
-    ),
-    VisionPreset(
-        name="high_quality",
-        description="高品質モード - LLaVA（低温度）",
-        config=VisionConfig(
-            mode=VisionMode.SINGLE_VLM,
-            vlm_type=VLMType.LLAVA_LATEST,
-            segmentation_model=SegmentationModel.NONE,
-            vlm_temperature=0.2,
         )
     ),
     VisionPreset(
         name="detailed_detection",
-        description="詳細検出モード - Florence-2 + LLM",
+        description="詳細検出モード - Florence-2 + Gemma3（位置情報付き）",
         config=VisionConfig(
             mode=VisionMode.SEGMENTATION_PLUS_LLM,
-            vlm_type=VLMType.LLAVA_LATEST,
+            vlm_type=VLMType.LLAVA_LATEST,  # Used as fallback
+            text_llm_type=TextLLMType.GEMMA3_12B,
             segmentation_model=SegmentationModel.FLORENCE2_LARGE,
             include_coordinates=True,
             max_objects=30,
@@ -162,13 +184,25 @@ PRESETS: List[VisionPreset] = [
     ),
     VisionPreset(
         name="full_analysis",
-        description="フル解析モード - VLM + セグメンテーション併用",
+        description="フル解析モード - VLM + セグメンテーション併用（高精度）",
         config=VisionConfig(
             mode=VisionMode.VLM_PLUS_SEGMENTATION,
-            vlm_type=VLMType.LLAVA_LATEST,
+            vlm_type=VLMType.LLAMA_VISION_11B,
+            text_llm_type=TextLLMType.GEMMA3_12B,
             segmentation_model=SegmentationModel.FLORENCE2_LARGE,
             enable_ocr=True,
             include_coordinates=True,
+        )
+    ),
+    VisionPreset(
+        name="fast_detection",
+        description="高速検出モード - Florence-2 Base + 軽量LLM",
+        config=VisionConfig(
+            mode=VisionMode.SEGMENTATION_PLUS_LLM,
+            vlm_type=VLMType.LLAVA_LATEST,
+            text_llm_type=TextLLMType.GEMMA3_4B,
+            segmentation_model=SegmentationModel.FLORENCE2_BASE,
+            max_objects=15,
         )
     ),
 ]
@@ -237,6 +271,10 @@ class VisionConfigManager:
             "vlm_types": [
                 {"value": t.value, "label": t.name.replace("_", " ")}
                 for t in VLMType
+            ],
+            "text_llm_types": [
+                {"value": t.value, "label": t.name.replace("_", " ")}
+                for t in TextLLMType
             ],
             "segmentation_models": [
                 {"value": s.value, "label": s.name.replace("_", " ")}
