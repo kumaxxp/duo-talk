@@ -19,6 +19,11 @@ export type PromptModalProps = {
     };
     prompt_tail?: string; // prompt_debug の末尾
     text?: string; // speak.text
+    // Director情報
+    directorStatus?: string;
+    directorReason?: string;
+    directorSuggestion?: string;
+    directorGuidance?: string;  // 次ターンへの指示
   };
 };
 
@@ -96,6 +101,40 @@ export default function PromptModal({ open, onClose, turn }: PromptModalProps) {
             />
           </div>
         </div>
+        {/* Director判定セクション */}
+        {turn.directorStatus && (
+          <div className={`mx-4 my-3 p-4 rounded-lg border ${
+            turn.directorStatus === 'PASS' ? 'bg-green-50 border-green-200' :
+            turn.directorStatus === 'RETRY' ? 'bg-amber-50 border-amber-200' : 'bg-red-50 border-red-200'
+          }`}>
+            <div className="flex items-center gap-2 mb-2">
+              <span className={`text-sm font-semibold ${
+                turn.directorStatus === 'PASS' ? 'text-green-700' :
+                turn.directorStatus === 'RETRY' ? 'text-amber-700' : 'text-red-700'
+              }`}>
+                {turn.directorStatus === 'PASS' ? '✓' : turn.directorStatus === 'RETRY' ? '🔄' : '⚠️'} Director: {turn.directorStatus}
+              </span>
+            </div>
+            {turn.directorReason && (
+              <div className="mb-2">
+                <div className="text-xs font-medium text-slate-600 mb-1">判定理由:</div>
+                <div className="text-sm text-slate-700 bg-white/60 p-2 rounded">{turn.directorReason}</div>
+              </div>
+            )}
+            {turn.directorSuggestion && turn.directorStatus !== 'PASS' && (
+              <div className="mb-2">
+                <div className="text-xs font-medium text-slate-600 mb-1">修正提案:</div>
+                <div className="text-sm text-slate-700 bg-white/60 p-2 rounded">{turn.directorSuggestion}</div>
+              </div>
+            )}
+            {turn.directorGuidance && (
+              <div>
+                <div className="text-xs font-medium text-slate-600 mb-1">💡 次ターンへの指示:</div>
+                <div className="text-sm text-slate-700 bg-white/60 p-2 rounded">{turn.directorGuidance}</div>
+              </div>
+            )}
+          </div>
+        )}
         {/* prompt_tail 折りたたみ */}
         {turn.prompt_tail && (
           <details className="mx-4 my-3 rounded-lg border border-slate-200">

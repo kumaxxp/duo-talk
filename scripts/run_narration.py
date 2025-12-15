@@ -57,6 +57,7 @@ class NarrationPipeline:
         cut_cue: Optional[str] = None,
         status: Optional[str] = None,
         reason: Optional[str] = None,
+        guidance: Optional[str] = None,
     ) -> None:
         """GUI用のdirectorイベントを発行"""
         from datetime import datetime
@@ -68,8 +69,81 @@ class NarrationPipeline:
             "cut_cue": cut_cue,
             "status": status,
             "reason": reason,
+            "guidance": guidance,  # 次ターンへの指示
             "ts": datetime.now().isoformat(),
         })
+
+    def _emit_rag_event(
+        self,
+        run_id: str,
+        turn: int,
+        char_id: str,
+        rag_hints: list,
+    ) -> None:
+        """GUI用のRAG選択イベントを発行"""
+        from datetime import datetime
+
+        # RAGヒントをカテゴリ別に整理
+        canon_preview = ""
+        lore_preview = ""
+        pattern_preview = ""
+
+        for hint in rag_hints:
+            if hint.startswith("["):
+                # [domain] content の形式
+                bracket_end = hint.find("]")
+                if bracket_end > 0:
+                    domain = hint[1:bracket_end].lower()
+                    content = hint[bracket_end+1:].strip()[:100]  # 最初の100文字
+
+                    if domain in ["sake", "tourism_aesthetics", "cultural_philosophy"]:
+                        canon_preview = content
+                    elif domain in ["geography", "history", "architecture"]:
+                        lore_preview = content
+                    else:
+                        pattern_preview = content
+
+        self.logger.log_event({
+            "event": "rag_select",
+            "run_id": run_id,
+            "turn": turn,
+            "char_id": char_id,
+            "canon": {"preview": canon_preview},
+            "lore": {"preview": lore_preview},
+            "pattern": {"preview": pattern_preview},
+            "ts": datetime.now().isoformat(),
+        })
+
+    def _build_conversation_context(
+        self,
+        dialogue_history: list,
+        max_turns: int = 3,
+    ) -> Optional[str]:
+        """
+        直近の対話履歴から文脈を構築する。
+
+        Args:
+            dialogue_history: [(speaker, text), ...] のリスト
+            max_turns: 含める最大ターン数
+
+        Returns:
+            フォーマットされた文脈文字列、または履歴がない場合はNone
+        """
+        if not dialogue_history:
+            return None
+
+        # 直近のmax_turns分を取得
+        recent = dialogue_history[-max_turns:]
+
+        if len(recent) <= 1:
+            return None  # 直近1ターンのみの場合は文脈不要
+
+        lines = []
+        for speaker, text in recent[:-1]:  # 最後の発言は除く（partner_speechで渡されるため）
+            char_name = "やな" if speaker == "A" else "あゆ"
+            lines.append(f"{char_name}: {text}")
+
+        return "\n".join(lines) if lines else None
 
     def process_image(
         self,
@@ -170,7 +244,12 @@ class NarrationPipeline:
         result["dialogue"][f"turn_{turn_counter}"] = {"speaker": "A", "text": char_a_speech}
         dialogue_history.append(("A", char_a_speech))
         self._emit_speak_event(run_id, turn_counter, "A", char_a_speech)
+        # RAGイベントを発行
+        self._emit_rag_event(run_id, turn_counter, "A", self.char_a.last_rag_hints)
         turn_counter += 1
+
+        # Director Guidance を保持
+        director_guidance = None
 
         # 残りのターンを交互に生成
         for turn in range(1, max_iterations):
@@ -189,35 +268,81 @@ class NarrationPipeline:
                 current_char = self.char_a
                 speaker_name = "澄ヶ瀬やな (姉)"
 
-            # 発言生成
-            print(f"    > {speaker_name} is speaking...")
-            speech = current_char.speak(
-                frame_description=scene_description,
-                partner_speech=last_speech,
-                vision_info=vision_text,
-            )
-            print(f"      {speech}")
+            # 対話履歴から直近の文脈を構築（最大3ターン分）
+            recent_context = self._build_conversation_context(dialogue_history, max_turns=3)
+
+            # 発言生成（RETRYループ対応）
+            max_retries = 2
+            retry_count = 0
+            speech = None
+            director_evaluation = None
+
+            while retry_count < max_retries:
+                print(f"    > {speaker_name} is speaking..." + (f" (retry {retry_count})" if retry_count > 0 else ""))
+
+                # Director Guidanceを渡して発言生成
+                speech = current_char.speak(
+                    frame_description=scene_description,
+                    partner_speech=last_speech,
+                    director_instruction=director_guidance,
+                    vision_info=vision_text,
+                    conversation_context=recent_context,
+                )
+                print(f"      {speech}")
+
+                # Director による品質判定
+                print(f"    > Director is judging...")
+                previous_speech = dialogue_history[-1][1] if len(dialogue_history) > 0 else None
+
+                director_evaluation = self.director.evaluate_response(
+                    frame_description=scene_description,
+                    speaker=current_speaker,
+                    response=speech,
+                    partner_previous_speech=previous_speech,
+                    speaker_domains=current_char.domains,
+                    conversation_history=dialogue_history,
+                )
+
+                print(f"      [{director_evaluation.status.name}] {director_evaluation.reason}")
+
+                # RETRY判定
+                if director_evaluation.status.name == "RETRY":
+                    retry_count += 1
+                    if retry_count < max_retries:
+                        print(f"    🔄 Retrying with suggestion: {director_evaluation.suggestion}")
+                        # 次の再生成時にDirectorの指摘を反映
+                        director_guidance = director_evaluation.suggestion
+                        continue
+                    else:
+                        print(f"    ⚠️ Max retries reached, proceeding with current response")
+                break
+
+            # 発言を記録
             result["dialogue"][f"turn_{turn_counter}"] = {"speaker": current_speaker, "text": speech}
             dialogue_history.append((current_speaker, speech))
             self._emit_speak_event(run_id, turn_counter, current_speaker, speech)
-
-            # Director による品質判定（毎ターン）
-            print(f"    > Director is judging...")
-            previous_speech = dialogue_history[-2][1] if len(dialogue_history) > 1 else None
-
-            director_evaluation = self.director.evaluate_response(
-                frame_description=scene_description,
-                speaker=current_speaker,
-                response=speech,
-                partner_previous_speech=previous_speech,
-                speaker_domains=current_char.domains,
-            )
+            # RAGイベントを発行
+            self._emit_rag_event(run_id, turn_counter, current_speaker, current_char.last_rag_hints)
 
             # beat を決定
             beat_map = {"PASS": "PAYOFF", "RETRY": "BANter", "MODIFY": "PIVOT"}
             beat = beat_map.get(director_evaluation.status.name, "BANter")
 
-            # GUI用 director イベントを発行
+            # 次のターンへのDirector Guidanceを生成（PASSの場合）
+            next_turn_guidance = None
+            if director_evaluation.status.name == "PASS" and turn < max_iterations - 1:
+                next_turn_guidance = self.director.get_instruction_for_next_turn(
+                    frame_description=scene_description,
+                    conversation_so_far=dialogue_history,
+                    turn_number=turn_counter + 1,
+                )
+                if next_turn_guidance:
+                    print(f"    💡 Director guidance for next turn: {next_turn_guidance[:50]}...")
+                director_guidance = next_turn_guidance
+            else:
+                director_guidance = director_evaluation.suggestion
+
+            # GUI用 director イベントを発行（guidance生成後）
             self._emit_director_event(
                 run_id,
                 turn_counter,
@@ -225,9 +350,8 @@ class NarrationPipeline:
                 director_evaluation.suggestion,
                 status=director_evaluation.status.name,
                 reason=director_evaluation.reason,
+                guidance=next_turn_guidance,
             )
-
-            print(f"      [{director_evaluation.status.name}] {director_evaluation.reason}")
 
             # 最終ターンの場合のみ verdict を記録
             if turn == max_iterations - 1:
