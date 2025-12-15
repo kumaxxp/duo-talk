@@ -1,12 +1,91 @@
-# ビート配布ポリシー（サンプル）
-beats:
-  default: BANter
-  rules:
-    - every: 3
-      beat: PIVOT
-    - from_turn: 6
-      beat: PAYOFF
+# ビート配布ポリシー（対話パターン対応版）
+# duo-talk 改良版 v2
 
+# ビート定義
+beats:
+  - name: SETUP
+    turn_range: [1, 2]
+    goal: "シーン導入、基本情報の提示"
+    preferred_patterns: ["A", "B"]
+    tone: "明るい、好奇心"
+    description: "やなが発見・質問、あゆが基本情報を補足"
+    
+  - name: EXPLORATION
+    turn_range: [3, 5]
+    goal: "詳細の掘り下げ、知識展開"
+    preferred_patterns: ["B", "C"]
+    tone: "知的好奇心、発見の喜び"
+    description: "やなの質問や誤解をあゆが丁寧に解説・訂正"
+    
+  - name: PERSONAL
+    turn_range: [6, 7]
+    goal: "個人的感想、関連エピソード"
+    preferred_patterns: ["D", "E"]
+    tone: "親しみ、共感"
+    description: "やなの脱線や感想、あゆの軌道修正や発展"
+    
+  - name: WRAP_UP
+    turn_range: [8, 10]
+    goal: "印象的な締め、次への期待"
+    preferred_patterns: ["E", "A"]
+    tone: "満足感、余韻"
+    description: "まとめと次のシーンへの期待感"
+
+# 対話パターン定義
+patterns:
+  A:
+    name: "発見→補足"
+    yana_role: "発見、驚き"
+    ayu_role: "情報補足"
+    example: "やな: わ、金色だ！ → あゆ: 金箔ですよ"
+    
+  B:
+    name: "疑問→解説"
+    yana_role: "質問"
+    ayu_role: "回答"
+    example: "やな: なんで金なの？ → あゆ: 極楽浄土を表してるんです"
+    
+  C:
+    name: "誤解→訂正"
+    yana_role: "勘違い"
+    ayu_role: "訂正"
+    example: "やな: これ銀閣？ → あゆ: 姉様、金閣寺ですよ"
+    
+  D:
+    name: "脱線→修正"
+    yana_role: "話題脱線"
+    ayu_role: "軌道修正"
+    example: "やな: そういえば昨日... → あゆ: 姉様、話戻しますよ"
+    
+  E:
+    name: "共感→発展"
+    yana_role: "感想"
+    ayu_role: "発展情報"
+    example: "やな: なんか落ち着くね → あゆ: そうですね、庭園設計のおかげですよ"
+
+# パターン選択ルール
+pattern_rules:
+  max_consecutive: 2  # 同じパターン最大連続回数
+  fallback_on_stall: ["B", "C"]  # 会話停滞時の推奨パターン
+
+# 禁止表現（ディレクターチェック用）
+forbidden_expressions:
+  ayu:
+    - "いい観点ですね"
+    - "いい質問ですね"
+    - "さすがですね"
+    - "鋭いですね"
+    - "おっしゃる通りです"
+    - "という背景があります"
+    - "という特徴があります"
+    - "という意味があります"
+  yana:
+    - "姉様"
+    - "やな姉様"
+    - "です"
+    - "ます"
+
+# カット定義
 cuts:
   default: null
   rules:
