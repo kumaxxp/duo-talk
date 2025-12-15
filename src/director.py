@@ -108,6 +108,15 @@ Respond ONLY with JSON:
                 suggestion=format_check["suggestion"],
             )
 
+        # 論理的矛盾のチェック（二重否定など）
+        logic_check = self._check_logical_consistency(response)
+        if not logic_check["passed"]:
+            return DirectorEvaluation(
+                status=DirectorStatus.RETRY,
+                reason=logic_check["issue"],
+                suggestion=logic_check["suggestion"],
+            )
+
         # 口調マーカーの事前チェック
         tone_check = self._check_tone_markers(speaker, response)
         if not tone_check["passed"]:
@@ -486,7 +495,8 @@ JSON ONLY:
             expected_desc = ["〜ね", "へ？", "わ！", "あ、そっか", "〜よね", "〜かな"]
         else:
             # あゆ（妹）の口調マーカー（「姉様」は毎回不要なので必須から除外）
-            markers = ["です", "ですよ", "ですね", "ございます", "でしょう"]
+            # 「ございます」は禁止なので含めない
+            markers = ["です", "ですよ", "ですね", "でしょう"]
             expected_desc = ["です", "ですね", "ですよ"]
 
         found = []
@@ -520,6 +530,57 @@ JSON ONLY:
             "expected": expected_desc,
             "found": found,
             "missing": "マーカーが見つかりません" if not found else "",
+        }
+
+    def _check_logical_consistency(self, response: str) -> dict:
+        """
+        論理的な矛盾や不自然な表現をチェックする。
+
+        Args:
+            response: 評価対象の発言
+
+        Returns:
+            {
+                "passed": bool,
+                "issue": str,
+                "suggestion": str
+            }
+        """
+        import re
+
+        # 二重否定パターン（意味が逆になる）
+        double_negative_patterns = [
+            (r"まだ.{1,10}じゃない", "「まだ〇〇じゃない」は意味が逆になります"),
+            (r"まだ.{1,10}ではない", "「まだ〇〇ではない」は意味が逆になります"),
+            (r"もう.{1,10}じゃない", "「もう〇〇じゃない」は意味が曖昧です"),
+        ]
+
+        for pattern, message in double_negative_patterns:
+            if re.search(pattern, response):
+                match = re.search(pattern, response)
+                return {
+                    "passed": False,
+                    "issue": f"論理矛盾: {message}（検出: 「{match.group()}」）",
+                    "suggestion": "肯定形で言い換えてください。例: 「まだ未成年だよ」",
+                }
+
+        # 矛盾しやすい表現パターン
+        contradictory_patterns = [
+            (r"私.{0,5}未成年じゃない", "「私、未成年じゃない」は「私は成人だ」という意味になります"),
+        ]
+
+        for pattern, message in contradictory_patterns:
+            if re.search(pattern, response):
+                return {
+                    "passed": False,
+                    "issue": f"論理矛盾: {message}",
+                    "suggestion": "意図した意味になっているか確認してください",
+                }
+
+        return {
+            "passed": True,
+            "issue": "",
+            "suggestion": "",
         }
 
     def _check_format(self, response: str) -> dict:
