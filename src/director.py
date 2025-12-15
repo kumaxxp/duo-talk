@@ -1,6 +1,7 @@
 """
 Director LLM that orchestrates character dialogue.
 Monitors: 進行度 (progress), 参加度 (participation), 知識領域 (knowledge domain)
+Now includes fact-checking capability via web search.
 """
 
 from typing import Optional
@@ -10,12 +11,13 @@ from src.config import config
 from src.types import DirectorEvaluation, DirectorStatus
 from src.prompt_manager import get_prompt_manager
 from src.beat_tracker import get_beat_tracker
+from src.fact_checker import get_fact_checker, FactCheckResult
 
 
 class Director:
     """Director LLM that monitors and guides character responses"""
 
-    def __init__(self):
+    def __init__(self, enable_fact_check: bool = True):
         self.llm = get_llm_client()
         # Load director system prompt using PromptManager
         self.prompt_manager = get_prompt_manager("director")
@@ -24,6 +26,11 @@ class Director:
         self.beat_tracker = get_beat_tracker()
         # Track recent patterns to avoid repetition
         self.recent_patterns: list[str] = []
+        # Fact checker for verifying common sense
+        self.enable_fact_check = enable_fact_check
+        self.fact_checker = get_fact_checker() if enable_fact_check else None
+        # Store last fact check result for debugging/logging
+        self.last_fact_check: Optional[FactCheckResult] = None
 
     def _default_system_prompt(self) -> str:
         """Default director prompt if file not found (deprecated)"""
@@ -114,6 +121,21 @@ Respond ONLY with JSON:
         # 口調マーカーの詳細情報を取得（LLM評価用）
         tone_info = self._check_tone_markers(speaker, response)
 
+        # ファクトチェック（やなの発言のみ、次のあゆの発言で訂正させるため）
+        fact_check_result: Optional[FactCheckResult] = None
+        if self.enable_fact_check and self.fact_checker and speaker == "A":
+            print("    🔍 ファクトチェック実行中...")
+            fact_check_result = self.fact_checker.check_statement(
+                statement=response,
+                context=frame_description,
+            )
+            self.last_fact_check = fact_check_result
+
+            if fact_check_result.has_error:
+                print(f"    ⚠️  誤り検出: {fact_check_result.claim}")
+                print(f"    ✓  正しい情報: {fact_check_result.correct_info}")
+                print(f"    📊 確信度: {fact_check_result.search_confidence}")
+
         user_prompt = self._build_evaluation_prompt(
             frame_description=frame_description,
             speaker=speaker,
@@ -188,6 +210,18 @@ Respond ONLY with JSON:
             next_pattern = result.get("next_pattern")
             next_instruction = result.get("next_instruction")
             beat_stage = result.get("beat_stage", current_beat)
+
+            # ファクトチェックで誤りが見つかった場合、訂正パターンに切り替え
+            if fact_check_result and fact_check_result.has_error:
+                # パターンC（誤解→訂正）を強制
+                next_pattern = "C"
+                # 訂正指示を追加
+                correction_instruction = fact_check_result.correction_prompt
+                if next_instruction:
+                    next_instruction = f"{correction_instruction}\n\n（追加指示）{next_instruction}"
+                else:
+                    next_instruction = correction_instruction
+                print(f"    🎬 パターンを訂正モード(C)に変更")
 
             # Validate and track pattern
             if next_pattern and next_pattern in ["A", "B", "C", "D", "E"]:

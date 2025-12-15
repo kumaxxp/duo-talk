@@ -10,6 +10,7 @@ uvicorn>=0.27,<1
 
 # Search & Matching
 rapidfuzz>=3.6,<4
+duckduckgo-search>=6.0,<7
 
 # Utilities
 requests>=2.31,<3
