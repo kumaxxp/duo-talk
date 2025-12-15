@@ -82,6 +82,15 @@ Respond ONLY with JSON:
                 ]
             )
 
+        # 出力形式のチェック（かっこ付き、複数ブロック）
+        format_check = self._check_format(response)
+        if not format_check["passed"]:
+            return DirectorEvaluation(
+                status=DirectorStatus.RETRY,
+                reason=f"出力形式の問題: {format_check['issue']}",
+                suggestion=format_check["suggestion"],
+            )
+
         # 口調マーカーの事前チェック
         tone_check = self._check_tone_markers(speaker, response)
         if not tone_check["passed"]:
@@ -92,6 +101,9 @@ Respond ONLY with JSON:
                 suggestion=f"以下のマーカーを含めてください: {', '.join(tone_check['expected'])}",
             )
 
+        # 口調マーカーの詳細情報を取得（LLM評価用）
+        tone_info = self._check_tone_markers(speaker, response)
+
         user_prompt = self._build_evaluation_prompt(
             frame_description=frame_description,
             speaker=speaker,
@@ -99,6 +111,7 @@ Respond ONLY with JSON:
             partner_speech=partner_previous_speech,
             domains=speaker_domains,
             conversation_history=conversation_history,
+            tone_markers_found=tone_info["found"],
         )
 
         try:
@@ -111,8 +124,18 @@ Respond ONLY with JSON:
 
             # Parse JSON response
             import json
+            import re
+
+            # Remove markdown code block if present
+            json_text = result_text.strip()
+            if json_text.startswith("```"):
+                # Extract content between ```json and ```
+                match = re.search(r"```(?:json)?\s*([\s\S]*?)```", json_text)
+                if match:
+                    json_text = match.group(1).strip()
+
             try:
-                result = json.loads(result_text)
+                result = json.loads(json_text)
             except json.JSONDecodeError:
                 # Fallback if JSON parsing fails
                 if "PASS" in result_text.upper():
@@ -169,6 +192,7 @@ Respond ONLY with JSON:
         partner_speech: Optional[str] = None,
         domains: list = None,
         conversation_history: list = None,
+        tone_markers_found: list = None,
     ) -> str:
         """Build comprehensive evaluation prompt checking all 5 criteria"""
         char_desc = "Elder Sister (やな) - action-driven, quick-witted" if speaker == "A" else "Younger Sister (あゆ) - logical, reflective, formal"
@@ -220,41 +244,40 @@ Respond ONLY with JSON:
 {partner_speech}
 """
 
+        # 口調マーカーの検証状況を追加
+        tone_status = ""
+        if tone_markers_found:
+            markers_str = ", ".join([f'「{m}」' for m in tone_markers_found[:3]])
+            tone_status = f"\n【口調マーカー検証結果】✓ 検出済み: {markers_str} → 口調は問題なし"
+        else:
+            tone_status = "\n【口調マーカー検証結果】✗ 未検出 → 口調に注意が必要"
+
         prompt += f"""
-【5つの評価基準】
+{tone_status}
+
+【4つの評価基準】（口調マーカーは事前検証済み）
 
 1. **進行度 (Progress)**: 現フレーム/シーンに対応しているか
    - 現フレームの内容に自然に反応している
    - 前フレームのネタを引きずっていない
-   - 新しい話題に適切に対応している
 
 2. **参加度 (Participation)**: キャラクターが積極的か
    - 受け身ではなく能動的に発言
-   - 対話の流れを保ちながら参加
    - 相手の発言に自然に応答
    - 同じフレーズや言い回しを繰り返していない
 
 3. **知識領域 (Knowledge Domain)**: 専門領域内か
    - {speaker}が話すべき領域：{domain_expectations}
    - 領域外の話題は避ける
-   - 特例：あゆが新機材について話す場合、テック知識の「長説」は制止されるまで許容
 
-4. **口調・一貫性 (Tone Consistency)**: 口調が一貫しているか
-   - 必須マーカー：{tone_markers}
-   - 話し方のスタイルが一貫
-   - 適切な敬語・カジュアル度
-   - 【重要】マーカーが1つも含まれていない場合はRETRY
-
-5. **ナレーション品質 (Narration Quality)**: 面白く、簡潔か
+4. **ナレーション品質 (Narration Quality)**: 面白く、簡潔か
    - 5文以内
-   - 面白いコメント・視点がある
-   - 観光ナレーション向きの内容
    - 相手の発言を適切に拾い、発展させている
 
 【判定ルール】
-- PASS: 5項目すべてクリア、自然で流れのある対話
-- RETRY: 1-2つの小さな問題（特に口調マーカー不足）、同じ指示で改めてやらせる
-- MODIFY: 大きな問題がある、修正指示を与えるか前に進める
+- PASS: 4項目すべてクリア、自然で流れのある対話（口調マーカーは事前検証済みなのでPASS推奨）
+- RETRY: 同じフレーズの繰り返しや明らかな問題がある場合のみ
+- MODIFY: 大きな問題がある
 
 【応答フォーマット】
 JSON ONLY:
@@ -355,9 +378,9 @@ JSON ONLY:
             markers = ["ね", "へ？", "わ！", "あ、", "そっか", "よね", "かな", "だね"]
             expected_desc = ["〜ね", "へ？", "わ！", "あ、そっか", "〜よね", "〜かな"]
         else:
-            # あゆ（妹）の口調マーカー
-            markers = ["です", "ですよ", "ですね", "姉様", "ございます", "でしょう"]
-            expected_desc = ["です", "ですよ", "ですね", "姉様"]
+            # あゆ（妹）の口調マーカー（「姉様」は毎回不要なので必須から除外）
+            markers = ["です", "ですよ", "ですね", "ございます", "でしょう"]
+            expected_desc = ["です", "ですね", "ですよ"]
 
         found = []
         for marker in markers:
@@ -366,6 +389,18 @@ JSON ONLY:
 
         # 最低1つのマーカーが必要
         passed = len(found) >= 1
+
+        # 特別なケース: やなは「姉様」を使ってはいけない（あゆの呼び方）
+        if speaker == "A":
+            forbidden_words = ["姉様"]
+            for forbidden in forbidden_words:
+                if forbidden in response:
+                    return {
+                        "passed": False,
+                        "expected": expected_desc,
+                        "found": found,
+                        "missing": f"禁止ワード「{forbidden}」を使用（やなは姉なので「姉様」は使えません）",
+                    }
 
         # 特別なケース: あゆは「です」系のいずれかが必須
         if speaker == "B":
@@ -378,4 +413,52 @@ JSON ONLY:
             "expected": expected_desc,
             "found": found,
             "missing": "マーカーが見つかりません" if not found else "",
+        }
+
+    def _check_format(self, response: str) -> dict:
+        """
+        出力形式をチェックする。
+
+        Args:
+            response: 評価対象の発言
+
+        Returns:
+            {
+                "passed": bool,
+                "issue": str,
+                "suggestion": str
+            }
+        """
+        # かっこで囲まれた発言のチェック
+        # 「」で始まる発言は台本形式と判定
+        stripped = response.strip()
+        if stripped.startswith("「") or stripped.startswith("『"):
+            return {
+                "passed": False,
+                "issue": "発言が「」で囲まれています（台本形式）",
+                "suggestion": "「」を外して、直接話すように出力してください。例: わ！金閣寺だね！",
+            }
+
+        # 複数の「」ブロックがあるかチェック
+        quote_count = response.count("「")
+        if quote_count >= 2:
+            return {
+                "passed": False,
+                "issue": f"複数の「」ブロックがあります（{quote_count}個）",
+                "suggestion": "1つの連続した発言として出力してください。「」は使わず、直接話してください。",
+            }
+
+        # 改行で複数ブロックに分かれているかチェック
+        lines = [line.strip() for line in response.split("\n") if line.strip()]
+        if len(lines) > 2:
+            return {
+                "passed": False,
+                "issue": f"発言が複数行に分かれています（{len(lines)}行）",
+                "suggestion": "1つの連続した発言として、改行なしで出力してください。",
+            }
+
+        return {
+            "passed": True,
+            "issue": "",
+            "suggestion": "",
         }

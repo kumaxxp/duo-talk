@@ -2,3 +2,5 @@
 {"event": "feedback", "run_id": "test_001", "turn": 2, "speaker": "B", "issue_type": "knowledge_overstep", "description": "Test knowledge overstep", "suggested_fix": "Stay within domains", "timestamp": "2025-12-14T15:03:23.817089"}
 {"event": "feedback", "run_id": "validate_001", "turn": 1, "speaker": "A", "issue_type": "tone_drift", "description": "Test tone issue", "suggested_fix": "Add markers", "timestamp": "2025-12-14T15:11:43.481891"}
 {"event": "feedback", "run_id": "validate_001", "turn": 2, "speaker": "B", "issue_type": "knowledge_overstep", "description": "Test knowledge issue", "suggested_fix": "Stay in domain", "timestamp": "2025-12-14T15:11:43.482330"}
+{"event": "feedback", "run_id": "validate_001", "turn": 1, "speaker": "A", "issue_type": "tone_drift", "description": "Test tone issue", "suggested_fix": "Add markers", "timestamp": "2025-12-15T12:24:16.009465"}
+{"event": "feedback", "run_id": "validate_001", "turn": 2, "speaker": "B", "issue_type": "knowledge_overstep", "description": "Test knowledge issue", "suggested_fix": "Stay in domain", "timestamp": "2025-12-15T12:24:16.010753"}
