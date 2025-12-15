@@ -1,55 +1,89 @@
 """
-Vision LLM (Llama 3.2 Vision) を使用して画像を分析し、
-観光地ナレーション用の視覚情報を構造化テキストで出力する。
+Vision processing module with multi-mode support.
+Supports single VLM, VLM + segmentation, and segmentation + LLM pipelines.
 """
 
 import base64
 import json
 import os
 from pathlib import Path
-from typing import Optional
-import ollama
+from typing import Optional, List, Dict, Any
+from dataclasses import dataclass
+
+try:
+    import ollama
+except ImportError:
+    ollama = None
+
+from src.vision_config import (
+    VisionConfig,
+    VisionMode,
+    VLMType,
+    SegmentationModel,
+    get_current_vision_config,
+)
+
+
+@dataclass
+class DetectedObject:
+    """Detected object with position information"""
+    label: str
+    confidence: float
+    bbox: Optional[List[float]] = None  # [x1, y1, x2, y2] normalized
+    position_description: str = ""  # e.g., "画面中央", "左上"
+    size_description: str = ""  # e.g., "大", "中", "小"
+
+
+@dataclass
+class VisionResult:
+    """Result of vision analysis"""
+    status: str  # "success" or "error"
+    image_path: str
+    mode_used: str
+    visual_info: Dict[str, str]
+    detected_objects: List[DetectedObject]
+    raw_text: str
+    error: Optional[str] = None
+    processing_time_ms: Optional[float] = None
 
 
 class VisionProcessor:
     """
-    Llama 3.2 Vision 8B を使用して画像を分析し、
-    観光地ナレーション向けの詳細な視覚情報を生成。
+    Multi-mode vision processor for tourism narration.
+    Supports VLM-only, segmentation-only, and combined approaches.
     """
 
-    def __init__(self, model: str = None):
+    def __init__(self, config: Optional[VisionConfig] = None):
         """
         Args:
-            model: 使用する Vision モデル
-                  指定なしの場合は .env の VISION_MODEL または "llava:latest"
-                  注意: Vision対応モデル (llava, llama3.2-vision等) が必要
+            config: Vision configuration. If None, loads from saved config.
+                   注意: Vision対応モデル (llava, llama3.2-vision等) が必要
         """
-        self.model = model or os.getenv("VISION_MODEL", "llava:latest")
+        self.config = config or get_current_vision_config()
+        self._segmentation_model = None
+        self._segmentation_processor = None
+
+    def update_config(self, config: VisionConfig):
+        """Update configuration"""
+        self.config = config
+        # Reset cached models if config changed
+        self._segmentation_model = None
+        self._segmentation_processor = None
 
     def analyze_image(self, image_path: str) -> dict:
         """
-        画像ファイルを分析し、視覚情報を構造化テキストで返す。
+        Analyze image using configured mode.
 
         Args:
-            image_path: 画像ファイルのパス
+            image_path: Path to image file
 
         Returns:
-            {
-                "status": "success" | "error",
-                "image_path": str,
-                "visual_info": {
-                    "main_subjects": str,  # メイン被写体
-                    "environment": str,    # 環境・背景
-                    "people_activity": str, # 人物・活動
-                    "colors_lighting": str, # 色調・照明
-                    "perspective": str,    # 構図・遠近感
-                    "notable_details": str # 特筆すべき詳細
-                },
-                "raw_text": str  # LLMの生出力
-            }
+            Dictionary with analysis results
         """
+        import time
+        start_time = time.time()
+
         try:
-            # 画像ファイルの存在確認
             image_file = Path(image_path)
             if not image_file.exists():
                 return {
@@ -58,12 +92,380 @@ class VisionProcessor:
                     "error": f"Image file not found: {image_path}"
                 }
 
-            # 画像をbase64エンコード
-            with open(image_file, "rb") as f:
-                image_data = base64.b64encode(f.read()).decode("utf-8")
+            # Route to appropriate processing mode
+            if self.config.mode == VisionMode.SINGLE_VLM:
+                result = self._analyze_with_vlm(image_file)
+            elif self.config.mode == VisionMode.SEGMENTATION_PLUS_LLM:
+                result = self._analyze_with_segmentation_llm(image_file)
+            elif self.config.mode == VisionMode.VLM_PLUS_SEGMENTATION:
+                result = self._analyze_combined(image_file)
+            else:
+                result = self._analyze_with_vlm(image_file)
 
-            # Vision プロンプト
-            prompt = """この画像を詳細に分析してください。以下の観点から、観光地ナレーション向けの視覚情報を日本語で提供してください：
+            elapsed_ms = (time.time() - start_time) * 1000
+            result["processing_time_ms"] = elapsed_ms
+            result["mode_used"] = self.config.mode.value
+
+            return result
+
+        except Exception as e:
+            return {
+                "status": "error",
+                "image_path": str(image_path),
+                "error": str(e),
+                "mode_used": self.config.mode.value
+            }
+
+    def _analyze_with_vlm(self, image_file: Path) -> dict:
+        """Single VLM analysis mode"""
+        if ollama is None:
+            return {
+                "status": "error",
+                "image_path": str(image_file),
+                "error": "ollama package not installed"
+            }
+
+        # Load image as base64
+        with open(image_file, "rb") as f:
+            image_data = base64.b64encode(f.read()).decode("utf-8")
+
+        # Get prompt (custom or default)
+        prompt = self.config.custom_description_prompt or self._get_default_vlm_prompt()
+
+        # Call VLM
+        model_name = self.config.get_vlm_model_name()
+        response = ollama.generate(
+            model=model_name,
+            prompt=prompt,
+            images=[image_data],
+            stream=False,
+            options={
+                "temperature": self.config.vlm_temperature,
+                "num_predict": self.config.vlm_max_tokens,
+            }
+        )
+
+        raw_text = response.get("response", "")
+        visual_info = self._parse_vision_response(raw_text)
+
+        return {
+            "status": "success",
+            "image_path": str(image_file),
+            "visual_info": visual_info,
+            "detected_objects": [],
+            "raw_text": raw_text
+        }
+
+    def _analyze_with_segmentation_llm(self, image_file: Path) -> dict:
+        """Segmentation → structured data → LLM for description"""
+        # Step 1: Run segmentation
+        detected_objects = self._run_segmentation(image_file)
+
+        # Step 2: Convert to structured data
+        structured_data = self._objects_to_structured_data(detected_objects)
+
+        # Step 3: Use LLM to generate natural description
+        if ollama is None:
+            visual_info = self._create_visual_info_from_objects(detected_objects)
+            raw_text = structured_data
+        else:
+            visual_info, raw_text = self._generate_description_from_objects(
+                structured_data, detected_objects
+            )
+
+        return {
+            "status": "success",
+            "image_path": str(image_file),
+            "visual_info": visual_info,
+            "detected_objects": [self._object_to_dict(obj) for obj in detected_objects],
+            "raw_text": raw_text
+        }
+
+    def _analyze_combined(self, image_file: Path) -> dict:
+        """Combined VLM + segmentation analysis"""
+        # Run both in parallel conceptually (sequential here for simplicity)
+
+        # Step 1: VLM analysis for overall description
+        vlm_result = self._analyze_with_vlm(image_file)
+
+        # Step 2: Segmentation for object detection
+        detected_objects = self._run_segmentation(image_file)
+
+        # Step 3: Merge results
+        visual_info = vlm_result.get("visual_info", {})
+
+        # Add object detection summary
+        if detected_objects:
+            object_summary = self._summarize_objects(detected_objects)
+            visual_info["detected_objects_summary"] = object_summary
+
+        return {
+            "status": "success",
+            "image_path": str(image_file),
+            "visual_info": visual_info,
+            "detected_objects": [self._object_to_dict(obj) for obj in detected_objects],
+            "raw_text": vlm_result.get("raw_text", "")
+        }
+
+    def _run_segmentation(self, image_file: Path) -> List[DetectedObject]:
+        """Run segmentation model on image"""
+        if self.config.segmentation_model == SegmentationModel.NONE:
+            return []
+
+        try:
+            if self.config.segmentation_model in [
+                SegmentationModel.FLORENCE2_BASE,
+                SegmentationModel.FLORENCE2_LARGE
+            ]:
+                return self._run_florence2(image_file)
+            elif self.config.segmentation_model == SegmentationModel.GROUNDED_SAM2:
+                return self._run_grounded_sam2(image_file)
+            elif self.config.segmentation_model == SegmentationModel.GROUNDING_DINO:
+                return self._run_grounding_dino(image_file)
+        except Exception as e:
+            print(f"Segmentation error: {e}")
+            return []
+
+        return []
+
+    def _run_florence2(self, image_file: Path) -> List[DetectedObject]:
+        """Run Florence-2 for object detection"""
+        try:
+            from transformers import AutoProcessor, AutoModelForCausalLM
+            from PIL import Image
+            import torch
+        except ImportError:
+            print("Florence-2 requires: pip install transformers torch pillow")
+            return []
+
+        # Load model if not cached
+        if self._segmentation_model is None:
+            model_name = (
+                "microsoft/Florence-2-large"
+                if self.config.segmentation_model == SegmentationModel.FLORENCE2_LARGE
+                else "microsoft/Florence-2-base"
+            )
+
+            device = "cuda" if self.config.use_gpu and torch.cuda.is_available() else "cpu"
+            dtype = torch.float16 if device == "cuda" else torch.float32
+
+            self._segmentation_model = AutoModelForCausalLM.from_pretrained(
+                model_name,
+                torch_dtype=dtype,
+                trust_remote_code=True
+            ).to(device)
+
+            self._segmentation_processor = AutoProcessor.from_pretrained(
+                model_name,
+                trust_remote_code=True
+            )
+
+        # Load image
+        image = Image.open(image_file).convert("RGB")
+        img_width, img_height = image.size
+
+        # Run object detection
+        task_prompt = "<OD>"
+        inputs = self._segmentation_processor(
+            text=task_prompt,
+            images=image,
+            return_tensors="pt"
+        ).to(self._segmentation_model.device)
+
+        generated_ids = self._segmentation_model.generate(
+            **inputs,
+            max_new_tokens=1024,
+            num_beams=3,
+        )
+
+        generated_text = self._segmentation_processor.batch_decode(
+            generated_ids, skip_special_tokens=False
+        )[0]
+
+        # Parse Florence-2 output
+        result = self._segmentation_processor.post_process_generation(
+            generated_text,
+            task=task_prompt,
+            image_size=(img_width, img_height)
+        )
+
+        detected_objects = []
+        if "<OD>" in result:
+            od_result = result["<OD>"]
+            labels = od_result.get("labels", [])
+            bboxes = od_result.get("bboxes", [])
+
+            for i, (label, bbox) in enumerate(zip(labels, bboxes)):
+                if i >= self.config.max_objects:
+                    break
+
+                # Normalize bbox
+                norm_bbox = [
+                    bbox[0] / img_width,
+                    bbox[1] / img_height,
+                    bbox[2] / img_width,
+                    bbox[3] / img_height
+                ]
+
+                obj = DetectedObject(
+                    label=label,
+                    confidence=1.0,  # Florence-2 doesn't provide confidence
+                    bbox=norm_bbox,
+                    position_description=self._bbox_to_position(norm_bbox),
+                    size_description=self._bbox_to_size(norm_bbox)
+                )
+                detected_objects.append(obj)
+
+        return detected_objects
+
+    def _run_grounded_sam2(self, image_file: Path) -> List[DetectedObject]:
+        """Run Grounded SAM 2 for detection and segmentation"""
+        # Placeholder - requires separate installation
+        print("Grounded SAM 2 not yet implemented. Install from: https://github.com/IDEA-Research/Grounded-SAM-2")
+        return []
+
+    def _run_grounding_dino(self, image_file: Path) -> List[DetectedObject]:
+        """Run Grounding DINO for open-set detection"""
+        # Placeholder - requires separate installation
+        print("Grounding DINO not yet implemented. Install from: https://github.com/IDEA-Research/GroundingDINO")
+        return []
+
+    def _bbox_to_position(self, bbox: List[float]) -> str:
+        """Convert normalized bbox to position description"""
+        cx = (bbox[0] + bbox[2]) / 2
+        cy = (bbox[1] + bbox[3]) / 2
+
+        h_pos = "左" if cx < 0.33 else ("右" if cx > 0.66 else "中央")
+        v_pos = "上" if cy < 0.33 else ("下" if cy > 0.66 else "")
+
+        if v_pos:
+            return f"{h_pos}{v_pos}"
+        return f"画面{h_pos}"
+
+    def _bbox_to_size(self, bbox: List[float]) -> str:
+        """Convert normalized bbox to size description"""
+        area = (bbox[2] - bbox[0]) * (bbox[3] - bbox[1])
+        if area > 0.25:
+            return "大"
+        elif area > 0.05:
+            return "中"
+        return "小"
+
+    def _object_to_dict(self, obj: DetectedObject) -> dict:
+        """Convert DetectedObject to dictionary"""
+        return {
+            "label": obj.label,
+            "confidence": obj.confidence,
+            "bbox": obj.bbox,
+            "position": obj.position_description,
+            "size": obj.size_description
+        }
+
+    def _objects_to_structured_data(self, objects: List[DetectedObject]) -> str:
+        """Convert detected objects to structured text"""
+        if not objects:
+            return "検出されたオブジェクトはありません"
+
+        lines = ["【検出オブジェクト】"]
+        for obj in objects:
+            line = f"- {obj.label}"
+            if obj.position_description:
+                line += f" ({obj.position_description}"
+                if obj.size_description:
+                    line += f", {obj.size_description}"
+                line += ")"
+            lines.append(line)
+
+        return "\n".join(lines)
+
+    def _summarize_objects(self, objects: List[DetectedObject]) -> str:
+        """Create summary of detected objects"""
+        if not objects:
+            return ""
+
+        # Group by position
+        position_groups = {}
+        for obj in objects:
+            pos = obj.position_description or "不明"
+            if pos not in position_groups:
+                position_groups[pos] = []
+            position_groups[pos].append(obj.label)
+
+        parts = []
+        for pos, labels in position_groups.items():
+            unique_labels = list(set(labels))
+            parts.append(f"{pos}に{', '.join(unique_labels[:3])}")
+
+        return "。".join(parts)
+
+    def _create_visual_info_from_objects(
+        self, objects: List[DetectedObject]
+    ) -> Dict[str, str]:
+        """Create visual_info dict from detected objects (without LLM)"""
+        if not objects:
+            return {"main_subjects": "検出なし"}
+
+        # Find largest object as main subject
+        main_obj = max(objects, key=lambda o: self._size_to_num(o.size_description))
+
+        return {
+            "main_subjects": f"{main_obj.label}（{main_obj.position_description}）",
+            "environment": self._summarize_objects(objects),
+            "people_activity": "",
+            "colors_lighting": "",
+            "perspective": "",
+            "notable_details": ""
+        }
+
+    def _size_to_num(self, size: str) -> int:
+        """Convert size description to number for comparison"""
+        return {"大": 3, "中": 2, "小": 1}.get(size, 0)
+
+    def _generate_description_from_objects(
+        self,
+        structured_data: str,
+        objects: List[DetectedObject]
+    ) -> tuple[Dict[str, str], str]:
+        """Generate natural description from detected objects using LLM"""
+        prompt = f"""以下の検出結果を元に、観光地ナレーション向けの視覚情報を生成してください。
+
+{structured_data}
+
+以下の形式で出力してください：
+
+【メイン被写体】
+（最も重要な被写体について）
+
+【環境・背景】
+（周囲の状況について）
+
+【人物・活動】
+（人がいる場合）
+
+【特筆すべき詳細】
+（ナレーションで言及すると面白い点）"""
+
+        try:
+            response = ollama.generate(
+                model=self.config.get_vlm_model_name(),
+                prompt=prompt,
+                stream=False,
+                options={
+                    "temperature": self.config.vlm_temperature,
+                    "num_predict": self.config.vlm_max_tokens,
+                }
+            )
+            raw_text = response.get("response", "")
+            visual_info = self._parse_vision_response(raw_text)
+            return visual_info, raw_text
+        except Exception as e:
+            return self._create_visual_info_from_objects(objects), str(e)
+
+    def _get_default_vlm_prompt(self) -> str:
+        """Get default VLM analysis prompt"""
+        lang = "日本語" if self.config.output_language == "ja" else "English"
+
+        return f"""この画像を詳細に分析してください。以下の観点から、観光地ナレーション向けの視覚情報を{lang}で提供してください：
 
 【メイン被写体】
 - 画像の中心的な被写体は何か？
@@ -90,44 +492,8 @@ class VisionProcessor:
 
 各項目について、簡潔かつ具体的に記述してください。"""
 
-            # Ollama API を使用して画像分析
-            response = ollama.generate(
-                model=self.model,
-                prompt=prompt,
-                images=[image_data],
-                stream=False
-            )
-
-            raw_text = response.get("response", "")
-
-            # 応答をパース
-            visual_info = self._parse_vision_response(raw_text)
-
-            return {
-                "status": "success",
-                "image_path": str(image_path),
-                "visual_info": visual_info,
-                "raw_text": raw_text
-            }
-
-        except Exception as e:
-            return {
-                "status": "error",
-                "image_path": image_path,
-                "error": str(e)
-            }
-
     def _parse_vision_response(self, text: str) -> dict:
-        """
-        Vision モデルの応答を解析し、構造化された視覚情報を生成。
-
-        Args:
-            text: LLMの応答テキスト
-
-        Returns:
-            構造化された視覚情報の辞書
-        """
-        # シンプルな解析（実装は応答フォーマットに応じて調整可能）
+        """Parse VLM response into structured sections"""
         sections = {
             "main_subjects": self._extract_section(text, "【メイン被写体】"),
             "environment": self._extract_section(text, "【環境・背景】"),
@@ -136,26 +502,15 @@ class VisionProcessor:
             "perspective": self._extract_section(text, "【構図・遠近感】"),
             "notable_details": self._extract_section(text, "【特筆すべき詳細】")
         }
-
         return sections
 
     @staticmethod
     def _extract_section(text: str, header: str) -> str:
-        """
-        テキストから特定のセクションを抽出。
-
-        Args:
-            text: 全体テキスト
-            header: セクションのヘッダー
-
-        Returns:
-            抽出されたセクションのテキスト
-        """
+        """Extract a section from text by header"""
         if header not in text:
             return ""
 
         start = text.find(header) + len(header)
-        # 次のセクションヘッダーを探す
         next_header_pos = len(text)
         for next_header in ["【", "\n\n"]:
             pos = text.find(next_header, start)
@@ -166,15 +521,7 @@ class VisionProcessor:
         return section
 
     def format_for_character(self, visual_info: dict) -> str:
-        """
-        構造化された視覚情報をキャラクター用のプロンプトセクションに変換。
-
-        Args:
-            visual_info: 構造化された視覚情報
-
-        Returns:
-            キャラクター用のフォーマットされたテキスト
-        """
+        """Format visual info for character prompt"""
         output = "【映像情報】\n"
 
         if visual_info.get("main_subjects"):
@@ -195,4 +542,13 @@ class VisionProcessor:
         if visual_info.get("notable_details"):
             output += f"注目点：{visual_info['notable_details']}\n"
 
+        if visual_info.get("detected_objects_summary"):
+            output += f"検出物：{visual_info['detected_objects_summary']}\n"
+
         return output
+
+
+# Convenience function for backward compatibility
+def get_vision_processor(config: Optional[VisionConfig] = None) -> VisionProcessor:
+    """Get a VisionProcessor instance"""
+    return VisionProcessor(config)

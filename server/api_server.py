@@ -23,6 +23,13 @@ import logging
 from src.config import config
 from src.logger import get_logger
 from src.feedback_analyzer import FeedbackAnalyzer
+from src.vision_config import (
+    get_vision_config_manager,
+    VisionConfig,
+    VisionMode,
+    VLMType,
+    SegmentationModel,
+)
 from scripts.run_narration import NarrationPipeline
 
 # Setup logging
@@ -579,6 +586,176 @@ def system_status():
         return jsonify({"error": str(e)}), 500
 
 
+# ==================== VISION SETTINGS ====================
+
+@app.route('/api/vision/config', methods=['GET'])
+def get_vision_config():
+    """
+    Get current vision processing configuration.
+
+    Returns:
+        JSON: Vision configuration object
+    """
+    try:
+        manager = get_vision_config_manager()
+        config = manager.get_current()
+        return jsonify({
+            "status": "ok",
+            "config": config.to_dict()
+        })
+    except Exception as e:
+        logger.error(f"Error getting vision config: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/vision/config', methods=['POST'])
+def save_vision_config():
+    """
+    Save vision processing configuration.
+
+    Body (JSON):
+        Vision configuration fields
+
+    Returns:
+        JSON: {"status": "ok", "config": {...}}
+    """
+    try:
+        data = request.get_json()
+        manager = get_vision_config_manager()
+
+        # Create config from data
+        new_config = VisionConfig.from_dict(data)
+
+        # Save configuration
+        success = manager.save(new_config)
+        if success:
+            return jsonify({
+                "status": "ok",
+                "config": new_config.to_dict()
+            })
+        else:
+            return jsonify({"error": "Failed to save configuration"}), 500
+    except Exception as e:
+        logger.error(f"Error saving vision config: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/vision/presets', methods=['GET'])
+def get_vision_presets():
+    """
+    Get available vision configuration presets.
+
+    Returns:
+        JSON: List of preset configurations
+    """
+    try:
+        manager = get_vision_config_manager()
+        presets = manager.get_presets()
+        return jsonify({
+            "status": "ok",
+            "presets": presets
+        })
+    except Exception as e:
+        logger.error(f"Error getting vision presets: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/vision/presets/apply', methods=['POST'])
+def apply_vision_preset():
+    """
+    Apply a vision configuration preset.
+
+    Body (JSON):
+        - preset_name: Name of the preset to apply
+
+    Returns:
+        JSON: {"status": "ok", "config": {...}}
+    """
+    try:
+        data = request.get_json()
+        preset_name = data.get('preset_name')
+
+        if not preset_name:
+            return jsonify({"error": "preset_name required"}), 400
+
+        manager = get_vision_config_manager()
+        new_config = manager.apply_preset(preset_name)
+
+        if new_config:
+            return jsonify({
+                "status": "ok",
+                "config": new_config.to_dict()
+            })
+        else:
+            return jsonify({"error": f"Preset '{preset_name}' not found"}), 404
+    except Exception as e:
+        logger.error(f"Error applying vision preset: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/vision/models', methods=['GET'])
+def get_available_models():
+    """
+    Get available VLM and segmentation model options.
+
+    Returns:
+        JSON: {"vlm_types": [...], "segmentation_models": [...], "modes": [...]}
+    """
+    try:
+        manager = get_vision_config_manager()
+        models = manager.get_available_models()
+        return jsonify({
+            "status": "ok",
+            "models": models
+        })
+    except Exception as e:
+        logger.error(f"Error getting available models: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/vision/test', methods=['POST'])
+def test_vision_config():
+    """
+    Test vision configuration with a sample image.
+
+    Body (JSON):
+        - image_path: Path to test image
+        - config: Optional config override to test
+
+    Returns:
+        JSON: Vision analysis result
+    """
+    try:
+        from src.vision_processor import VisionProcessor
+
+        data = request.get_json()
+        image_path = data.get('image_path')
+
+        if not image_path:
+            return jsonify({"error": "image_path required"}), 400
+
+        # Use provided config or current config
+        config_data = data.get('config')
+        if config_data:
+            test_config = VisionConfig.from_dict(config_data)
+        else:
+            test_config = get_vision_config_manager().get_current()
+
+        # Create processor with test config
+        processor = VisionProcessor(config=test_config)
+
+        # Run analysis
+        result = processor.analyze_image(image_path)
+
+        return jsonify({
+            "status": "ok",
+            "result": result
+        })
+    except Exception as e:
+        logger.error(f"Error testing vision config: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
 # ==================== HEALTH CHECK ====================
 
 @app.route('/health', methods=['GET'])
@@ -610,6 +787,12 @@ if __name__ == '__main__':
     print(f"  GET  /api/feedback/trends - Get feedback trends")
     print(f"  POST /api/feedback/record - Record feedback")
     print(f"  GET  /api/system/status - System status")
+    print(f"  GET  /api/vision/config - Get vision config")
+    print(f"  POST /api/vision/config - Save vision config")
+    print(f"  GET  /api/vision/presets - Get vision presets")
+    print(f"  POST /api/vision/presets/apply - Apply preset")
+    print(f"  GET  /api/vision/models - Get available models")
+    print(f"  POST /api/vision/test - Test vision config")
     print(f"  GET  /health - Health check")
     print("\n" + "=" * 70)
 
