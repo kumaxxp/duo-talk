@@ -2,6 +2,7 @@
 Director LLM that orchestrates character dialogue.
 Monitors: 進行度 (progress), 参加度 (participation), 知識領域 (knowledge domain)
 Now includes fact-checking capability via web search.
+Now includes fact-checking capability via web search.
 """
 
 from typing import Optional
@@ -11,6 +12,7 @@ from src.config import config
 from src.types import DirectorEvaluation, DirectorStatus
 from src.prompt_manager import get_prompt_manager
 from src.beat_tracker import get_beat_tracker
+from src.fact_checker import get_fact_checker, FactCheckResult
 from src.fact_checker import get_fact_checker, FactCheckResult
 
 
@@ -45,6 +47,11 @@ class Director:
         self.beat_tracker = get_beat_tracker()
         # Track recent patterns to avoid repetition
         self.recent_patterns: list[str] = []
+        # Fact checker for verifying common sense
+        self.enable_fact_check = enable_fact_check
+        self.fact_checker = get_fact_checker() if enable_fact_check else None
+        # Store last fact check result for debugging/logging
+        self.last_fact_check: Optional[FactCheckResult] = None
         # Fact checker for verifying common sense
         self.enable_fact_check = enable_fact_check
         self.fact_checker = get_fact_checker() if enable_fact_check else None
@@ -136,6 +143,15 @@ Respond ONLY with JSON:
                 suggestion=logic_check["suggestion"],
             )
 
+        # 論理的矛盾のチェック（二重否定など）
+        logic_check = self._check_logical_consistency(response)
+        if not logic_check["passed"]:
+            return DirectorEvaluation(
+                status=DirectorStatus.RETRY,
+                reason=logic_check["issue"],
+                suggestion=logic_check["suggestion"],
+            )
+
         # 口調マーカーの事前チェック
         tone_check = self._check_tone_markers(speaker, response)
         if not tone_check["passed"]:
@@ -148,6 +164,21 @@ Respond ONLY with JSON:
 
         # 口調マーカーの詳細情報を取得（LLM評価用）
         tone_info = self._check_tone_markers(speaker, response)
+
+        # ファクトチェック（やなの発言のみ、次のあゆの発言で訂正させるため）
+        fact_check_result: Optional[FactCheckResult] = None
+        if self.enable_fact_check and self.fact_checker and speaker == "A":
+            print("    🔍 ファクトチェック実行中...")
+            fact_check_result = self.fact_checker.check_statement(
+                statement=response,
+                context=frame_description,
+            )
+            self.last_fact_check = fact_check_result
+
+            if fact_check_result.has_error:
+                print(f"    ⚠️  誤り検出: {fact_check_result.claim}")
+                print(f"    ✓  正しい情報: {fact_check_result.correct_info}")
+                print(f"    📊 確信度: {fact_check_result.search_confidence}")
 
         # ファクトチェック（やなの発言のみ、次のあゆの発言で訂正させるため）
         fact_check_result: Optional[FactCheckResult] = None

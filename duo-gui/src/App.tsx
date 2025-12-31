@@ -181,8 +181,8 @@ export default function App(){
 
       {/* Runs Tab Content */}
       {activeTab === 'runs' && (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-          <section className="space-y-3">
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+          <section className="lg:col-span-1 space-y-3">
             <div className="p-4 bg-white rounded-lg shadow">
               <h2 className="font-medium mb-2">New Run</h2>
               <ControlPanel apiBase={API} onStarted={(r)=> { if(r){ autoPicked.current = true; setRid(r) } }} />
@@ -210,7 +210,7 @@ export default function App(){
               </div>
             </div>
           </section>
-          <section className="lg:col-span-2 space-y-3">
+          <section className="lg:col-span-3 space-y-3">
             <div className="p-4 bg-white rounded-lg shadow">
               <div className="flex items-center justify-between mb-2">
                 <h2 className="font-medium">Timeline</h2>

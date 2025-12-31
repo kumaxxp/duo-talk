@@ -23,6 +23,32 @@ cd "$PROJECT_ROOT"
 echo -e "${BLUE}📍 Project root: $PROJECT_ROOT${NC}"
 echo ""
 
+# --- Attempt to activate conda environment 'duo-talk' ---
+echo -e "${BLUE}【Conda Environment】${NC}"
+if command -v conda &> /dev/null; then
+    # initialize conda for this shell and try to activate
+    eval "$(conda shell.bash hook)"
+    if conda activate duo-talk 2>/dev/null; then
+        echo -e "${GREEN}✅ Activated conda environment 'duo-talk'${NC}"
+    else
+        echo -e "${YELLOW}⚠️  Conda present but environment 'duo-talk' not found or activation failed.${NC}"
+        echo -e "${YELLOW}You can create it with: conda env create -f environment.yml or conda create -n duo-talk python=3.x${NC}"
+    fi
+else
+    # Try common install locations
+    if [ -f "$HOME/miniconda3/etc/profile.d/conda.sh" ]; then
+        . "$HOME/miniconda3/etc/profile.d/conda.sh"
+        conda activate duo-talk 2>/dev/null && echo -e "${GREEN}✅ Activated conda environment 'duo-talk'${NC}" || echo -e "${YELLOW}⚠️ Failed to activate 'duo-talk' from miniconda.${NC}"
+    elif [ -f "$HOME/anaconda3/etc/profile.d/conda.sh" ]; then
+        . "$HOME/anaconda3/etc/profile.d/conda.sh"
+        conda activate duo-talk 2>/dev/null && echo -e "${GREEN}✅ Activated conda environment 'duo-talk'${NC}" || echo -e "${YELLOW}⚠️ Failed to activate 'duo-talk' from anaconda.${NC}"
+    else
+        echo -e "${YELLOW}⚠️ Conda not found in PATH and no common installations detected.${NC}"
+        echo -e "${YELLOW}If you want automatic activation, ensure conda is installed and 'conda' is on PATH.${NC}"
+    fi
+fi
+
+
 # Check if Node.js and npm are installed
 echo -e "${BLUE}【Checking Prerequisites】${NC}"
 
