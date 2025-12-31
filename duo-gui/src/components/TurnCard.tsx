@@ -5,8 +5,8 @@ import type { Beat, DirectorEvent, RAGEvent, SpeakEvent } from '../lib/types'
 
 // キャラクター情報
 const CHARACTER_INFO = {
-  A: { name: 'やな', fullName: '澄ヶ瀬やな (姉)', color: 'bg-rose-500', bgColor: 'bg-rose-50 border-rose-200' },
-  B: { name: 'あゆ', fullName: '澄ヶ瀬あゆ (妹)', color: 'bg-sky-500', bgColor: 'bg-sky-50 border-sky-200' },
+  A: { name: 'やな', fullName: '澄ヶ瀬やな (姉)', color: 'bg-rose-500', bgColor: 'bg-rose-50 border-rose-200', icon: '/icon/yana_face.png' },
+  B: { name: 'あゆ', fullName: '澄ヶ瀬あゆ (妹)', color: 'bg-sky-500', bgColor: 'bg-sky-50 border-sky-200', icon: '/icon/ayu_face.png' },
 }
 
 export default function TurnCard({ sp, rag, beat, directorStatus, directorReason, directorGuidance, onSelect, onViewPrompts }:{ sp: SpeakEvent, rag?: RAGEvent, beat?: Beat, directorStatus?: string, directorReason?: string, directorGuidance?: string, onSelect?: ()=>void, onViewPrompts?: (e: React.MouseEvent<HTMLButtonElement>)=>void }){
@@ -62,9 +62,16 @@ export default function TurnCard({ sp, rag, beat, directorStatus, directorReason
         </div>
       </div>
 
-      {/* セリフ表示 */}
-      <div className="mt-3 p-3 bg-white/80 rounded-lg shadow-sm">
-        <div className="whitespace-pre-wrap leading-relaxed text-gray-800">{sp.text}</div>
+      {/* セリフ表示 + キャラクターアイコン */}
+      <div className="mt-3 flex items-start gap-4">
+        <div className="flex-1 p-3 bg-white/80 rounded-lg shadow-sm">
+          <div className="whitespace-pre-wrap leading-relaxed text-gray-800">{sp.text}</div>
+        </div>
+        <img
+          src={charInfo.icon}
+          alt={charInfo.name}
+          className="w-[200px] h-[200px] rounded-lg object-cover flex-shrink-0 border-2 border-white shadow-lg"
+        />
       </div>
 
       {/* Director フィードバック（常に表示） */}
