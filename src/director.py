@@ -17,6 +17,25 @@ from src.fact_checker import get_fact_checker, FactCheckResult
 class Director:
     """Director LLM that monitors and guides character responses"""
 
+    # 誤爆防止用の定数
+    VAGUE_WORDS = ["雰囲気", "なんか", "ちょっと", "違う", "感じ", "空気感", "気配", "気がする"]
+
+    # 具体名詞のヒント（これがあれば曖昧語と組み合わさっていてもOK）
+    SPECIFIC_HINTS = [
+        "屋根", "看板", "鳥居", "提灯", "川", "山", "橋", "門", "石", "木",
+        "光", "色", "人", "音", "匂い", "店", "屋台", "酒", "料理", "池", "鯉",
+        "金", "銀", "赤", "緑", "青", "白", "黒", "建物", "庭", "道", "寺", "神社"
+    ]
+
+    # 絶対禁止ワード（強制NOOP）
+    HARD_BANNED_WORDS = [
+        "焦燥感", "期待", "ドキドキ", "ワクワク", "口調で", "トーンで",
+        "興奮", "悲しげ", "嬉しそうに", "寂しそうに"
+    ]
+
+    # 要注意ワード（根拠なしならNOOP）
+    SOFT_BANNED_WORDS = ["興味を示", "注目して", "気にして"]
+
     def __init__(self, enable_fact_check: bool = True):
         self.llm = get_llm_client()
         # Load director system prompt using PromptManager
@@ -179,26 +198,22 @@ Respond ONLY with JSON:
                     json_text = match.group(1).strip()
 
             try:
-                result = json.loads(json_text)
+                data = json.loads(json_text)
             except json.JSONDecodeError:
-                # Fallback if JSON parsing fails
-                if "PASS" in result_text.upper():
-                    return DirectorEvaluation(
-                        status=DirectorStatus.PASS,
-                        reason="Response appears valid",
-                    )
-                elif "RETRY" in result_text.upper():
-                    return DirectorEvaluation(
-                        status=DirectorStatus.RETRY,
-                        reason="Suggested retry",
-                    )
-                else:
-                    return DirectorEvaluation(
-                        status=DirectorStatus.MODIFY,
-                        reason="Response needs adjustment",
-                    )
+                # パース失敗時は安全側に倒してPASS/NOOP
+                return DirectorEvaluation(
+                    status=DirectorStatus.PASS,
+                    reason="JSON Parse Error - Safe Fallback",
+                    next_instruction=None,
+                    next_pattern=None,
+                    beat_stage=current_beat,
+                )
 
-            status_str = result.get("status", "PASS").upper()
+            # ★ コードによる「最後の殺し」実行
+            validated_data = self._validate_director_output(data, turn_number)
+
+            # 判定結果の抽出
+            status_str = validated_data.get("status", "PASS").upper()
             status = (
                 DirectorStatus.PASS
                 if status_str == "PASS"
@@ -208,17 +223,31 @@ Respond ONLY with JSON:
             )
 
             # Build reason with issues if available
-            reason = result.get("reason", "")
-            issues = result.get("issues", [])
+            reason = validated_data.get("reason", "")
+            issues = validated_data.get("issues", [])
             if issues and isinstance(issues, list):
                 reason_with_issues = f"{reason}\n- " + "\n- ".join(issues[:2])
             else:
                 reason_with_issues = reason
 
-            # Extract new orchestration fields
-            next_pattern = result.get("next_pattern")
-            next_instruction = result.get("next_instruction")
-            beat_stage = result.get("beat_stage", current_beat)
+            beat_stage = validated_data.get("beat_stage", current_beat)
+
+            # action判定
+            action = validated_data.get("action", "NOOP")
+            if action == "NOOP":
+                next_pattern = None
+                next_instruction = None
+            else:
+                next_pattern = validated_data.get("next_pattern")
+                next_instruction = validated_data.get("next_instruction")
+
+                # パターンの整合性チェック
+                if next_pattern and next_pattern not in ["A", "B", "C", "D", "E"]:
+                    next_pattern = None
+
+                # ビートトラッカーによるパターン許可チェック（既存ロジック維持）
+                if next_pattern and not self.beat_tracker.is_pattern_allowed(next_pattern, self.recent_patterns):
+                    next_pattern = self.beat_tracker.suggest_pattern(turn_number, self.recent_patterns)
 
             # ファクトチェックで誤りが見つかった場合、訂正パターンに切り替え
             if fact_check_result and fact_check_result.has_error:
@@ -232,25 +261,16 @@ Respond ONLY with JSON:
                     next_instruction = correction_instruction
                 print(f"    🎬 パターンを訂正モード(C)に変更")
 
-            # Validate and track pattern
-            if next_pattern and next_pattern in ["A", "B", "C", "D", "E"]:
-                # Check if pattern is allowed
-                if not self.beat_tracker.is_pattern_allowed(next_pattern, self.recent_patterns):
-                    # Suggest alternative pattern
-                    next_pattern = self.beat_tracker.suggest_pattern(turn_number, self.recent_patterns)
+            # 履歴更新（NOOPでない場合のみ）
+            if next_pattern:
                 self.recent_patterns.append(next_pattern)
-                # Keep only last 5 patterns
                 if len(self.recent_patterns) > 5:
                     self.recent_patterns = self.recent_patterns[-5:]
-            else:
-                # Fallback: use beat tracker to suggest pattern
-                next_pattern = self.beat_tracker.suggest_pattern(turn_number, self.recent_patterns)
-                self.recent_patterns.append(next_pattern)
 
             return DirectorEvaluation(
                 status=status,
                 reason=reason_with_issues,
-                suggestion=result.get("suggestion"),
+                suggestion=validated_data.get("suggestion"),
                 next_pattern=next_pattern,
                 next_instruction=next_instruction,
                 beat_stage=beat_stage,
@@ -364,45 +384,48 @@ Respond ONLY with JSON:
         prompt += f"""
 {tone_status}
 
-【4つの評価基準】（口調マーカーは事前検証済み）
+【評価の前提】
+- status(PASS/RETRY/MODIFY) は「今の発言の品質」評価
+- action(NOOP/INTERVENE) は「次ターンに介入する価値があるか」
+- PASSでも介入不要なら action=NOOP にする（強く推奨）
 
-1. **進行度 (Progress)**: 現フレーム/シーンに対応しているか
-   - 現フレームの内容に自然に反応している
-   - 前フレームのネタを引きずっていない
+【評価基準】
+1. Progress: 現フレーム/シーンに対応しているか
+   - 具体要素（物/場所/色/動作）への接地があるか
+   - 抽象語だけの反応は接地として扱わない
 
-2. **参加度 (Participation)**: キャラクターが積極的か
-   - 受け身ではなく能動的に発言
-   - 相手の発言に自然に応答
-   - 同じフレーズや言い回しを繰り返していない
+2. Participation: 自然な掛け合いか
+   - 短い相槌・補足も参加として扱う
+   - 無理に質問を作って能動性を演出しない
 
-3. **知識領域 (Knowledge Domain)**: 専門領域内か
+3. Knowledge Domain: 専門領域内か
    - {speaker}が話すべき領域：{domain_expectations}
-   - 領域外の話題は避ける
 
-4. **ナレーション品質 (Narration Quality)**: 面白く、簡潔か
-   - 5文以内
-   - 相手の発言を適切に拾い、発展させている
+4. Narration Quality: 簡潔で、具体化/対比で面白さが出るか
+   - 抽象語の意味確認（例:「何が違うの？」）は原則減点
+   - 感情/口調の演技指導は絶対に出さない
 
-【判定ルール】
-- PASS: 4項目すべてクリア、自然で流れのある対話（口調マーカーは事前検証済みなのでPASS推奨）
-- RETRY: 同じフレーズの繰り返しや明らかな問題がある場合のみ
-- MODIFY: 大きな問題がある
+【介入ゲート（action判定）】
+- 次の条件のいずれかなら action=NOOP にする
+  (a) ターン1-2で重大な逸脱がない
+  (b) hookが抽象語のみ（具体名詞を伴わない）
+  (c) evidenceが dialogue/frame ともにnull
+- INTERVENE は「具体名詞を含む hook」か「フレームの具体要素」が根拠として挙げられる時だけ
 
 【応答フォーマット】
 JSON ONLY:
 {{
   "status": "PASS" | "RETRY" | "MODIFY",
-  "reason": "簡潔な理由（日本語OK、30-50字）",
-  "issues": ["項目1の問題", "項目2の問題"],
-  "suggestion": "修正案（RETRY/MODIFYの場合、具体的な改善点）",
-  "next_pattern": "A" | "B" | "C" | "D" | "E",
-  "next_instruction": "次の発言者への具体的指示（1-2文、日本語）",
-  "beat_stage": "{current_beat}"
+  "reason": "評価理由（30字以内）",
+  "issues": ["問題点があれば記述"],
+  "suggestion": "修正案（RETRY/MODIFY時のみ）",
+  "beat_stage": "{current_beat}",
+  "action": "NOOP" | "INTERVENE",
+  "hook": "具体名詞を含む短い句 or null",
+  "evidence": {{ "dialogue": "抜粋 or null", "frame": "抜粋 or null" }},
+  "next_pattern": "A" | "B" | "C" | "D" | "E" | null,
+  "next_instruction": "INTERVENEの場合のみ。NOOPならnull"
 }}
-
-【振付指示について】
-- next_pattern: 現在のビート段階に合った推奨パターン（{preferred_patterns_str}）から選択
-- next_instruction: 次の発言者が何に注目・反応すべきか具体的に指示
 """
         return prompt.strip()
 
@@ -679,3 +702,94 @@ JSON ONLY:
             "issue": "",
             "suggestion": "",
         }
+
+    def _is_vague_hook(self, hook: str) -> bool:
+        """
+        曖昧語フックかどうか判定。
+        曖昧語が含まれていても、具体名詞があればOK。
+        """
+        h = (hook or "").strip()
+        if not h:
+            return False
+
+        has_vague = any(w in h for w in self.VAGUE_WORDS)
+        has_specific = any(x in h for x in self.SPECIFIC_HINTS)
+
+        # 曖昧語があり、具体名詞がなく、短い場合は曖昧フック
+        return has_vague and not has_specific and len(h) <= 12
+
+    def _validate_director_output(self, data: dict, turn_number: int) -> dict:
+        """
+        LLMの出力を検証し、誤爆条件にマッチしたら強制的にNOOPに書き換える。
+        「コード側の最後の殺し」
+        また、スキーマを守れない出力も補正する。
+        """
+        # === スキーマ補正（後方互換性） ===
+        if "action" not in data:
+            data["action"] = "NOOP"
+        if "evidence" not in data:
+            data["evidence"] = {"dialogue": None, "frame": None}
+        if data.get("next_instruction") == "":
+            data["next_instruction"] = None
+        if data.get("next_pattern") not in [None, "A", "B", "C", "D", "E"]:
+            data["next_pattern"] = None
+        if data.get("hook") == "":
+            data["hook"] = None
+
+        # === 強制NOOP判定 ===
+        force_noop = False
+        reason_override = ""
+
+        action = data.get("action", "NOOP")
+        hook = data.get("hook") or ""
+        instruction = data.get("next_instruction") or ""
+        evidence = data.get("evidence") or {}
+        status = data.get("status", "PASS")
+
+        has_dialogue_ev = bool(evidence.get("dialogue"))
+        has_frame_ev = bool(evidence.get("frame"))
+        has_any_evidence = has_dialogue_ev or has_frame_ev
+
+        # (a) 導入フェーズの保護（ターン1-2で軽微な場合はNOOP）
+        if turn_number <= 2 and action == "INTERVENE":
+            # 重大な逸脱（RETRY/MODIFY）でなければ抑制
+            is_major_issue = status in ["RETRY", "MODIFY"]
+            if not is_major_issue:
+                force_noop = True
+                reason_override = "導入フェーズのため介入抑制"
+
+        # (b) 曖昧語フックの検出
+        if self._is_vague_hook(hook):
+            force_noop = True
+            reason_override = f"曖昧語フック検出: {hook}"
+
+        # (c) 絶対禁止ワードの検出（演技指導）
+        if instruction and any(w in instruction for w in self.HARD_BANNED_WORDS):
+            force_noop = True
+            reason_override = "演技指導ワード検出（絶対禁止）"
+
+        # (d) 要注意ワードの検出（根拠なしならNOOP）
+        if instruction and any(w in instruction for w in self.SOFT_BANNED_WORDS):
+            if not has_any_evidence:
+                force_noop = True
+                reason_override = "演技指導ワード検出（根拠なし）"
+
+        # (e) 根拠欠落（INTERVENEなのに根拠なし）
+        if action == "INTERVENE" and not has_any_evidence:
+            force_noop = True
+            reason_override = "介入根拠なし"
+
+        # === 強制NOOP実行 ===
+        if force_noop:
+            print(f"    🛡️ Director Code Guard: Forcing NOOP ({reason_override})")
+            data["action"] = "NOOP"
+            data["next_instruction"] = None
+            data["next_pattern"] = None
+            data["hook"] = None
+
+        # === NOOP時のクリーンアップ ===
+        if data.get("action") == "NOOP":
+            data["next_instruction"] = None
+            data["next_pattern"] = None
+
+        return data
