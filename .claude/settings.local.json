@@ -17,7 +17,16 @@
       "Bash(timeout 180 python:*)",
       "Bash(timeout 180 python3:*)",
       "Bash(timeout 120 python:*)",
-      "Bash(python3:*)"
+      "Bash(python3:*)",
+      "Bash(systemctl:*)",
+      "Bash(crontab:*)",
+      "Bash(pstree:*)",
+      "Bash(ps:*)",
+      "Bash(screen -ls:*)",
+      "Bash(tmux list-sessions:*)",
+      "Bash(xargs:*)",
+      "Bash(lsof:*)",
+      "Bash(nvidia-smi:*)"
     ]
   }
 }
