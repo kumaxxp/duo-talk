@@ -129,6 +129,11 @@ class NarrationPipeline:
         action: Optional[str] = None,
         hook: Optional[str] = None,
         evidence: Optional[dict] = None,
+        # Director v3: Topic Manager fields
+        focus_hook: Optional[str] = None,
+        hook_depth: int = 0,
+        depth_step: str = "DISCOVER",
+        forbidden_topics: Optional[list] = None,
     ) -> None:
         """GUI用のdirectorイベントを発行"""
         from datetime import datetime
@@ -144,6 +149,11 @@ class NarrationPipeline:
             "action": action,  # "NOOP" or "INTERVENE"
             "hook": hook,  # 介入トリガーとなる具体名詞
             "evidence": evidence,  # {"dialogue": ..., "frame": ...}
+            # Director v3: Topic Manager fields
+            "focus_hook": focus_hook,
+            "hook_depth": hook_depth,
+            "depth_step": depth_step,
+            "forbidden_topics": forbidden_topics or [],
             "ts": datetime.now().isoformat(),
         })
 
@@ -499,7 +509,7 @@ class NarrationPipeline:
                     "character_role": director_evaluation.character_role,
                 }
 
-            # GUI用 director イベントを発行（v2フィールドを含む）
+            # GUI用 director イベントを発行（v3フィールドを含む）
             self._emit_director_event(
                 run_id,
                 turn_counter,
@@ -511,6 +521,11 @@ class NarrationPipeline:
                 action=director_evaluation.action,
                 hook=director_evaluation.hook,
                 evidence=director_evaluation.evidence,
+                # Director v3: Topic Manager fields
+                focus_hook=director_evaluation.focus_hook,
+                hook_depth=director_evaluation.hook_depth,
+                depth_step=director_evaluation.depth_step,
+                forbidden_topics=director_evaluation.forbidden_topics,
             )
 
             # 最終ターンの場合のみ verdict を記録
