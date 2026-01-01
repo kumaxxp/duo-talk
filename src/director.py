@@ -156,6 +156,47 @@ Respond ONLY with JSON:
         # Get current beat stage from turn number
         current_beat = self.beat_tracker.get_current_beat(turn_number)
         beat_info = self.beat_tracker.get_beat_info(current_beat)
+
+        # ========== Director v3: Topic Manager - 早期更新 ==========
+        # 早期リターンの前にTopicStateを更新する
+        detected_hook = self._extract_hook_from_response(response, frame_description)
+        is_premature_switch = False  # 早すぎる話題転換フラグ
+
+        if self.topic_state.focus_hook:
+            # 同じ話題が続いているかチェック
+            is_same_topic = (
+                detected_hook == self.topic_state.focus_hook or
+                detected_hook in self.topic_state.focus_hook or
+                self.topic_state.focus_hook in detected_hook
+            )
+            if is_same_topic:
+                self.topic_state.advance_depth()
+                print(f"    📊 Topic: {self.topic_state.focus_hook} depth={self.topic_state.hook_depth}/3 step={self.topic_state.depth_step}")
+            else:
+                # 話題が変わった場合
+                if self.topic_state.can_switch_topic():
+                    self.topic_state.switch_topic(detected_hook)
+                    print(f"    🔀 Topic switch: → {detected_hook}")
+                else:
+                    # 早すぎる転換 - フラグを立てて後で処理
+                    is_premature_switch = True
+                    print(f"    ⚠️ Topic premature switch detected: {self.topic_state.focus_hook} → {detected_hook}")
+        else:
+            # 初回はhookを設定
+            self.topic_state.focus_hook = detected_hook
+            self.topic_state.must_include = [detected_hook]
+            print(f"    📊 Topic init: {detected_hook}")
+
+        # 現在のtopic状態をキャプチャ（早期リターンでも使用）
+        current_topic_fields = {
+            "focus_hook": self.topic_state.focus_hook,
+            "hook_depth": self.topic_state.hook_depth,
+            "depth_step": self.topic_state.depth_step,
+            "forbidden_topics": self.topic_state.forbidden_topics.copy(),
+            "must_include": self.topic_state.must_include.copy(),
+            "character_role": self._get_character_role(speaker, self.topic_state.depth_step),
+        }
+
         if speaker_domains is None:
             speaker_domains = (
                 [
@@ -185,6 +226,7 @@ Respond ONLY with JSON:
                 status=DirectorStatus.RETRY,
                 reason=f"出力形式の問題: {format_check['issue']}",
                 suggestion=format_check["suggestion"],
+                **current_topic_fields,
             )
 
         # 設定整合性のチェック（姉妹が別居しているかのような表現）
@@ -194,6 +236,7 @@ Respond ONLY with JSON:
                 status=DirectorStatus.RETRY,
                 reason=setting_check["issue"],
                 suggestion=setting_check["suggestion"],
+                **current_topic_fields,
             )
 
         # 褒め言葉チェック（あゆの発言のみ適用）
@@ -203,6 +246,7 @@ Respond ONLY with JSON:
                 status=DirectorStatus.RETRY,
                 reason=praise_check["issue"],
                 suggestion=praise_check["suggestion"],
+                **current_topic_fields,
             )
 
         # 話題ループ検出（LLM評価の前に実行）
@@ -222,6 +266,7 @@ Respond ONLY with JSON:
                 beat_stage=current_beat,
                 hook=loop_check["keyword"],
                 evidence={"dialogue": f"「{loop_check['keyword']}」が{loop_check['count']}回出現", "frame": None},
+                **current_topic_fields,
             )
 
         # 動的ループ検出（静的検出で見つからない場合のフォールバック）
@@ -238,6 +283,7 @@ Respond ONLY with JSON:
                 beat_stage=current_beat,
                 hook=dynamic_loop["keyword"],
                 evidence={"dialogue": f"「{dynamic_loop['keyword']}」が繰り返し", "frame": None},
+                **current_topic_fields,
             )
 
         # 散漫検出（複数話題への全レス）
@@ -249,6 +295,7 @@ Respond ONLY with JSON:
                 status=DirectorStatus.RETRY,
                 reason=f"応答が散漫: {issues_str}",
                 suggestion="【制限】50〜80文字、2文以内、読点2個以内で応答してください。相手の発言から1つだけ選んで反応し、他は無視してください。",
+                **current_topic_fields,
             )
 
         # 論理的矛盾のチェック（二重否定など）
@@ -258,6 +305,7 @@ Respond ONLY with JSON:
                 status=DirectorStatus.RETRY,
                 reason=logic_check["issue"],
                 suggestion=logic_check["suggestion"],
+                **current_topic_fields,
             )
 
         # 口調マーカーの事前チェック
@@ -268,6 +316,7 @@ Respond ONLY with JSON:
                 status=DirectorStatus.RETRY,
                 reason=f"口調マーカー不足: {tone_check['missing']}",
                 suggestion=f"以下のマーカーを含めてください: {', '.join(tone_check['expected'])}",
+                **current_topic_fields,
             )
 
         # 口調マーカーの詳細情報を取得（LLM評価用）
@@ -331,6 +380,7 @@ Respond ONLY with JSON:
                     next_instruction=None,
                     next_pattern=None,
                     beat_stage=current_beat,
+                    **current_topic_fields,
                 )
 
             # ★ コードによる「最後の殺し」実行
@@ -391,43 +441,17 @@ Respond ONLY with JSON:
                 if len(self.recent_patterns) > 5:
                     self.recent_patterns = self.recent_patterns[-5:]
 
-            # ========== Director v3: Topic Manager Update ==========
-            detected_hook = self._extract_hook_from_response(response, frame_description)
-
-            # 話題転換判定
-            if self.topic_state.focus_hook:
-                # 同じ話題が続いているか
-                if detected_hook == self.topic_state.focus_hook or detected_hook in self.topic_state.focus_hook or self.topic_state.focus_hook in detected_hook:
-                    # 同じ話題 → 深掘り段階を進める
-                    self.topic_state.advance_depth()
-                    print(f"    📊 Topic: {self.topic_state.focus_hook} depth={self.topic_state.hook_depth}/3 step={self.topic_state.depth_step}")
-                else:
-                    # 話題が変わった
-                    if self.topic_state.can_switch_topic():
-                        # 転換許可 → 新しい話題に切り替え
-                        self.topic_state.switch_topic(detected_hook)
-                        print(f"    🔀 Topic switch: → {detected_hook}")
-                    else:
-                        # 転換不許可（まだ深掘りが足りない）→ INTERVENEで戻す
-                        print(f"    ⚠️ Topic premature switch: {self.topic_state.focus_hook} → {detected_hook} (depth={self.topic_state.hook_depth})")
-                        return DirectorEvaluation(
-                            status=DirectorStatus.PASS,
-                            reason=f"話題が早すぎる転換（{self.topic_state.focus_hook}→{detected_hook}）",
-                            action="INTERVENE",
-                            next_instruction=self._build_strong_intervention(speaker),
-                            beat_stage=beat_stage,
-                            focus_hook=self.topic_state.focus_hook,
-                            hook_depth=self.topic_state.hook_depth,
-                            depth_step=self.topic_state.depth_step,
-                            forbidden_topics=self.topic_state.forbidden_topics.copy(),
-                            must_include=self.topic_state.must_include.copy(),
-                            character_role=self._get_character_role(speaker, self.topic_state.depth_step),
-                        )
-            else:
-                # 初回はhookを設定
-                self.topic_state.focus_hook = detected_hook
-                self.topic_state.must_include = [detected_hook]
-                print(f"    📊 Topic init: {detected_hook}")
+            # ========== Director v3: 早すぎる話題転換のINTERVENE処理 ==========
+            # 早期に検出したpremature switchフラグがある場合、INTERVENEで戻す
+            if is_premature_switch:
+                return DirectorEvaluation(
+                    status=DirectorStatus.PASS,
+                    reason=f"話題が早すぎる転換（{self.topic_state.focus_hook}→{detected_hook}）",
+                    action="INTERVENE",
+                    next_instruction=self._build_strong_intervention(speaker),
+                    beat_stage=beat_stage,
+                    **current_topic_fields,
+                )
 
             return DirectorEvaluation(
                 status=status,
@@ -439,13 +463,7 @@ Respond ONLY with JSON:
                 action=validated_data.get("action", "NOOP"),
                 hook=validated_data.get("hook"),
                 evidence=validated_data.get("evidence"),
-                # Director v3 fields
-                focus_hook=self.topic_state.focus_hook,
-                hook_depth=self.topic_state.hook_depth,
-                depth_step=self.topic_state.depth_step,
-                forbidden_topics=self.topic_state.forbidden_topics.copy(),
-                must_include=self.topic_state.must_include.copy(),
-                character_role=self._get_character_role(speaker, self.topic_state.depth_step),
+                **current_topic_fields,
             )
 
         except Exception as e:
@@ -457,13 +475,7 @@ Respond ONLY with JSON:
                 reason=f"Director evaluation error: {str(e)}",
                 next_pattern=fallback_pattern,
                 beat_stage=current_beat,
-                # Director v3 fields
-                focus_hook=self.topic_state.focus_hook,
-                hook_depth=self.topic_state.hook_depth,
-                depth_step=self.topic_state.depth_step,
-                forbidden_topics=self.topic_state.forbidden_topics.copy(),
-                must_include=self.topic_state.must_include.copy(),
-                character_role=self._get_character_role(speaker, self.topic_state.depth_step),
+                **current_topic_fields,
             )
 
     def _build_evaluation_prompt(
@@ -1046,7 +1058,7 @@ JSON ONLY:
                 "keyword": str or None
             }
         """
-        if len(conversation_history) < 3:
+        if not conversation_history or len(conversation_history) < 3:
             return {"detected": False, "keyword": None}
 
         # 正規表現で「意味がありそうな単語」を抽出
