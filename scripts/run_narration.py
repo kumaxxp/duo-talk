@@ -25,6 +25,16 @@ class NarrationPipeline:
     # 家族設定（全シーンに共通）
     FAMILY_CONTEXT = "【前提】やなとあゆは姉妹で、同じ家に住んでいます。親戚・実家への訪問は一緒に行く前提です。"
 
+    # トピック別の具体的なシーンヒント
+    TOPIC_HINTS = {
+        "お正月": "こたつで予定表を作りながら。話題候補：初詣、おみくじ、雑煮の地域差、福袋、書き初め、箱根駅伝、年賀状",
+        "クリスマス": "リビングでツリーを眺めながら。話題候補：プレゼント、ケーキの種類、イルミネーション、サンタの由来",
+        "花見": "桜の木の下でお弁当を広げながら。話題候補：桜の品種、場所取り、花見団子、夜桜",
+        "夏祭り": "浴衣を着て屋台を歩きながら。話題候補：金魚すくい、綿あめ、花火、盆踊り、かき氷",
+        "お盆": "仏壇の前で。話題候補：お墓参り、精霊馬、盆踊り、迎え火送り火、ナスとキュウリ",
+        "default": "リビングで一緒に話している",
+    }
+
     def __init__(self):
         self.vision_processor = VisionProcessor()
         self.char_a = Character("A")
@@ -34,22 +44,25 @@ class NarrationPipeline:
 
     def _generate_scene_description(self, base_scene: str) -> str:
         """
-        シーン説明に家族設定を自動付与する。
+        シーン説明に家族設定と具体的なヒントを自動付与する。
 
         Args:
             base_scene: 基本のシーン説明
 
         Returns:
-            家族設定を含む完全なシーン説明
+            家族設定とヒントを含む完全なシーン説明
         """
-        # お正月、年末年始、帰省などのキーワードがあれば特に強調
-        family_keywords = ["お正月", "年末", "年始", "帰省", "実家", "親戚", "お盆"]
-        needs_emphasis = any(kw in base_scene for kw in family_keywords)
+        # トピックに応じたヒントを選択
+        hint = self.TOPIC_HINTS["default"]
+        for key, value in self.TOPIC_HINTS.items():
+            if key in base_scene:
+                hint = value
+                break
 
-        if needs_emphasis:
-            return f"{self.FAMILY_CONTEXT}\n\n{base_scene}"
-        else:
-            return f"{self.FAMILY_CONTEXT}\n\n{base_scene}"
+        return f"""【シーン】{base_scene}
+【状況】姉妹は同じ家で、{hint}
+【前提】やなとあゆは姉妹で同居。一緒に過ごす前提で会話する。
+【重要】同じ話題（おせち、お年玉等）を3回以上繰り返さない。新しい視点や話題を追加する。"""
 
     def _emit_speak_event(
         self,

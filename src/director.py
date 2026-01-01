@@ -58,6 +58,27 @@ class Director:
         "厳島神社", "姫路城", "富士山", "浅草寺", "鎌倉大仏",
     ]
 
+    # 話題ループ検出用の定数
+    LOOP_KEYWORDS = [
+        "おせち", "お年玉", "親戚", "挨拶", "初詣", "福袋", "雑煮",
+        "お餅", "餅つき", "年賀状", "箱根駅伝", "紅白",
+    ]
+    LOOP_THRESHOLD = 3
+
+    # 話題転換用の新トピック候補
+    NEW_TOPIC_SUGGESTIONS = {
+        "おせち": ["雑煮の具", "お屠蘇", "福袋", "初詣"],
+        "お年玉": ["初詣", "おみくじ", "書き初め", "福袋"],
+        "親戚": ["年賀状", "箱根駅伝", "福袋", "初売り"],
+        "挨拶": ["初詣", "おみくじ", "初売り", "書き初め"],
+        "初詣": ["おみくじ", "破魔矢", "甘酒", "おせち"],
+        "福袋": ["初売り", "お年玉", "おみくじ", "書き初め"],
+        "雑煮": ["お餅の形", "地域差", "おせち", "お屠蘇"],
+        "お餅": ["餅つき", "雑煮", "きな粉餅", "磯辺焼き"],
+        "餅つき": ["杵と臼", "お餅の形", "つきたて", "雑煮"],
+        "default": ["初詣", "おみくじ", "雑煮の具", "福袋", "書き初め", "箱根駅伝"],
+    }
+
     def __init__(self, enable_fact_check: bool = True):
         self.llm = get_llm_client()
         # Load director system prompt using PromptManager
@@ -165,6 +186,25 @@ Respond ONLY with JSON:
                 status=DirectorStatus.RETRY,
                 reason=praise_check["issue"],
                 suggestion=praise_check["suggestion"],
+            )
+
+        # 話題ループ検出（LLM評価の前に実行）
+        loop_check = self._detect_topic_loop(conversation_history, response)
+        if loop_check["detected"]:
+            print(f"    🔄 話題ループ検出: 「{loop_check['keyword']}」が{loop_check['count']}回繰り返し")
+
+            # 新しい話題の提案
+            new_topic = self._get_new_topic_suggestion(loop_check["keyword"])
+
+            return DirectorEvaluation(
+                status=DirectorStatus.PASS,
+                reason=f"話題ループ: 「{loop_check['keyword']}」が{loop_check['count']}回出現",
+                action="INTERVENE",
+                next_instruction=f"「{loop_check['keyword']}」の話題が続いています。「{new_topic}」など別の話題に展開してください。",
+                next_pattern="D",  # 脱線→修正パターン
+                beat_stage=current_beat,
+                hook=loop_check["keyword"],
+                evidence={"dialogue": f"「{loop_check['keyword']}」が{loop_check['count']}回出現", "frame": None},
             )
 
         # 論理的矛盾のチェック（二重否定など）
@@ -440,30 +480,35 @@ Respond ONLY with JSON:
 【評価の前提】
 - status(PASS/RETRY/MODIFY) は「今の発言の品質」評価
 - action(NOOP/INTERVENE) は「次ターンに介入する価値があるか」
-- PASSでも介入不要なら action=NOOP にする（強く推奨）
+- 基本は NOOP 推奨だが、**会話がループしている場合は積極的に介入せよ**
 
 【評価基準】
-1. Progress: 現フレーム/シーンに対応しているか
-   - 具体要素（物/場所/色/動作）への接地があるか
-   - 抽象語だけの反応は接地として扱わない
+1. Progress（進行度）← 最重要・厳格化
+   - ❌ NG: 前のターンと同じ単語（おせち/親戚/お年玉）を繰り返すだけ
+   - ❌ NG: 「楽しみだね」「そうだね」という同意のみで新情報なし
+   - ❌ NG: オウム返し（相手の言葉をそのまま繰り返す）
+   - ✓ OK: 新しいトピック（初詣/福袋/雑煮の具）が出ている
+   - ✓ OK: 具体的なエピソードや理由が追加されている
 
-2. Participation: 自然な掛け合いか
-   - 短い相槌・補足も参加として扱う
-   - 無理に質問を作って能動性を演出しない
+2. Participation: 自然な掛け合いか（オウム返しは減点）
 
 3. Knowledge Domain: 専門領域内か
    - {speaker}が話すべき領域：{domain_expectations}
 
-4. Narration Quality: 簡潔で、具体化/対比で面白さが出るか
+4. Narration Quality: 新規性があり、会話が前進しているか
    - 抽象語の意味確認（例:「何が違うの？」）は原則減点
    - 感情/口調の演技指導は絶対に出さない
 
 【介入ゲート（action判定）】
-- 次の条件のいずれかなら action=NOOP にする
-  (a) ターン1-2で重大な逸脱がない
-  (b) hookが抽象語のみ（具体名詞を伴わない）
-  (c) evidenceが dialogue/frame ともにnull
-- INTERVENE は「具体名詞を含む hook」か「フレームの具体要素」が根拠として挙げられる時だけ
+- 次の条件なら action=INTERVENE に切り替える
+  (a) **話題ループ**: 同じ名詞（おせち/お年玉/親戚）が3回以上繰り返されている
+  (b) **抽象的な同意のみ**: 「楽しみ」「大事」「いいね」の連鎖で新情報がない
+  → 指示例: 「話題を変えて。『初詣』『福袋』『雑煮の具』など別の要素へ」
+
+- 次の条件なら action=NOOP
+  (c) 新しい情報やトピックが出続けている
+  (d) 導入(ターン1-2)で大きな逸脱がない
+  (e) hookが抽象語のみ、または根拠(evidence)がない
 
 【応答フォーマット】
 JSON ONLY:
@@ -841,6 +886,54 @@ JSON ONLY:
             if spot in hook and spot not in frame_description:
                 return True
         return False
+
+    def _detect_topic_loop(self, conversation_history: list, response: str) -> dict:
+        """
+        話題ループを検出する。
+
+        Args:
+            conversation_history: [(speaker, text), ...] のリスト
+            response: 現在の発言
+
+        Returns:
+            {
+                "detected": bool,
+                "keyword": str or None,
+                "count": int
+            }
+        """
+        if not conversation_history or len(conversation_history) < 2:
+            return {"detected": False, "keyword": None, "count": 0}
+
+        # 直近の会話 + 現在の発言を結合
+        recent_texts = [text for _, text in conversation_history[-4:]]
+        recent_texts.append(response)
+        combined_text = " ".join(recent_texts)
+
+        # 頻出キーワードを検出
+        for kw in self.LOOP_KEYWORDS:
+            count = combined_text.count(kw)
+            if count >= self.LOOP_THRESHOLD:
+                return {"detected": True, "keyword": kw, "count": count}
+
+        return {"detected": False, "keyword": None, "count": 0}
+
+    def _get_new_topic_suggestion(self, loop_keyword: str) -> str:
+        """
+        ループしているキーワードに応じた新しい話題を提案する。
+
+        Args:
+            loop_keyword: ループしているキーワード
+
+        Returns:
+            新しい話題の提案
+        """
+        suggestions = self.NEW_TOPIC_SUGGESTIONS.get(
+            loop_keyword, self.NEW_TOPIC_SUGGESTIONS["default"]
+        )
+        # ループしているキーワードを除外
+        available = [t for t in suggestions if t != loop_keyword]
+        return available[0] if available else "別の話題"
 
     def _validate_director_output(self, data: dict, turn_number: int, frame_description: str = "") -> dict:
         """
