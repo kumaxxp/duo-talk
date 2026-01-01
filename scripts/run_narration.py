@@ -507,6 +507,8 @@ class NarrationPipeline:
                     "forbidden_topics": director_evaluation.forbidden_topics,
                     "must_include": director_evaluation.must_include,
                     "character_role": director_evaluation.character_role,
+                    # 直前の発言を次のターンに渡す（会話の自然な流れを維持）
+                    "partner_last_speech": speech,
                 }
 
             # GUI用 director イベントを発行（v3フィールドを含む）

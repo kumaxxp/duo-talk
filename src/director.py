@@ -1168,49 +1168,64 @@ JSON ONLY:
         }
         return roles.get(speaker, {}).get(depth_step, "自然に会話する")
 
-    def _extract_hook_from_response(self, response: str, frame_description: str) -> str:
-        """応答またはフレームから話題hookを抽出"""
+    def _extract_hook_from_response(self, response: str, frame_description: str = "") -> str:
+        """
+        直前の発言から話題hookを抽出する。
+
+        重要: 全体の会話ではなく、直前の発言（response）からのみ抽出する。
+        これにより、会話の自然な流れが維持される。
+        """
         # 正規表現で名詞候補を抽出（漢字・カタカナ・英数字の2文字以上）
         pattern = r'[一-龠々ヶァ-ヴーa-zA-Z]{2,}'
-        candidates = re.findall(pattern, response)
 
-        # フレームからも抽出
-        frame_candidates = re.findall(pattern, frame_description)
+        # 直前の発言からのみ抽出
+        candidates = re.findall(pattern, response)
 
         # 禁止トピックを除外
         candidates = [c for c in candidates if c not in self.topic_state.forbidden_topics]
 
-        # 一般的すぎる単語を除外
-        stop_words = {"そう", "ですね", "ます", "です", "やな", "あゆ", "姉様", "姉", "妹"}
+        # 一般的すぎる単語を除外（拡張版）
+        stop_words = {
+            "そう", "ですね", "ます", "です", "やな", "あゆ", "姉様", "姉", "妹",
+            "本当", "確か", "良い", "いい", "今年", "毎年", "今日", "昨日",
+            "ちょっと", "なんか", "すごい", "とても", "少し", "やっぱり",
+            "大事", "大切", "楽しみ", "嬉しい", "面白い", "一緒", "みんな",
+        }
         candidates = [c for c in candidates if c not in stop_words and len(c) >= 2]
 
-        # 最も長い候補を返す（なければフレームから）
+        # 最も長い候補を返す（具体的な話題である可能性が高い）
         if candidates:
             return max(candidates, key=len)
-        elif frame_candidates:
-            frame_candidates = [c for c in frame_candidates if c not in stop_words]
+
+        # フォールバック: フレームから抽出（直前発言に具体的な話題がない場合のみ）
+        if frame_description:
+            frame_candidates = re.findall(pattern, frame_description)
+            frame_candidates = [c for c in frame_candidates if c not in stop_words and len(c) >= 2]
             if frame_candidates:
                 return max(frame_candidates, key=len)
-        return "会話"
+
+        return ""  # 空を返す（hookなしとして扱う）
 
     def _build_strong_intervention(self, speaker: str) -> str:
-        """強制力のあるINTERVENE指示を生成"""
+        """
+        介入指示を生成する（緩和版: 強制ではなくヒントとして）
+        """
         role = self._get_character_role(speaker, self.topic_state.depth_step)
-        forbidden_str = "、".join(self.topic_state.forbidden_topics) if self.topic_state.forbidden_topics else "なし"
-        must_str = "、".join(self.topic_state.must_include) if self.topic_state.must_include else self.topic_state.focus_hook
+        forbidden_str = "、".join(self.topic_state.forbidden_topics) if self.topic_state.forbidden_topics else ""
 
-        return f"""╔════════════════════════════════════════════════════════════╗
-║ 【演出家からの絶対命令】
-╚════════════════════════════════════════════════════════════╝
+        intervention = f"""【会話のヒント】
+前の発言に自然に反応してください。
 
-【必須】「{self.topic_state.focus_hook}」についてだけ話してください
-【含める単語】{must_str}
-【禁止】{forbidden_str} には触れないでください
-【役割】{role}
-【段階】{self.topic_state.depth_step}（深さ {self.topic_state.hook_depth}/3）
+今の話題: {self.topic_state.focus_hook}
+段階: {self.topic_state.depth_step}（深さ {self.topic_state.hook_depth}/3）
+あなたの役割: {role}"""
 
-※50〜80文字、2文以内で応答してください。
-※この指示に従わない場合、発言は却下されます。"""
+        if forbidden_str:
+            intervention += f"\n避けるべき話題: {forbidden_str}"
+
+        intervention += "\n\n※50〜80文字、2文以内で応答してください。"
+
+        return intervention
 
     def reset_topic_state(self):
         """話題状態をリセット（新しいナレーション開始時に呼ぶ）"""

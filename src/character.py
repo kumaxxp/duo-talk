@@ -272,24 +272,27 @@ class Character:
             lines.append("※上記の指示を意識して応答してください")
             lines.append("")
 
-        # Director v3: Topic Management
+        # Director v3: Topic Management (修正版: 制限ではなくヒントとして)
         if topic_guidance and topic_guidance.get("focus_hook"):
             focus_hook = topic_guidance.get("focus_hook", "")
             forbidden = topic_guidance.get("forbidden_topics", [])
-            must_include = topic_guidance.get("must_include", [])
             character_role = topic_guidance.get("character_role", "")
             depth_step = topic_guidance.get("depth_step", "DISCOVER")
             hook_depth = topic_guidance.get("hook_depth", 0)
+            partner_last_speech = topic_guidance.get("partner_last_speech", "")
 
-            lines.append("【話題制限】")
-            lines.append(f"今の話題: 「{focus_hook}」（深さ {hook_depth}/3: {depth_step}）")
-            if must_include:
-                lines.append(f"必須ワード: {', '.join(must_include)}")
-            if forbidden:
-                lines.append(f"禁止話題: {', '.join(forbidden)}")
+            lines.append("【会話の流れ】")
+            if partner_last_speech:
+                # 直前の発言を表示（長い場合は省略）
+                preview = partner_last_speech[:50] + "..." if len(partner_last_speech) > 50 else partner_last_speech
+                lines.append(f"前の発言: 「{preview}」")
+            lines.append(f"今の話題: {focus_hook}（深さ {hook_depth}/3: {depth_step}）")
+            lines.append("")
+            lines.append("【重要】前の発言に自然に反応してください。無視しないでください。")
             if character_role:
                 lines.append(f"あなたの役割: {character_role}")
-            lines.append("※上記の話題についてのみ話し、他の話題には触れないでください")
+            if forbidden:
+                lines.append(f"※以下の話題は避けてください: {', '.join(forbidden)}")
             lines.append("")
 
         if rag_hints:
