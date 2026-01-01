@@ -395,18 +395,24 @@ class NarrationPipeline:
                 if director_evaluation.status.name == "RETRY":
                     retry_count += 1
                     if retry_count <= self.MAX_RETRY_PER_TURN:
-                        print(f"    🔄 Retrying with suggestion: {director_evaluation.suggestion}")
+                        # リトライ時の指示を強化（設定破壊の場合は特別な指示を追加）
+                        retry_instruction = director_evaluation.suggestion
+                        if "設定破壊" in (director_evaluation.reason or ""):
+                            retry_instruction = f"【重要】{director_evaluation.reason}\n{director_evaluation.suggestion}\n※「あゆの家」「姉様のお家」などの表現を使わず、「うち」「私たちの家」を使ってください。"
+                        print(f"    🔄 Retrying with suggestion: {retry_instruction}")
                         # 次の再生成時にDirectorの指摘を反映
-                        director_guidance = director_evaluation.suggestion
+                        director_guidance = retry_instruction
                         continue
                     else:
                         # リトライ上限到達: Force Pass
                         print(f"    ⚠️ リトライ上限到達: Force PASSで進行")
                         force_passed = True
-                        # INTERVENEで次ターンに改善指示を出す
+                        # INTERVENEで次ターンに改善指示を出す + statusをPASSに変更
                         from dataclasses import replace as dc_replace
+                        from src.types import DirectorStatus
                         director_evaluation = dc_replace(
                             director_evaluation,
+                            status=DirectorStatus.PASS,  # statusをPASSに変更
                             action="INTERVENE",
                             next_instruction="前のターンの問題を踏まえて、新しい視点を追加してください。",
                         )
