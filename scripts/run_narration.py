@@ -236,6 +236,7 @@ class NarrationPipeline:
         max_iterations: int = 2,
         run_id: Optional[str] = None,
         skip_vision: bool = False,
+        use_stateful_history: bool = True,
     ) -> dict:
         """
         画像またはトピックに対してナレーション・解説を生成する。
@@ -246,6 +247,7 @@ class NarrationPipeline:
             max_iterations: リトライの最大回数
             run_id: GUI用のランID
             skip_vision: Trueの場合、Vision分析をスキップしトピックのみで対話生成
+            use_stateful_history: Trueの場合、履歴をメッセージ配列として渡す（推奨）
 
         Returns:
             {
@@ -351,10 +353,18 @@ class NarrationPipeline:
         # A が初手を打つ
         print(f"\n  Turn {turn_counter + 1}/{max_iterations}")
         print("    > 澄ヶ瀬やな (姉) is speaking...")
-        char_a_speech = self.char_a.speak(
-            frame_description=effective_scene,
-            vision_info=vision_text,
-        )
+        # 初回は履歴なし
+        if use_stateful_history:
+            char_a_speech = self.char_a.speak_with_history(
+                frame_description=effective_scene,
+                conversation_history=[],  # 初回は履歴なし
+                vision_info=vision_text,
+            )
+        else:
+            char_a_speech = self.char_a.speak(
+                frame_description=effective_scene,
+                vision_info=vision_text,
+            )
         print(f"      {char_a_speech}")
         result["dialogue"][f"turn_{turn_counter}"] = {"speaker": "A", "text": char_a_speech}
         dialogue_history.append(("A", char_a_speech))
@@ -398,14 +408,24 @@ class NarrationPipeline:
                 print(f"    > {speaker_name} is speaking..." + (f" (retry {retry_count})" if retry_count > 0 else ""))
 
                 # Director Guidanceを渡して発言生成（topic_guidance_stateはターン間で引き継ぐ）
-                speech = current_char.speak(
-                    frame_description=effective_scene,
-                    partner_speech=last_speech,
-                    director_instruction=director_guidance,
-                    vision_info=vision_text,
-                    conversation_context=recent_context,
-                    topic_guidance=topic_guidance_state,
-                )
+                if use_stateful_history:
+                    speech = current_char.speak_with_history(
+                        frame_description=effective_scene,
+                        conversation_history=dialogue_history,
+                        partner_speech=last_speech,
+                        director_instruction=director_guidance,
+                        vision_info=vision_text,
+                        topic_guidance=topic_guidance_state,
+                    )
+                else:
+                    speech = current_char.speak(
+                        frame_description=effective_scene,
+                        partner_speech=last_speech,
+                        director_instruction=director_guidance,
+                        vision_info=vision_text,
+                        conversation_context=recent_context,
+                        topic_guidance=topic_guidance_state,
+                    )
                 print(f"      {speech}")
 
                 # Director による品質判定
