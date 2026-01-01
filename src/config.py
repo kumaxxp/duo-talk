@@ -30,7 +30,8 @@ class Config:
         self.max_tokens = int(os.getenv("MAX_TOKENS", "400"))
 
         # System Configuration
-        self.timeout = int(os.getenv("TIMEOUT", "30"))
+        # 大きなモデル（Qwen 32B等）では応答に時間がかかるため、デフォルト60秒に設定
+        self.timeout = int(os.getenv("TIMEOUT", "60"))
         self.log_dir = Path(os.getenv("LOG_DIR", "runs"))
         self.log_dir.mkdir(parents=True, exist_ok=True)
 
