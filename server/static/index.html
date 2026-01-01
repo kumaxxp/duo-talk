@@ -113,9 +113,12 @@
           const card = document.createElement('div');
           card.className = 'border rounded p-3';
           card.id = `turn-${turn}`;
+          const charIcon = speaker === 'A' ? '/icon/yana_face.png' : '/icon/ayu_face.png';
+          const charName = speaker === 'A' ? 'やな' : 'あゆ';
+          const charColor = speaker === 'A' ? 'bg-rose-500' : 'bg-sky-500';
           card.innerHTML = `
             <div class="flex items-center justify-between text-sm">
-              <div class="flex items-center gap-2"><span class="font-mono">Turn ${turn}</span><span class="px-1.5 py-0.5 rounded bg-slate-800 text-white">${speaker||'-'}</span>${badge(beat)}</div>
+              <div class="flex items-center gap-2"><span class="font-mono">Turn ${turn}</span><img src="${charIcon}" alt="${charName}" class="w-6 h-6 rounded-full object-cover" onerror="this.style.display='none'"><span class="px-1.5 py-0.5 rounded ${charColor} text-white text-xs">${charName}</span>${badge(beat)}</div>
               <div class="text-slate-400">${dr.cut_cue? 'TAG' : ''}</div>
             </div>
             <div class="mt-2 whitespace-pre-wrap leading-relaxed">${(sp.text||'').replace(/</g,'&lt;')}</div>

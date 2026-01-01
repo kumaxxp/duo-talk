@@ -16,7 +16,7 @@ from datetime import datetime
 # Add project root to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from flask import Flask, jsonify, request, Response
+from flask import Flask, jsonify, request, Response, send_from_directory
 from flask_cors import CORS
 import logging
 
@@ -757,6 +757,33 @@ def test_vision_config():
 
 
 # ==================== HEALTH CHECK ====================
+
+# ==================== STATIC FILES ====================
+
+# Project root directory
+PROJECT_ROOT = Path(__file__).parent.parent
+
+@app.route('/icon/<path:filename>')
+def serve_icon(filename):
+    """Serve character icon files"""
+    return send_from_directory(PROJECT_ROOT / 'icon', filename)
+
+@app.route('/static/<path:filename>')
+def serve_static(filename):
+    """Serve static files (HTML, CSS, JS)"""
+    return send_from_directory(Path(__file__).parent / 'static', filename)
+
+# Serve duo-gui React app
+@app.route('/')
+def serve_gui_index():
+    """Serve duo-gui React app index"""
+    return send_from_directory(PROJECT_ROOT / 'duo-gui' / 'dist', 'index.html')
+
+@app.route('/assets/<path:filename>')
+def serve_gui_assets(filename):
+    """Serve duo-gui React app assets"""
+    return send_from_directory(PROJECT_ROOT / 'duo-gui' / 'dist' / 'assets', filename)
+
 
 @app.route('/health', methods=['GET'])
 def health():
