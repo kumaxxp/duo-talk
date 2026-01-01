@@ -434,8 +434,10 @@ class NarrationPipeline:
             next_turn_guidance = None
             if director_evaluation.action == "INTERVENE" and director_evaluation.next_instruction:
                 # v2: 介入時は validate_director_output で精査された指示を使用
-                next_turn_guidance = director_evaluation.next_instruction
-                print(f"    🎬 Director INTERVENE: {next_turn_guidance[:50] if next_turn_guidance else '(none)'}...")
+                # 強調した指示を生成（話題転換の効果を高める）
+                base_instruction = director_evaluation.next_instruction
+                next_turn_guidance = f"【重要】{base_instruction}\n※前回と同じ話題・単語は絶対に避けてください。1つの話題に絞って深掘りしてください。"
+                print(f"    🎬 Director INTERVENE: {base_instruction[:50]}...")
                 director_guidance = next_turn_guidance
             else:
                 # v2: NOOP時はguidanceを生成しない（過剰介入防止）

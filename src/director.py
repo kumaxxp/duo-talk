@@ -44,6 +44,8 @@ class Director:
         "やなのお家", "やなの家", "やなの実家",
         "姉の家", "妹の家", "姉の実家", "妹の実家",
         "また来てね", "また遊びに来て", "お邪魔しました",
+        # 「実家」は別居を連想させるため禁止（「うち」を使う）
+        "実家では", "実家に", "実家の", "うちの実家",
     ]
 
     # あゆ（B）専用の褒め言葉チェック（やなには適用しない）
@@ -1037,17 +1039,18 @@ JSON ONLY:
         """
         issues = []
 
-        # 読点が多すぎる（6個以上で散漫と判定）
+        # 読点が多すぎる（4個以上で散漫と判定）
         comma_count = response.count("、")
-        if comma_count >= 6:
+        if comma_count >= 4:
             issues.append(f"読点が多すぎる({comma_count}個)")
 
         # 列挙表現が多い（「〜も」「あと」「それと」等の連続）
         scatter_patterns = [
-            (r'も[、。！？]', "「〜も」の連続"),
-            (r'あと[、]', "「あと」の使用"),
-            (r'それと', "「それと」の使用"),
-            (r'さらに', "「さらに」の使用"),
+            (r'も[、。！？]', "「〜も」"),
+            (r'あと[、]', "「あと」"),
+            (r'それと', "「それと」"),
+            (r'さらに', "「さらに」"),
+            (r'それから', "「それから」"),
         ]
         scatter_count = 0
         for pattern, _ in scatter_patterns:
@@ -1056,9 +1059,9 @@ JSON ONLY:
         if scatter_count >= 2:
             issues.append(f"列挙表現が多い({scatter_count}回)")
 
-        # 文の数が多すぎる（5文以上：プロンプトで最大4文を許容）
+        # 文の数が多すぎる（3文以上で散漫と判定）
         sentence_count = len(re.findall(r'[。！？]', response))
-        if sentence_count >= 5:
+        if sentence_count >= 3:
             issues.append(f"文が多すぎる({sentence_count}文)")
 
         if issues:
