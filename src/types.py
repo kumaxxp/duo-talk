@@ -51,6 +51,52 @@ class DialoguePattern(str, Enum):
 
 
 @dataclass
+class TopicState:
+    """話題の状態管理（Director v3）"""
+    focus_hook: str = ""                    # 現在の話題（1つ）
+    hook_depth: int = 0                     # 深掘り段階 (0-3)
+    depth_step: str = "DISCOVER"            # "DISCOVER" | "SURFACE" | "WHY" | "EXPAND"
+    turns_on_hook: int = 0                  # このhookで何ターン経過
+    forbidden_topics: List[str] = field(default_factory=list)  # 禁止トピック
+    must_include: List[str] = field(default_factory=list)      # 必須ワード
+
+    def advance_depth(self):
+        """深掘り段階を進める"""
+        self.turns_on_hook += 1
+        if self.hook_depth < 3:
+            self.hook_depth += 1
+
+        depth_steps = ["DISCOVER", "SURFACE", "WHY", "EXPAND"]
+        self.depth_step = depth_steps[min(self.hook_depth, 3)]
+
+    def can_switch_topic(self) -> bool:
+        """話題転換が許可されるか"""
+        return self.hook_depth >= 2 or self.turns_on_hook >= 3
+
+    def switch_topic(self, new_hook: str):
+        """話題を転換"""
+        if self.focus_hook:
+            self.forbidden_topics.append(self.focus_hook)
+            # 禁止リストは最大5個まで
+            self.forbidden_topics = self.forbidden_topics[-5:]
+
+        self.focus_hook = new_hook
+        self.hook_depth = 0
+        self.depth_step = "DISCOVER"
+        self.turns_on_hook = 0
+        self.must_include = [new_hook]
+
+    def reset(self):
+        """状態をリセット（新しいナレーション開始時）"""
+        self.focus_hook = ""
+        self.hook_depth = 0
+        self.depth_step = "DISCOVER"
+        self.turns_on_hook = 0
+        self.forbidden_topics = []
+        self.must_include = []
+
+
+@dataclass
 class DirectorEvaluation:
     """Director's evaluation of a response"""
     status: DirectorStatus
@@ -65,6 +111,13 @@ class DirectorEvaluation:
     action: str = "NOOP"  # "NOOP" or "INTERVENE"
     hook: Optional[str] = None  # Concrete noun phrase triggering intervention
     evidence: Optional[Dict[str, Any]] = None  # {"dialogue": str|None, "frame": str|None}
+    # Director v3 fields for Topic Manager
+    focus_hook: Optional[str] = None          # 現在の話題（常に出力）
+    hook_depth: int = 0                        # 深掘り段階
+    depth_step: str = "DISCOVER"               # 深掘りステップ名
+    forbidden_topics: List[str] = field(default_factory=list)  # 禁止トピック
+    must_include: List[str] = field(default_factory=list)      # 必須ワード
+    character_role: str = ""                   # キャラクターに期待する役割
 
 
 @dataclass

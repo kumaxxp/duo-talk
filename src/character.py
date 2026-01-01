@@ -69,6 +69,7 @@ class Character:
         conversation_context: Optional[str] = None,
         dialogue_pattern: Optional[str] = None,
         beat_stage: Optional[str] = None,
+        topic_guidance: Optional[dict] = None,
     ) -> str:
         """
         Generate a response for this character.
@@ -81,6 +82,7 @@ class Character:
             conversation_context: Recent conversation history for context (optional)
             dialogue_pattern: Pattern type ("A", "B", "C", "D", "E") from director
             beat_stage: Current beat stage ("SETUP", "EXPLORATION", etc.)
+            topic_guidance: Director v3 topic management info (focus_hook, forbidden_topics, etc.)
 
         Returns:
             Character's response text
@@ -104,6 +106,7 @@ class Character:
             conversation_context=conversation_context,
             dialogue_pattern=dialogue_pattern,
             beat_stage=beat_stage,
+            topic_guidance=topic_guidance,
         )
 
         # Call LLM with retry on repetition
@@ -214,6 +217,7 @@ class Character:
         conversation_context: Optional[str] = None,
         dialogue_pattern: Optional[str] = None,
         beat_stage: Optional[str] = None,
+        topic_guidance: Optional[dict] = None,
     ) -> str:
         """Build the user prompt for LLM with pattern guidance"""
         lines = []
@@ -266,6 +270,26 @@ class Character:
             lines.append("【Director's Guidance】")
             lines.append(director_instruction)
             lines.append("※上記の指示を意識して応答してください")
+            lines.append("")
+
+        # Director v3: Topic Management
+        if topic_guidance and topic_guidance.get("focus_hook"):
+            focus_hook = topic_guidance.get("focus_hook", "")
+            forbidden = topic_guidance.get("forbidden_topics", [])
+            must_include = topic_guidance.get("must_include", [])
+            character_role = topic_guidance.get("character_role", "")
+            depth_step = topic_guidance.get("depth_step", "DISCOVER")
+            hook_depth = topic_guidance.get("hook_depth", 0)
+
+            lines.append("【話題制限】")
+            lines.append(f"今の話題: 「{focus_hook}」（深さ {hook_depth}/3: {depth_step}）")
+            if must_include:
+                lines.append(f"必須ワード: {', '.join(must_include)}")
+            if forbidden:
+                lines.append(f"禁止話題: {', '.join(forbidden)}")
+            if character_role:
+                lines.append(f"あなたの役割: {character_role}")
+            lines.append("※上記の話題についてのみ話し、他の話題には触れないでください")
             lines.append("")
 
         if rag_hints:

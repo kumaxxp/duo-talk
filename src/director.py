@@ -9,7 +9,7 @@ from typing import Optional
 
 from src.llm_client import get_llm_client
 from src.config import config
-from src.types import DirectorEvaluation, DirectorStatus
+from src.types import DirectorEvaluation, DirectorStatus, TopicState
 from src.prompt_manager import get_prompt_manager
 from src.beat_tracker import get_beat_tracker
 from src.fact_checker import get_fact_checker, FactCheckResult
@@ -108,6 +108,8 @@ class Director:
         self.fact_checker = get_fact_checker() if enable_fact_check else None
         # Store last fact check result for debugging/logging
         self.last_fact_check: Optional[FactCheckResult] = None
+        # Director v3: Topic Manager
+        self.topic_state = TopicState()
 
     def _default_system_prompt(self) -> str:
         """Default director prompt if file not found (deprecated)"""
@@ -389,6 +391,44 @@ Respond ONLY with JSON:
                 if len(self.recent_patterns) > 5:
                     self.recent_patterns = self.recent_patterns[-5:]
 
+            # ========== Director v3: Topic Manager Update ==========
+            detected_hook = self._extract_hook_from_response(response, frame_description)
+
+            # 話題転換判定
+            if self.topic_state.focus_hook:
+                # 同じ話題が続いているか
+                if detected_hook == self.topic_state.focus_hook or detected_hook in self.topic_state.focus_hook or self.topic_state.focus_hook in detected_hook:
+                    # 同じ話題 → 深掘り段階を進める
+                    self.topic_state.advance_depth()
+                    print(f"    📊 Topic: {self.topic_state.focus_hook} depth={self.topic_state.hook_depth}/3 step={self.topic_state.depth_step}")
+                else:
+                    # 話題が変わった
+                    if self.topic_state.can_switch_topic():
+                        # 転換許可 → 新しい話題に切り替え
+                        self.topic_state.switch_topic(detected_hook)
+                        print(f"    🔀 Topic switch: → {detected_hook}")
+                    else:
+                        # 転換不許可（まだ深掘りが足りない）→ INTERVENEで戻す
+                        print(f"    ⚠️ Topic premature switch: {self.topic_state.focus_hook} → {detected_hook} (depth={self.topic_state.hook_depth})")
+                        return DirectorEvaluation(
+                            status=DirectorStatus.PASS,
+                            reason=f"話題が早すぎる転換（{self.topic_state.focus_hook}→{detected_hook}）",
+                            action="INTERVENE",
+                            next_instruction=self._build_strong_intervention(speaker),
+                            beat_stage=beat_stage,
+                            focus_hook=self.topic_state.focus_hook,
+                            hook_depth=self.topic_state.hook_depth,
+                            depth_step=self.topic_state.depth_step,
+                            forbidden_topics=self.topic_state.forbidden_topics.copy(),
+                            must_include=self.topic_state.must_include.copy(),
+                            character_role=self._get_character_role(speaker, self.topic_state.depth_step),
+                        )
+            else:
+                # 初回はhookを設定
+                self.topic_state.focus_hook = detected_hook
+                self.topic_state.must_include = [detected_hook]
+                print(f"    📊 Topic init: {detected_hook}")
+
             return DirectorEvaluation(
                 status=status,
                 reason=reason_with_issues,
@@ -399,6 +439,13 @@ Respond ONLY with JSON:
                 action=validated_data.get("action", "NOOP"),
                 hook=validated_data.get("hook"),
                 evidence=validated_data.get("evidence"),
+                # Director v3 fields
+                focus_hook=self.topic_state.focus_hook,
+                hook_depth=self.topic_state.hook_depth,
+                depth_step=self.topic_state.depth_step,
+                forbidden_topics=self.topic_state.forbidden_topics.copy(),
+                must_include=self.topic_state.must_include.copy(),
+                character_role=self._get_character_role(speaker, self.topic_state.depth_step),
             )
 
         except Exception as e:
@@ -410,6 +457,13 @@ Respond ONLY with JSON:
                 reason=f"Director evaluation error: {str(e)}",
                 next_pattern=fallback_pattern,
                 beat_stage=current_beat,
+                # Director v3 fields
+                focus_hook=self.topic_state.focus_hook,
+                hook_depth=self.topic_state.hook_depth,
+                depth_step=self.topic_state.depth_step,
+                forbidden_topics=self.topic_state.forbidden_topics.copy(),
+                must_include=self.topic_state.must_include.copy(),
+                character_role=self._get_character_role(speaker, self.topic_state.depth_step),
             )
 
     def _build_evaluation_prompt(
@@ -1081,6 +1135,74 @@ JSON ONLY:
         if not reason:
             return False
         return any(kw in reason for kw in self.FATAL_KEYWORDS)
+
+    # ========== Director v3: Topic Manager Methods ==========
+
+    def _get_character_role(self, speaker: str, depth_step: str) -> str:
+        """深掘り段階に応じたキャラクター役割を返す"""
+        roles = {
+            "A": {  # やな（姉）
+                "DISCOVER": "発見して驚く（「わ！」「へぇ！」）",
+                "SURFACE": "素朴な疑問を投げかける（「どうして？」「何それ？」）",
+                "WHY": "もっと知りたがる（「なんで？」「どういう仕組み？」）",
+                "EXPAND": "関連することに興味を示す（「じゃあ〇〇も？」）",
+            },
+            "B": {  # あゆ（妹）
+                "DISCOVER": "姉の発見に反応する",
+                "SURFACE": "基本情報を提供する（「〇〇というものですよ」）",
+                "WHY": "詳しく解説する（「実は〇〇なんです」）",
+                "EXPAND": "豆知識を追加する（「ちなみに〇〇も」）",
+            },
+        }
+        return roles.get(speaker, {}).get(depth_step, "自然に会話する")
+
+    def _extract_hook_from_response(self, response: str, frame_description: str) -> str:
+        """応答またはフレームから話題hookを抽出"""
+        # 正規表現で名詞候補を抽出（漢字・カタカナ・英数字の2文字以上）
+        pattern = r'[一-龠々ヶァ-ヴーa-zA-Z]{2,}'
+        candidates = re.findall(pattern, response)
+
+        # フレームからも抽出
+        frame_candidates = re.findall(pattern, frame_description)
+
+        # 禁止トピックを除外
+        candidates = [c for c in candidates if c not in self.topic_state.forbidden_topics]
+
+        # 一般的すぎる単語を除外
+        stop_words = {"そう", "ですね", "ます", "です", "やな", "あゆ", "姉様", "姉", "妹"}
+        candidates = [c for c in candidates if c not in stop_words and len(c) >= 2]
+
+        # 最も長い候補を返す（なければフレームから）
+        if candidates:
+            return max(candidates, key=len)
+        elif frame_candidates:
+            frame_candidates = [c for c in frame_candidates if c not in stop_words]
+            if frame_candidates:
+                return max(frame_candidates, key=len)
+        return "会話"
+
+    def _build_strong_intervention(self, speaker: str) -> str:
+        """強制力のあるINTERVENE指示を生成"""
+        role = self._get_character_role(speaker, self.topic_state.depth_step)
+        forbidden_str = "、".join(self.topic_state.forbidden_topics) if self.topic_state.forbidden_topics else "なし"
+        must_str = "、".join(self.topic_state.must_include) if self.topic_state.must_include else self.topic_state.focus_hook
+
+        return f"""╔════════════════════════════════════════════════════════════╗
+║ 【演出家からの絶対命令】
+╚════════════════════════════════════════════════════════════╝
+
+【必須】「{self.topic_state.focus_hook}」についてだけ話してください
+【含める単語】{must_str}
+【禁止】{forbidden_str} には触れないでください
+【役割】{role}
+【段階】{self.topic_state.depth_step}（深さ {self.topic_state.hook_depth}/3）
+
+※50〜80文字、2文以内で応答してください。
+※この指示に従わない場合、発言は却下されます。"""
+
+    def reset_topic_state(self):
+        """話題状態をリセット（新しいナレーション開始時に呼ぶ）"""
+        self.topic_state.reset()
 
     def _validate_director_output(self, data: dict, turn_number: int, frame_description: str = "") -> dict:
         """

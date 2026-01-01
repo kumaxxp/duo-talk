@@ -259,6 +259,9 @@ class NarrationPipeline:
             from datetime import datetime
             run_id = f"run_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
 
+        # Director v3: 新しいナレーション開始時にTopicStateをリセット
+        self.director.reset_topic_state()
+
         result = {
             "status": "processing",
             "scene_description": scene_description,
@@ -352,6 +355,8 @@ class NarrationPipeline:
 
         # Director Guidance を保持
         director_guidance = None
+        # Director v3: topic_guidance を保持（ターン間で引き継ぐ）
+        topic_guidance_state = None
 
         # 残りのターンを交互に生成
         for turn in range(1, max_iterations):
@@ -382,13 +387,14 @@ class NarrationPipeline:
             while retry_count <= self.MAX_RETRY_PER_TURN:
                 print(f"    > {speaker_name} is speaking..." + (f" (retry {retry_count})" if retry_count > 0 else ""))
 
-                # Director Guidanceを渡して発言生成
+                # Director Guidanceを渡して発言生成（topic_guidance_stateはターン間で引き継ぐ）
                 speech = current_char.speak(
                     frame_description=effective_scene,
                     partner_speech=last_speech,
                     director_instruction=director_guidance,
                     vision_info=vision_text,
                     conversation_context=recent_context,
+                    topic_guidance=topic_guidance_state,
                 )
                 print(f"      {speech}")
 
@@ -403,6 +409,7 @@ class NarrationPipeline:
                     partner_previous_speech=previous_speech,
                     speaker_domains=current_char.domains,
                     conversation_history=dialogue_history,
+                    turn_number=turn_counter + 1,
                 )
 
                 print(f"      [{director_evaluation.status.name}] {director_evaluation.reason}")
@@ -480,6 +487,17 @@ class NarrationPipeline:
             else:
                 # v2: NOOP時はguidanceを生成しない（過剰介入防止）
                 director_guidance = director_evaluation.suggestion
+
+            # Director v3: topic_guidance_stateを更新（次のターンに引き継ぐ）
+            if director_evaluation.focus_hook:
+                topic_guidance_state = {
+                    "focus_hook": director_evaluation.focus_hook,
+                    "hook_depth": director_evaluation.hook_depth,
+                    "depth_step": director_evaluation.depth_step,
+                    "forbidden_topics": director_evaluation.forbidden_topics,
+                    "must_include": director_evaluation.must_include,
+                    "character_role": director_evaluation.character_role,
+                }
 
             # GUI用 director イベントを発行（v2フィールドを含む）
             self._emit_director_event(
