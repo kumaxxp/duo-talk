@@ -79,6 +79,18 @@ class Director:
         "default": ["初詣", "おみくじ", "雑煮の具", "福袋", "書き初め", "箱根駅伝"],
     }
 
+    # Fatal判定用キーワード（MODIFYで即停止すべき重大な問題）
+    FATAL_KEYWORDS = [
+        "安全", "暴力", "差別", "性的", "個人情報",
+        "意味不明", "破綻", "崩壊", "無限ループ",
+    ]
+
+    # Soft Fail降格用キーワード（MODIFYをRETRYに降格）
+    SOFT_FAIL_KEYWORDS = [
+        "浅い", "弱い", "テンプレ", "面白くない", "単調",
+        "発展", "繰り返し", "オウム返し", "進行",
+    ]
+
     def __init__(self, enable_fact_check: bool = True):
         self.llm = get_llm_client()
         # Load director system prompt using PromptManager
@@ -935,12 +947,38 @@ JSON ONLY:
         available = [t for t in suggestions if t != loop_keyword]
         return available[0] if available else "別の話題"
 
+    def is_fatal_modify(self, reason: str) -> bool:
+        """
+        MODIFYが致命的かどうか判定する。
+
+        Args:
+            reason: MODIFYの理由
+
+        Returns:
+            致命的な場合True（会話を停止すべき）
+        """
+        if not reason:
+            return False
+        return any(kw in reason for kw in self.FATAL_KEYWORDS)
+
     def _validate_director_output(self, data: dict, turn_number: int, frame_description: str = "") -> dict:
         """
         LLMの出力を検証し、誤爆条件にマッチしたら強制的にNOOPに書き換える。
         「コード側の最後の殺し」
         また、スキーマを守れない出力も補正する。
+        さらに、Soft FailのMODIFYはRETRYに降格する。
         """
+        # === Soft Fail降格処理（MODIFYをRETRYに） ===
+        if data.get("status") == "MODIFY":
+            reason = data.get("reason", "")
+            # 致命的でないMODIFYはRETRYに降格
+            if not self.is_fatal_modify(reason):
+                # Soft Fail キーワードがあるか、または致命的キーワードがない場合は降格
+                is_soft_fail = any(kw in reason for kw in self.SOFT_FAIL_KEYWORDS)
+                if is_soft_fail or not self.is_fatal_modify(reason):
+                    print(f"    ⚠️ Soft Fail検出: MODIFY→RETRYに降格 ({reason})")
+                    data["status"] = "RETRY"
+
         # === スキーマ補正（後方互換性） ===
         if "action" not in data:
             data["action"] = "NOOP"

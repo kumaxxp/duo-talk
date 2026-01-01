@@ -14,7 +14,8 @@
       "Bash(cat:*)",
       "Bash(curl:*)",
       "Bash(ls:*)",
-      "Bash(timeout 180 python:*)"
+      "Bash(timeout 180 python:*)",
+      "Bash(timeout 180 python3:*)"
     ]
   }
 }

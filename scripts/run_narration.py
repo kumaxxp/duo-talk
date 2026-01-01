@@ -22,6 +22,9 @@ class NarrationPipeline:
     Vision分析 → キャラクター対話生成 → Director品質判定
     """
 
+    # リトライ予算: 1ターンあたりの最大リトライ回数
+    MAX_RETRY_PER_TURN = 1
+
     # 家族設定（全シーンに共通）
     FAMILY_CONTEXT = "【前提】やなとあゆは姉妹で、同じ家に住んでいます。親戚・実家への訪問は一緒に行く前提です。"
 
@@ -340,13 +343,13 @@ class NarrationPipeline:
             # 対話履歴から直近の文脈を構築（最大3ターン分）
             recent_context = self._build_conversation_context(dialogue_history, max_turns=3)
 
-            # 発言生成（RETRYループ対応）
-            max_retries = 2
+            # 発言生成（RETRYループ対応 + Force Pass）
             retry_count = 0
             speech = None
             director_evaluation = None
+            force_passed = False
 
-            while retry_count < max_retries:
+            while retry_count <= self.MAX_RETRY_PER_TURN:
                 print(f"    > {speaker_name} is speaking..." + (f" (retry {retry_count})" if retry_count > 0 else ""))
 
                 # Director Guidanceを渡して発言生成
@@ -374,16 +377,39 @@ class NarrationPipeline:
 
                 print(f"      [{director_evaluation.status.name}] {director_evaluation.reason}")
 
+                # MODIFY判定: Fatal vs Non-Fatal
+                if director_evaluation.status.name == "MODIFY":
+                    if self.director.is_fatal_modify(director_evaluation.reason):
+                        # Fatal MODIFY: 即座に停止
+                        print(f"    🚨 FATAL MODIFY: {director_evaluation.reason}")
+                        break
+                    else:
+                        # Non-Fatal MODIFY: RETRYとして扱う（降格はDirector側で実施済み）
+                        print(f"    ⚠️ Non-Fatal MODIFY→RETRY扱いで続行")
+                        # ステータスをRETRYに変更
+                        from dataclasses import replace as dc_replace
+                        from src.types import DirectorStatus
+                        director_evaluation = dc_replace(director_evaluation, status=DirectorStatus.RETRY)
+
                 # RETRY判定
                 if director_evaluation.status.name == "RETRY":
                     retry_count += 1
-                    if retry_count < max_retries:
+                    if retry_count <= self.MAX_RETRY_PER_TURN:
                         print(f"    🔄 Retrying with suggestion: {director_evaluation.suggestion}")
                         # 次の再生成時にDirectorの指摘を反映
                         director_guidance = director_evaluation.suggestion
                         continue
                     else:
-                        print(f"    ⚠️ Max retries reached, proceeding with current response")
+                        # リトライ上限到達: Force Pass
+                        print(f"    ⚠️ リトライ上限到達: Force PASSで進行")
+                        force_passed = True
+                        # INTERVENEで次ターンに改善指示を出す
+                        from dataclasses import replace as dc_replace
+                        director_evaluation = dc_replace(
+                            director_evaluation,
+                            action="INTERVENE",
+                            next_instruction="前のターンの問題を踏まえて、新しい視点を追加してください。",
+                        )
                 break
 
             # 発言を記録
@@ -433,11 +459,16 @@ class NarrationPipeline:
 
             turn_counter += 1
 
-            # MODIFY の場合は早期終了
+            # Fatal MODIFY の場合のみ早期終了（Non-Fatal MODIFYはRETRYとして処理済み）
             if director_evaluation.status.name == "MODIFY":
-                print("\n⚠️  Director requested modification. Ending dialogue.")
-                result["status"] = "skip"
-                break
+                if self.director.is_fatal_modify(director_evaluation.reason):
+                    print(f"\n🚨 Fatal MODIFY detected. Ending dialogue: {director_evaluation.reason}")
+                    result["status"] = "error"
+                    result["error"] = f"Fatal MODIFY: {director_evaluation.reason}"
+                    break
+                else:
+                    # Non-Fatal MODIFYは続行（既にRETRY扱いされているはず）
+                    print(f"\n⚠️  Non-Fatal MODIFY, continuing dialogue...")
         else:
             # ループが正常完了した場合
             print(f"\n✅ Dialogue completed ({turn_counter} turns)")
