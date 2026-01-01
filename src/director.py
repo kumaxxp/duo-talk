@@ -1094,6 +1094,8 @@ JSON ONLY:
         """
         散漫な応答（話題盛りすぎ）を検出する。
 
+        緩和版: 短い発言はスキップ、閾値を緩和、疑問文は除外
+
         Args:
             response: 評価対象の発言
 
@@ -1105,12 +1107,16 @@ JSON ONLY:
         """
         issues = []
 
-        # 読点が多すぎる（4個以上で散漫と判定）
+        # 短い発言（80文字未満）は散漫検出をスキップ
+        if len(response) < 80:
+            return {"detected": False, "issues": []}
+
+        # 読点が多すぎる（5個以上で散漫と判定）← 4→5に緩和
         comma_count = response.count("、")
-        if comma_count >= 4:
+        if comma_count >= 5:
             issues.append(f"読点が多すぎる({comma_count}個)")
 
-        # 列挙表現が多い（「〜も」「あと」「それと」等の連続）
+        # 列挙表現が多い（3回以上で散漫）← 2→3に緩和
         scatter_patterns = [
             (r'も[、。！？]', "「〜も」"),
             (r'あと[、]', "「あと」"),
@@ -1122,12 +1128,13 @@ JSON ONLY:
         for pattern, _ in scatter_patterns:
             scatter_count += len(re.findall(pattern, response))
 
-        if scatter_count >= 2:
+        if scatter_count >= 3:
             issues.append(f"列挙表現が多い({scatter_count}回)")
 
-        # 文の数が多すぎる（3文以上で散漫と判定）
-        sentence_count = len(re.findall(r'[。！？]', response))
-        if sentence_count >= 3:
+        # 文の数が多すぎる（4文以上で散漫と判定）← 3→4に緩和
+        # 疑問文「？」は除外（質問は自然なので）
+        sentence_count = len(re.findall(r'[。！]', response))
+        if sentence_count >= 4:
             issues.append(f"文が多すぎる({sentence_count}文)")
 
         if issues:
