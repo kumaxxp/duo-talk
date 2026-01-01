@@ -1,28 +1,78 @@
 [
   {
-    "status": "error",
+    "status": "success",
     "scene_description": "古い寺院の境内。参拝客が少なく、静かな時間帯のようです。",
     "image_path": "tests/images/temple_sample.jpg",
     "vision_analysis": {
-      "status": "error",
+      "status": "success",
       "image_path": "tests/images/temple_sample.jpg",
-      "error": "Failed to connect to Ollama. Please check that Ollama is downloaded, running and accessible. https://ollama.com/download"
+      "visual_info": {
+        "main_subjects": "- 画像の中心的な被写体は、薄い、単純な青色である。\n- その特徴、大きさ、位置は、中央に配置されており、全体の中心になっています。",
+        "environment": "- 周囲の環境は、完全に空であるため、背景には何もありません。\n- 背景にある重要な要素は、なしです。",
+        "people_activity": "- 人物がいるか？いる場合の状態は、なしです。\n- 何かアクティビティが起きているか？なしです。",
+        "colors_lighting": "- 全体的な色合いは、単純な青色でありません。\n- 光の質（朝日、逆光、曇りなど）は、無しです。",
+        "perspective": "- 画像の構成は、中央に配置された青色があることから判断できます。\n- 遠近感（前景、中景、背景）の配分は、前景：青色、中景：青色、背景：なしです。",
+        "notable_details": "- 観光地ナレーション時に言及すると面白い、珍しい要素は、青色の中心的な被写体です。"
+      },
+      "detected_objects": [],
+      "raw_text": " 【メイン被写体】\n- 画像の中心的な被写体は、薄い、単純な青色である。\n- その特徴、大きさ、位置は、中央に配置されており、全体の中心になっています。\n\n【環境・背景】\n- 周囲の環境は、完全に空であるため、背景には何もありません。\n- 背景にある重要な要素は、なしです。\n\n【人物・活動】\n- 人物がいるか？いる場合の状態は、なしです。\n- 何かアクティビティが起きているか？なしです。\n\n【色調・照明】\n- 全体的な色合いは、単純な青色でありません。\n- 光の質（朝日、逆光、曇りなど）は、無しです。\n\n【構図・遠近感】\n- 画像の構成は、中央に配置された青色があることから判断できます。\n- 遠近感（前景、中景、背景）の配分は、前景：青色、中景：青色、背景：なしです。\n\n【特筆すべき詳細】\n- 観光地ナレーション時に言及すると面白い、珍しい要素は、青色の中心的な被写体です。 ",
+      "processing_time_ms": 10276.801824569702,
+      "mode_used": "vlm_segmentation"
     },
-    "dialogue": {},
-    "director_verdict": null,
-    "log_id": null
+    "dialogue": {
+      "turn_0": {
+        "speaker": "A",
+        "text": "あれ、真っ青だね。何これ、なんか不思議な感じがする。あゆ、これって一体何なの？"
+      },
+      "turn_1": {
+        "speaker": "B",
+        "text": "やな姉様、あれは青色のインスタレーションですね。境内に置かれている現代アートのようです。観光地としては珍しい表現方法ですね。"
+      }
+    },
+    "director_verdict": {
+      "status": "PASS",
+      "reason": "青色のインスタレーションを特定し、現代アートと推測。自然な会話。",
+      "suggestion": null
+    },
+    "log_id": "4da6ba43_20260101_101702",
+    "run_id": "run_20260101_101644"
   },
   {
-    "status": "error",
+    "status": "success",
     "scene_description": "緑豊かな山間の風景。自然に包まれた観光地です。",
     "image_path": "tests/images/nature_sample.jpg",
     "vision_analysis": {
-      "status": "error",
+      "status": "success",
       "image_path": "tests/images/nature_sample.jpg",
-      "error": "Failed to connect to Ollama. Please check that Ollama is downloaded, running and accessible. https://ollama.com/download"
+      "visual_info": {
+        "main_subjects": "- 画像の中心的な被写体は「緑色」です。\n- その特徴、大きさ、位置は「緑色」が中央にあり、幅が拡いと、背景が暗い状態です。",
+        "environment": "- 周囲の環境は「空気」です。\n- 背景にある重要な要素は「緑色」が中央にあり、幅が拡いと、背景が暗い状態です。",
+        "people_activity": "- 人物がいるか？いる場合の状態は「緑色」が中央にあり、幅が拡いと、背景が暗い状態です。\n- 何かアクティビティが起きているか？アクティビティはなしです。",
+        "colors_lighting": "- 全体的な色合いは「緑色」です。\n- 光の質（朝日、逆光、曇りなど）は「暗い状態」です。",
+        "perspective": "- 画像の構成は「緑色」が中央にあり、幅が拡いと、背景が暗い状態です。\n- 遠近感（前景、中景、背景）の配分は「緑色」が中央にあり、幅が拡いと、背景が暗い状態です。",
+        "notable_details": "- 観光地ナレーション時に言及すると面白い、珍しい要素は「緑色」の中央位置や、背景が暗い状態です。"
+      },
+      "detected_objects": [],
+      "raw_text": " 【メイン被写体】\n- 画像の中心的な被写体は「緑色」です。\n- その特徴、大きさ、位置は「緑色」が中央にあり、幅が拡いと、背景が暗い状態です。\n\n【環境・背景】\n- 周囲の環境は「空気」です。\n- 背景にある重要な要素は「緑色」が中央にあり、幅が拡いと、背景が暗い状態です。\n\n【人物・活動】\n- 人物がいるか？いる場合の状態は「緑色」が中央にあり、幅が拡いと、背景が暗い状態です。\n- 何かアクティビティが起きているか？アクティビティはなしです。\n\n【色調・照明】\n- 全体的な色合いは「緑色」です。\n- 光の質（朝日、逆光、曇りなど）は「暗い状態」です。\n\n【構図・遠近感】\n- 画像の構成は「緑色」が中央にあり、幅が拡いと、背景が暗い状態です。\n- 遠近感（前景、中景、背景）の配分は「緑色」が中央にあり、幅が拡いと、背景が暗い状態です。\n\n【特筆すべき詳細】\n- 観光地ナレーション時に言及すると面白い、珍しい要素は「緑色」の中央位置や、背景が暗い状態です。 ",
+      "processing_time_ms": 4876.056432723999,
+      "mode_used": "vlm_segmentation"
     },
-    "dialogue": {},
-    "director_verdict": null,
-    "log_id": null
+    "dialogue": {
+      "turn_0": {
+        "speaker": "A",
+        "text": "わ、緑がいっぱいだね！まるで緑のトンネルみたいだ。あゆ、こんなところどこだか教えてくれる？暗いから、ちゃんと見えるかな？"
+      },
+      "turn_1": {
+        "speaker": "B",
+        "text": "やな姉様、ここは山間部の観光地ですよ。緑豊かな森林地帯で、鬱蒼とした木々が生い茂っていますね。暗いのは、木陰になっているからですよ。ご心配なく、ちゃんと見えると思います。"
+      }
+    },
+    "director_verdict": {
+      "status": "PASS",
+      "reason": "自然な説明で、状況把握に貢献。口調も適切。",
+      "suggestion": null
+    },
+    "log_id": "86d3d16d_20260101_101715",
+    "run_id": "run_20260101_101702"
   }
 ]

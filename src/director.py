@@ -36,6 +36,28 @@ class Director:
     # 要注意ワード（根拠なしならNOOP）
     SOFT_BANNED_WORDS = ["興味を示", "注目して", "気にして"]
 
+    # 設定破壊検出用: 姉妹が別居しているかのような表現（絶対禁止）
+    SEPARATION_WORDS = [
+        "姉様のお家", "姉様の家", "姉様の実家",
+        "あゆのお家", "あゆの家", "あゆの実家",
+        "やなのお家", "やなの家", "やなの実家",
+        "姉の家", "妹の家", "姉の実家", "妹の実家",
+        "また来てね", "また遊びに来て", "お邪魔しました",
+    ]
+
+    # あゆ（B）専用の褒め言葉チェック（やなには適用しない）
+    PRAISE_WORDS_FOR_AYU = [
+        "いい観点", "いい質問", "さすが", "鋭い",
+        "おっしゃる通り", "その通り", "素晴らしい", "お見事",
+        "よく気づ", "正解です", "大正解",
+    ]
+
+    # 観光地名（トピック無関係チェック用）
+    TOURIST_SPOTS = [
+        "金閣寺", "銀閣寺", "清水寺", "東大寺", "伏見稲荷",
+        "厳島神社", "姫路城", "富士山", "浅草寺", "鎌倉大仏",
+    ]
+
     def __init__(self, enable_fact_check: bool = True):
         self.llm = get_llm_client()
         # Load director system prompt using PromptManager
@@ -127,6 +149,24 @@ Respond ONLY with JSON:
                 suggestion=format_check["suggestion"],
             )
 
+        # 設定整合性のチェック（姉妹が別居しているかのような表現）
+        setting_check = self._check_setting_consistency(response)
+        if not setting_check["passed"]:
+            return DirectorEvaluation(
+                status=DirectorStatus.RETRY,
+                reason=setting_check["issue"],
+                suggestion=setting_check["suggestion"],
+            )
+
+        # 褒め言葉チェック（あゆの発言のみ適用）
+        praise_check = self._check_praise_words(response, speaker)
+        if not praise_check["passed"]:
+            return DirectorEvaluation(
+                status=DirectorStatus.RETRY,
+                reason=praise_check["issue"],
+                suggestion=praise_check["suggestion"],
+            )
+
         # 論理的矛盾のチェック（二重否定など）
         logic_check = self._check_logical_consistency(response)
         if not logic_check["passed"]:
@@ -210,7 +250,7 @@ Respond ONLY with JSON:
                 )
 
             # ★ コードによる「最後の殺し」実行
-            validated_data = self._validate_director_output(data, turn_number)
+            validated_data = self._validate_director_output(data, turn_number, frame_description)
 
             # 判定結果の抽出
             status_str = validated_data.get("status", "PASS").upper()
@@ -338,7 +378,17 @@ Respond ONLY with JSON:
   D: 脱線→修正（やな:話題脱線 → あゆ:軌道修正）
   E: 共感→発展（やな:感想 → あゆ:発展情報）"""
 
+        # スピーカー混同防止用の強調ブロック
+        speaker_name = "やな（姉）" if speaker == "A" else "あゆ（妹）"
+        praise_note = "" if speaker == "A" else "\n║ ※褒め言葉禁止はこのあゆの発言に適用されます"
+
         prompt = f"""
+╔════════════════════════════════════════════════════════════╗
+║ 【評価対象の発言者】 {speaker}（{speaker_name}）
+║ ※この発言者の発言のみを評価してください{praise_note}
+║ ※やな(A)の感情表現（「楽しみだね」等）は自然なので問題なし
+╚════════════════════════════════════════════════════════════╝
+
 【Current Frame】
 {frame_description}
 
@@ -608,6 +658,63 @@ JSON ONLY:
             "missing": "マーカーが見つかりません" if not found else "",
         }
 
+    def _check_setting_consistency(self, response: str) -> dict:
+        """
+        設定の整合性をチェックする（姉妹が別居しているかのような表現を検出）。
+
+        Args:
+            response: 評価対象の発言
+
+        Returns:
+            {
+                "passed": bool,
+                "issue": str,
+                "suggestion": str
+            }
+        """
+        for word in self.SEPARATION_WORDS:
+            if word in response:
+                return {
+                    "passed": False,
+                    "issue": f"設定破壊: 「{word}」は姉妹が別居しているかのような表現です",
+                    "suggestion": "やなとあゆは同じ家に住んでいます。「うちに」「私たちの家」等を使ってください。",
+                }
+
+        return {
+            "passed": True,
+            "issue": "",
+            "suggestion": "",
+        }
+
+    def _check_praise_words(self, response: str, speaker: str) -> dict:
+        """
+        褒め言葉チェック（あゆの発言のみ適用）。
+
+        Args:
+            response: 評価対象の発言
+            speaker: "A" or "B"
+
+        Returns:
+            {
+                "passed": bool,
+                "issue": str,
+                "suggestion": str
+            }
+        """
+        # やな（A）の発言には適用しない
+        if speaker == "A":
+            return {"passed": True, "issue": "", "suggestion": ""}
+
+        # あゆ（B）の発言のみチェック
+        for word in self.PRAISE_WORDS_FOR_AYU:
+            if word in response:
+                return {
+                    "passed": False,
+                    "issue": f"あゆの褒め言葉使用: 「{word}」",
+                    "suggestion": "評価・判定型の表現を避け、情報提供に徹してください",
+                }
+        return {"passed": True, "issue": "", "suggestion": ""}
+
     def _check_logical_consistency(self, response: str) -> dict:
         """
         論理的な矛盾や不自然な表現をチェックする。
@@ -722,7 +829,20 @@ JSON ONLY:
         # 曖昧語があり、具体名詞がなく、短い場合は曖昧フック
         return has_vague and not has_specific and len(h) <= 12
 
-    def _validate_director_output(self, data: dict, turn_number: int) -> dict:
+    def _is_off_topic_hook(self, hook: str, frame_description: str) -> bool:
+        """
+        hookがトピックと無関係かチェック。
+        観光地名がトピックに含まれていなければ無関係と判定。
+        """
+        if not hook:
+            return False
+
+        for spot in self.TOURIST_SPOTS:
+            if spot in hook and spot not in frame_description:
+                return True
+        return False
+
+    def _validate_director_output(self, data: dict, turn_number: int, frame_description: str = "") -> dict:
         """
         LLMの出力を検証し、誤爆条件にマッチしたら強制的にNOOPに書き換える。
         「コード側の最後の殺し」
@@ -782,6 +902,11 @@ JSON ONLY:
         if action == "INTERVENE" and not has_any_evidence:
             force_noop = True
             reason_override = "介入根拠なし"
+
+        # (f) トピック無関係チェック（観光地名がトピックに含まれていない）
+        if action == "INTERVENE" and self._is_off_topic_hook(hook, frame_description):
+            force_noop = True
+            reason_override = f"トピック無関係なフック: {hook}"
 
         # === 強制NOOP実行 ===
         if force_noop:

@@ -22,12 +22,34 @@ class NarrationPipeline:
     Vision分析 → キャラクター対話生成 → Director品質判定
     """
 
+    # 家族設定（全シーンに共通）
+    FAMILY_CONTEXT = "【前提】やなとあゆは姉妹で、同じ家に住んでいます。親戚・実家への訪問は一緒に行く前提です。"
+
     def __init__(self):
         self.vision_processor = VisionProcessor()
         self.char_a = Character("A")
         self.char_b = Character("B")
         self.director = Director()
         self.logger = Logger()
+
+    def _generate_scene_description(self, base_scene: str) -> str:
+        """
+        シーン説明に家族設定を自動付与する。
+
+        Args:
+            base_scene: 基本のシーン説明
+
+        Returns:
+            家族設定を含む完全なシーン説明
+        """
+        # お正月、年末年始、帰省などのキーワードがあれば特に強調
+        family_keywords = ["お正月", "年末", "年始", "帰省", "実家", "親戚", "お盆"]
+        needs_emphasis = any(kw in base_scene for kw in family_keywords)
+
+        if needs_emphasis:
+            return f"{self.FAMILY_CONTEXT}\n\n{base_scene}"
+        else:
+            return f"{self.FAMILY_CONTEXT}\n\n{base_scene}"
 
     def _emit_speak_event(
         self,
@@ -211,14 +233,15 @@ class NarrationPipeline:
 
         # Step 1: Vision 分析（skip_vision=True の場合はスキップ）
         vision_text = None
-        effective_scene = scene_description  # Will be updated from vision if needed
+        # シーン説明に家族設定を自動付与
+        effective_scene = self._generate_scene_description(scene_description) if scene_description else None
 
         if skip_vision or not image_path:
             print("\n[Step 1] Skipping Vision analysis (topic-only mode)")
             result["vision_analysis"] = {"status": "skipped", "reason": "topic-only mode"}
             # トピックのみモードの場合、scene_descriptionが必須
             if not effective_scene:
-                effective_scene = "観光地を訪れている場面"
+                effective_scene = self._generate_scene_description("観光地を訪れている場面")
         else:
             print("\n[Step 1] Analyzing image with Vision LLM...")
             vision_result = self.vision_processor.analyze_image(image_path)
@@ -245,17 +268,19 @@ class NarrationPipeline:
 
                 # メイン被写体と環境からシーン説明を構築
                 if main_subjects:
-                    effective_scene = main_subjects
+                    base_scene = main_subjects
                     if environment:
-                        effective_scene = f"{main_subjects}。{environment}"
+                        base_scene = f"{main_subjects}。{environment}"
                 elif environment:
-                    effective_scene = environment
+                    base_scene = environment
                 else:
                     # フォールバック: raw_textの最初の部分を使用
                     raw_text = vision_result.get("raw_text", "")
-                    effective_scene = raw_text[:100] if raw_text else "画像に映る風景"
+                    base_scene = raw_text[:100] if raw_text else "画像に映る風景"
 
-                print(f"📝 Generated scene from image: {effective_scene[:50]}...")
+                # 家族設定を付与
+                effective_scene = self._generate_scene_description(base_scene)
+                print(f"📝 Generated scene from image: {base_scene[:50]}...")
 
         # Step 2: キャラクター対話生成
         # max_iterations = 対話ターン数（A→B→A→B...）
@@ -360,24 +385,15 @@ class NarrationPipeline:
             beat = beat_map.get(director_evaluation.status.name, "BANter")
 
             # 次のターンへのDirector Guidanceを生成
-            # v2: action=INTERVENE の場合は next_instruction を使用、NOOP の場合は別途生成
+            # v2: action=INTERVENE の場合のみ next_instruction を使用、NOOP の場合は生成しない
             next_turn_guidance = None
             if director_evaluation.action == "INTERVENE" and director_evaluation.next_instruction:
                 # v2: 介入時は validate_director_output で精査された指示を使用
                 next_turn_guidance = director_evaluation.next_instruction
                 print(f"    🎬 Director INTERVENE: {next_turn_guidance[:50] if next_turn_guidance else '(none)'}...")
                 director_guidance = next_turn_guidance
-            elif director_evaluation.status.name == "PASS" and turn < max_iterations - 1:
-                # v2: NOOP時でもPASSなら別途ガイダンスを生成（従来互換）
-                next_turn_guidance = self.director.get_instruction_for_next_turn(
-                    frame_description=effective_scene,
-                    conversation_so_far=dialogue_history,
-                    turn_number=turn_counter + 1,
-                )
-                if next_turn_guidance:
-                    print(f"    💡 Director guidance (NOOP): {next_turn_guidance[:50]}...")
-                director_guidance = next_turn_guidance
             else:
+                # v2: NOOP時はguidanceを生成しない（過剰介入防止）
                 director_guidance = director_evaluation.suggestion
 
             # GUI用 director イベントを発行（v2フィールドを含む）

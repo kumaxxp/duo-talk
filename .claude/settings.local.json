@@ -11,7 +11,10 @@
       "Bash(python test_director_setup.py:*)",
       "Bash(python test_director_evaluation.py:*)",
       "Bash(pkill:*)",
-      "Bash(cat:*)"
+      "Bash(cat:*)",
+      "Bash(curl:*)",
+      "Bash(ls:*)",
+      "Bash(timeout 180 python:*)"
     ]
   }
 }
