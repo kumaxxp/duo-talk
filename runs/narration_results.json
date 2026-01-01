@@ -1,78 +1,32 @@
 [
   {
-    "status": "success",
+    "status": "error",
     "scene_description": "古い寺院の境内。参拝客が少なく、静かな時間帯のようです。",
     "image_path": "tests/images/temple_sample.jpg",
     "vision_analysis": {
-      "status": "success",
+      "status": "error",
       "image_path": "tests/images/temple_sample.jpg",
-      "visual_info": {
-        "main_subjects": "- 画像の中心的な被写体は、薄い、単純色の青い空間です。\n- 特徴：薄い、単純色の青い空間。大きさ：全体の画像。位置：中央に配置されています。",
-        "environment": "- 周囲の環境は、薄い、単純色の青い空間です。\n- 背景にある重要な要素は、薄い、単純色の青い空間。",
-        "people_activity": "- 人物がいるか？いる場合の状態は、薄い、単純色の青い空間にあります。\n- 何かアクティビティが起きているか：なし。",
-        "colors_lighting": "- 全体的な色合いは、薄い、単純色の青い空間です。\n- 光の質（朝日、逆光、曇りなど）は、薄い、単純色の青い空間にあるため、明るさや暗くされた状態はありません。",
-        "perspective": "- 画像の構成は、薄い、単純色の青い空間です。\n- 遠近感（前景、中景、背景）の配分は、全体的な空間が一層に配置されているため、遠近感はありません。",
-        "notable_details": "- 観光地ナレーション時に言及すると面白い、珍しい要素は、薄い、単純色の青い空間。"
-      },
-      "detected_objects": [],
-      "raw_text": " 【メイン被写体】\n- 画像の中心的な被写体は、薄い、単純色の青い空間です。\n- 特徴：薄い、単純色の青い空間。大きさ：全体の画像。位置：中央に配置されています。\n\n【環境・背景】\n- 周囲の環境は、薄い、単純色の青い空間です。\n- 背景にある重要な要素は、薄い、単純色の青い空間。\n\n【人物・活動】\n- 人物がいるか？いる場合の状態は、薄い、単純色の青い空間にあります。\n- 何かアクティビティが起きているか：なし。\n\n【色調・照明】\n- 全体的な色合いは、薄い、単純色の青い空間です。\n- 光の質（朝日、逆光、曇りなど）は、薄い、単純色の青い空間にあるため、明るさや暗くされた状態はありません。\n\n【構図・遠近感】\n- 画像の構成は、薄い、単純色の青い空間です。\n- 遠近感（前景、中景、背景）の配分は、全体的な空間が一層に配置されているため、遠近感はありません。\n\n【特筆すべき詳細】\n- 観光地ナレーション時に言及すると面白い、珍しい要素は、薄い、単純色の青い空間。 ",
-      "processing_time_ms": 10866.233348846436,
+      "error": "Failed to connect to Ollama. Please check that Ollama is downloaded, running and accessible. https://ollama.com/download",
       "mode_used": "vlm_segmentation"
     },
-    "dialogue": {
-      "turn_0": {
-        "speaker": "A",
-        "text": "あゆ、なんか今日めっちゃ寒いね。うちの炬燵、もう準備しといた方がいいかも。あ、そうだ、寺の近くのあのお店、新しいお餅出てるって聞いたんだけど、行ってみない？"
-      },
-      "turn_1": {
-        "speaker": "B",
-        "text": "やな姉様、確かに少し肌寒いですね。炬燵の準備は良いアイデアです。"
-      }
-    },
-    "director_verdict": {
-      "status": "PASS",
-      "reason": "応答が散漫: 読点が多すぎる(5個)、文が多すぎる(3文)",
-      "suggestion": "【制限】50〜80文字、2文以内、読点2個以内で応答してください。相手の発言から1つだけ選んで反応し、他は無視してください。"
-    },
-    "log_id": "4c17ffd7_20260101_173436",
-    "run_id": "run_20260101_173417"
+    "dialogue": {},
+    "director_verdict": null,
+    "log_id": null,
+    "run_id": "run_20260101_213905"
   },
   {
-    "status": "success",
+    "status": "error",
     "scene_description": "緑豊かな山間の風景。自然に包まれた観光地です。",
     "image_path": "tests/images/nature_sample.jpg",
     "vision_analysis": {
-      "status": "success",
+      "status": "error",
       "image_path": "tests/images/nature_sample.jpg",
-      "visual_info": {
-        "main_subjects": "- 画像の中心的な被写体は、緑色である。\n- その特徴、大きさ、位置は、画像全体に敵っています。",
-        "environment": "- 周囲の環境は、緑色である。\n- 背景にある重要な要素は、緑色でありません。",
-        "people_activity": "- 人物がいるか？いる場合の状態は、画像全体に敵っています。\n- 何かアクティビティが起きているか？、緑色でありません。",
-        "colors_lighting": "- 全体的な色合いは、緑色でありません。\n- 光の質（朝日、逆光、曇りなど）は、緑色でありません。",
-        "perspective": "- 画像の構成は、緑色でありません。\n- 遠近感（前景、中景、背景）の配分は、緑色でありません。",
-        "notable_details": "- 観光地ナレーション時に言及すると面白い、珍しい要素は、緑色でありません。"
-      },
-      "detected_objects": [],
-      "raw_text": " 【メイン被写体】\n- 画像の中心的な被写体は、緑色である。\n- その特徴、大きさ、位置は、画像全体に敵っています。\n\n【環境・背景】\n- 周囲の環境は、緑色である。\n- 背景にある重要な要素は、緑色でありません。\n\n【人物・活動】\n- 人物がいるか？いる場合の状態は、画像全体に敵っています。\n- 何かアクティビティが起きているか？、緑色でありません。\n\n【色調・照明】\n- 全体的な色合いは、緑色でありません。\n- 光の質（朝日、逆光、曇りなど）は、緑色でありません。\n\n【構図・遠近感】\n- 画像の構成は、緑色でありません。\n- 遠近感（前景、中景、背景）の配分は、緑色でありません。\n\n【特筆すべき詳細】\n- 観光地ナレーション時に言及すると面白い、珍しい要素は、緑色でありません。 ",
-      "processing_time_ms": 4008.1911087036133,
+      "error": "Failed to connect to Ollama. Please check that Ollama is downloaded, running and accessible. https://ollama.com/download",
       "mode_used": "vlm_segmentation"
     },
-    "dialogue": {
-      "turn_0": {
-        "speaker": "A",
-        "text": "あゆ、この景色見て！緑がいっぱいで気持ちいいね。うちの地域って、本当に自然が豊かだよね。あ、そういえば、うちのじいちゃんの作った日本酒、ラベルにこの山の絵が描いてあるんだよ。"
-      },
-      "turn_1": {
-        "speaker": "B",
-        "text": "やな姉様、本当に美しい景色ですね。この山は昔から信仰の対象になっているんです。"
-      }
-    },
-    "director_verdict": {
-      "status": "PASS",
-      "reason": "応答が散漫: 文が多すぎる(3文)",
-      "suggestion": "【制限】50〜80文字、2文以内、読点2個以内で応答してください。相手の発言から1つだけ選んで反応し、他は無視してください。"
-    },
-    "log_id": "4203b6f6_20260101_173446",
-    "run_id": "run_20260101_173436"
+    "dialogue": {},
+    "director_verdict": null,
+    "log_id": null,
+    "run_id": "run_20260101_213905"
   }
 ]
