@@ -4,6 +4,7 @@ Monitors: 進行度 (progress), 参加度 (participation), 知識領域 (knowled
 Now includes fact-checking capability via web search.
 """
 
+import re
 from typing import Optional
 
 from src.llm_client import get_llm_client
@@ -217,6 +218,33 @@ Respond ONLY with JSON:
                 beat_stage=current_beat,
                 hook=loop_check["keyword"],
                 evidence={"dialogue": f"「{loop_check['keyword']}」が{loop_check['count']}回出現", "frame": None},
+            )
+
+        # 動的ループ検出（静的検出で見つからない場合のフォールバック）
+        dynamic_loop = self._detect_topic_loop_dynamic(conversation_history, response)
+        if dynamic_loop["detected"]:
+            print(f"    🔄 動的ループ検出: 「{dynamic_loop['keyword']}」が繰り返し出現")
+            new_topic = self._get_new_topic_suggestion(dynamic_loop["keyword"])
+            return DirectorEvaluation(
+                status=DirectorStatus.PASS,
+                reason=f"動的ループ: 「{dynamic_loop['keyword']}」が繰り返し",
+                action="INTERVENE",
+                next_instruction=f"「{dynamic_loop['keyword']}」の話題が続いています。別の視点や話題に展開してください。",
+                next_pattern="D",
+                beat_stage=current_beat,
+                hook=dynamic_loop["keyword"],
+                evidence={"dialogue": f"「{dynamic_loop['keyword']}」が繰り返し", "frame": None},
+            )
+
+        # 散漫検出（複数話題への全レス）
+        scatter_check = self._is_scattered_response(response)
+        if scatter_check["detected"]:
+            issues_str = "、".join(scatter_check["issues"])
+            print(f"    ⚠️ 散漫検出: {issues_str}")
+            return DirectorEvaluation(
+                status=DirectorStatus.RETRY,
+                reason=f"応答が散漫: {issues_str}",
+                suggestion="話題を1つに絞って深掘りしてください。「〜も」「あと」「それと」の連続は避けてください。",
             )
 
         # 論理的矛盾のチェック（二重否定など）
@@ -946,6 +974,96 @@ JSON ONLY:
         # ループしているキーワードを除外
         available = [t for t in suggestions if t != loop_keyword]
         return available[0] if available else "別の話題"
+
+    def _detect_topic_loop_dynamic(self, conversation_history: list, response: str) -> dict:
+        """
+        動的に話題ループを検出（MeCab不要）。
+        漢字・カタカナ・英数字の2文字以上の連続を「トピック候補」とみなす。
+
+        Args:
+            conversation_history: [(speaker, text), ...] のリスト
+            response: 現在の発言
+
+        Returns:
+            {
+                "detected": bool,
+                "keyword": str or None
+            }
+        """
+        if len(conversation_history) < 3:
+            return {"detected": False, "keyword": None}
+
+        # 正規表現で「意味がありそうな単語」を抽出
+        # 漢字・カタカナ・英数字の2文字以上の連続
+        pattern = r'[一-龠々ヶァ-ヴーa-zA-Z0-9]{2,}'
+
+        # 直近3ターン + 現在の発言からそれぞれ単語セットを作成
+        texts = [text for _, text in conversation_history[-3:]] + [response]
+        word_sets = [set(re.findall(pattern, text)) for text in texts]
+
+        # 全てに共通する単語を検出
+        if not word_sets:
+            return {"detected": False, "keyword": None}
+
+        common_words = word_sets[0]
+        for s in word_sets[1:]:
+            common_words = common_words.intersection(s)
+
+        # 固定リストに含まれる単語は既存のループ検出に任せる
+        common_words = common_words - set(self.LOOP_KEYWORDS)
+
+        # 短すぎる単語（2文字）や一般的すぎる単語を除外
+        common_words = {w for w in common_words if len(w) >= 3}
+
+        if common_words:
+            # 最も長い単語を代表として返す（"QR"より"QRコード"を優先）
+            topic = max(common_words, key=len)
+            return {"detected": True, "keyword": topic}
+
+        return {"detected": False, "keyword": None}
+
+    def _is_scattered_response(self, response: str) -> dict:
+        """
+        散漫な応答（話題盛りすぎ）を検出する。
+
+        Args:
+            response: 評価対象の発言
+
+        Returns:
+            {
+                "detected": bool,
+                "issues": list[str]
+            }
+        """
+        issues = []
+
+        # 読点が多すぎる（6個以上で散漫と判定）
+        comma_count = response.count("、")
+        if comma_count >= 6:
+            issues.append(f"読点が多すぎる({comma_count}個)")
+
+        # 列挙表現が多い（「〜も」「あと」「それと」等の連続）
+        scatter_patterns = [
+            (r'も[、。！？]', "「〜も」の連続"),
+            (r'あと[、]', "「あと」の使用"),
+            (r'それと', "「それと」の使用"),
+            (r'さらに', "「さらに」の使用"),
+        ]
+        scatter_count = 0
+        for pattern, _ in scatter_patterns:
+            scatter_count += len(re.findall(pattern, response))
+
+        if scatter_count >= 2:
+            issues.append(f"列挙表現が多い({scatter_count}回)")
+
+        # 文の数が多すぎる（5文以上：プロンプトで最大4文を許容）
+        sentence_count = len(re.findall(r'[。！？]', response))
+        if sentence_count >= 5:
+            issues.append(f"文が多すぎる({sentence_count}文)")
+
+        if issues:
+            return {"detected": True, "issues": issues}
+        return {"detected": False, "issues": []}
 
     def is_fatal_modify(self, reason: str) -> bool:
         """
