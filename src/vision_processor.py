@@ -10,11 +10,9 @@ from pathlib import Path
 from typing import Optional, List, Dict, Any
 from dataclasses import dataclass
 
-try:
-    import ollama
-except ImportError:
-    ollama = None
+from openai import OpenAI
 
+from src.config import config
 from src.llm_client import get_llm_client
 from src.vision_config import (
     VisionConfig,
@@ -121,35 +119,61 @@ class VisionProcessor:
             }
 
     def _analyze_with_vlm(self, image_file: Path) -> dict:
-        """Single VLM analysis mode"""
-        if ollama is None:
-            return {
-                "status": "error",
-                "image_path": str(image_file),
-                "error": "ollama package not installed"
-            }
+        """
+        Single VLM analysis mode using vLLM + Qwen2.5-VL.
 
+        Uses OpenAI-compatible API to connect to vLLM server.
+        The model (Qwen2.5-VL-7B-Instruct) supports multimodal input (text + image).
+        """
         # Load image as base64
         with open(image_file, "rb") as f:
             image_data = base64.b64encode(f.read()).decode("utf-8")
 
+        # Determine MIME type from file extension
+        ext = str(image_file).lower().split('.')[-1]
+        mime_type = {
+            "jpg": "image/jpeg",
+            "jpeg": "image/jpeg",
+            "png": "image/png",
+            "gif": "image/gif",
+            "webp": "image/webp",
+        }.get(ext, "image/jpeg")
+
         # Get prompt (custom or default)
         prompt = self.config.custom_description_prompt or self._get_default_vlm_prompt()
 
-        # Call VLM
-        model_name = self.config.get_vlm_model_name()
-        response = ollama.generate(
-            model=model_name,
-            prompt=prompt,
-            images=[image_data],
-            stream=False,
-            options={
-                "temperature": self.config.vlm_temperature,
-                "num_predict": self.config.vlm_max_tokens,
-            }
+        # Create OpenAI client for vLLM
+        client = OpenAI(
+            base_url=config.openai_base_url,
+            api_key=config.openai_api_key,
+            timeout=config.timeout,
         )
 
-        raw_text = response.get("response", "")
+        # Call VLM with multimodal message format
+        response = client.chat.completions.create(
+            model=config.openai_model,
+            messages=[
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "image_url",
+                            "image_url": {
+                                "url": f"data:{mime_type};base64,{image_data}"
+                            },
+                        },
+                        {
+                            "type": "text",
+                            "text": prompt,
+                        },
+                    ],
+                }
+            ],
+            max_tokens=self.config.vlm_max_tokens,
+            temperature=self.config.vlm_temperature,
+        )
+
+        raw_text = response.choices[0].message.content or ""
         visual_info = self._parse_vision_response(raw_text)
 
         return {
@@ -168,14 +192,10 @@ class VisionProcessor:
         # Step 2: Convert to structured data
         structured_data = self._objects_to_structured_data(detected_objects)
 
-        # Step 3: Use LLM to generate natural description
-        if ollama is None:
-            visual_info = self._create_visual_info_from_objects(detected_objects)
-            raw_text = structured_data
-        else:
-            visual_info, raw_text = self._generate_description_from_objects(
-                structured_data, detected_objects
-            )
+        # Step 3: Use LLM (vLLM/Qwen) to generate natural description
+        visual_info, raw_text = self._generate_description_from_objects(
+            structured_data, detected_objects
+        )
 
         return {
             "status": "success",
