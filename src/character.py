@@ -109,11 +109,12 @@ class Character:
         # Call LLM with retry on repetition
         max_attempts = 2
         for attempt in range(max_attempts):
+            # max_tokensを100に制限して散漫な長文応答を物理的に防止
             response = self.llm.call(
                 system=self.system_prompt,
                 user=user_prompt,
                 temperature=config.temperature + (0.2 * attempt),  # Increase temp on retry
-                max_tokens=config.max_tokens,
+                max_tokens=100,  # 50〜80文字制限に合わせて短く
             )
             result = response.strip()
 

@@ -246,7 +246,7 @@ Respond ONLY with JSON:
             return DirectorEvaluation(
                 status=DirectorStatus.RETRY,
                 reason=f"応答が散漫: {issues_str}",
-                suggestion="話題を1つに絞って深掘りしてください。「〜も」「あと」「それと」の連続は避けてください。",
+                suggestion="【制限】50〜80文字、2文以内、読点2個以内で応答してください。相手の発言から1つだけ選んで反応し、他は無視してください。",
             )
 
         # 論理的矛盾のチェック（二重否定など）

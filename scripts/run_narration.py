@@ -6,6 +6,7 @@ Vision → Character → Director パイプライン統合スクリプト
 
 import sys
 import json
+import re
 from pathlib import Path
 from typing import Optional
 
@@ -44,6 +45,35 @@ class NarrationPipeline:
         self.char_b = Character("B")
         self.director = Director()
         self.logger = Logger()
+
+    @staticmethod
+    def _truncate_response(response: str, max_sentences: int = 2, max_chars: int = 100) -> str:
+        """
+        応答を強制的に短縮する（散漫検出の最後の手段）。
+
+        Args:
+            response: 元の応答テキスト
+            max_sentences: 最大文数
+            max_chars: 最大文字数
+
+        Returns:
+            短縮された応答
+        """
+        # 文末記号で分割（記号を保持）
+        parts = re.split(r'([。！？])', response)
+        result = ""
+        sentence_count = 0
+
+        # 2つずつペア（本文 + 句点）で処理
+        i = 0
+        while i < len(parts) - 1:
+            if sentence_count >= max_sentences or len(result) > max_chars:
+                break
+            result += parts[i] + parts[i + 1]
+            sentence_count += 1
+            i += 2
+
+        return result.strip() if result else response[:max_chars]
 
     def _generate_scene_description(self, base_scene: str) -> str:
         """
@@ -417,6 +447,14 @@ class NarrationPipeline:
                             next_instruction="前のターンの問題を踏まえて、新しい視点を追加してください。",
                         )
                 break
+
+            # 散漫検出でForce PASSした場合、後処理で強制短縮
+            if force_passed and director_evaluation and "散漫" in (director_evaluation.reason or ""):
+                original_speech = speech
+                speech = self._truncate_response(speech, max_sentences=2, max_chars=100)
+                if speech != original_speech:
+                    print(f"    ✂️ 強制短縮: {len(original_speech)}文字 → {len(speech)}文字")
+                    print(f"      {speech}")
 
             # 発言を記録
             result["dialogue"][f"turn_{turn_counter}"] = {"speaker": current_speaker, "text": speech}
