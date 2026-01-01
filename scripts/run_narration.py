@@ -58,6 +58,9 @@ class NarrationPipeline:
         status: Optional[str] = None,
         reason: Optional[str] = None,
         guidance: Optional[str] = None,
+        action: Optional[str] = None,
+        hook: Optional[str] = None,
+        evidence: Optional[dict] = None,
     ) -> None:
         """GUI用のdirectorイベントを発行"""
         from datetime import datetime
@@ -70,6 +73,9 @@ class NarrationPipeline:
             "status": status,
             "reason": reason,
             "guidance": guidance,  # 次ターンへの指示
+            "action": action,  # "NOOP" or "INTERVENE"
+            "hook": hook,  # 介入トリガーとなる具体名詞
+            "evidence": evidence,  # {"dialogue": ..., "frame": ...}
             "ts": datetime.now().isoformat(),
         })
 
@@ -353,21 +359,28 @@ class NarrationPipeline:
             beat_map = {"PASS": "PAYOFF", "RETRY": "BANter", "MODIFY": "PIVOT"}
             beat = beat_map.get(director_evaluation.status.name, "BANter")
 
-            # 次のターンへのDirector Guidanceを生成（PASSの場合）
+            # 次のターンへのDirector Guidanceを生成
+            # v2: action=INTERVENE の場合は next_instruction を使用、NOOP の場合は別途生成
             next_turn_guidance = None
-            if director_evaluation.status.name == "PASS" and turn < max_iterations - 1:
+            if director_evaluation.action == "INTERVENE" and director_evaluation.next_instruction:
+                # v2: 介入時は validate_director_output で精査された指示を使用
+                next_turn_guidance = director_evaluation.next_instruction
+                print(f"    🎬 Director INTERVENE: {next_turn_guidance[:50] if next_turn_guidance else '(none)'}...")
+                director_guidance = next_turn_guidance
+            elif director_evaluation.status.name == "PASS" and turn < max_iterations - 1:
+                # v2: NOOP時でもPASSなら別途ガイダンスを生成（従来互換）
                 next_turn_guidance = self.director.get_instruction_for_next_turn(
                     frame_description=effective_scene,
                     conversation_so_far=dialogue_history,
                     turn_number=turn_counter + 1,
                 )
                 if next_turn_guidance:
-                    print(f"    💡 Director guidance for next turn: {next_turn_guidance[:50]}...")
+                    print(f"    💡 Director guidance (NOOP): {next_turn_guidance[:50]}...")
                 director_guidance = next_turn_guidance
             else:
                 director_guidance = director_evaluation.suggestion
 
-            # GUI用 director イベントを発行（guidance生成後）
+            # GUI用 director イベントを発行（v2フィールドを含む）
             self._emit_director_event(
                 run_id,
                 turn_counter,
@@ -376,6 +389,9 @@ class NarrationPipeline:
                 status=director_evaluation.status.name,
                 reason=director_evaluation.reason,
                 guidance=next_turn_guidance,
+                action=director_evaluation.action,
+                hook=director_evaluation.hook,
+                evidence=director_evaluation.evidence,
             )
 
             # 最終ターンの場合のみ verdict を記録

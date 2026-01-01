@@ -61,6 +61,10 @@ class DirectorEvaluation:
     next_pattern: Optional[str] = None  # "A", "B", "C", "D", "E"
     next_instruction: Optional[str] = None  # Specific instruction for next speaker
     beat_stage: Optional[str] = None  # "SETUP", "EXPLORATION", "PERSONAL", "WRAP_UP"
+    # Director v2 fields for NOOP support and misfire prevention
+    action: str = "NOOP"  # "NOOP" or "INTERVENE"
+    hook: Optional[str] = None  # Concrete noun phrase triggering intervention
+    evidence: Optional[Dict[str, Any]] = None  # {"dialogue": str|None, "frame": str|None}
 
 
 @dataclass

@@ -1,7 +1,17 @@
 {
   "permissions": {
     "allow": [
-      "Bash(python:*)"
+      "Bash(python:*)",
+      "Bash(python -m pytest:*)",
+      "Bash(source:*)",
+      "Bash(conda activate:*)",
+      "Bash(python -c:*)",
+      "Bash(npm run build:*)",
+      "Bash(python scripts/run_commentary.py:*)",
+      "Bash(python test_director_setup.py:*)",
+      "Bash(python test_director_evaluation.py:*)",
+      "Bash(pkill:*)",
+      "Bash(cat:*)"
     ]
   }
 }
