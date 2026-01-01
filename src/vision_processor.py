@@ -15,6 +15,7 @@ try:
 except ImportError:
     ollama = None
 
+from src.llm_client import get_llm_client
 from src.vision_config import (
     VisionConfig,
     VisionMode,
@@ -63,6 +64,8 @@ class VisionProcessor:
         self.config = config or get_current_vision_config()
         self._segmentation_model = None
         self._segmentation_processor = None
+        # Text LLM for description generation (uses vLLM/Qwen instead of Ollama)
+        self._text_llm = None
 
     def update_config(self, config: VisionConfig):
         """Update configuration"""
@@ -431,12 +434,16 @@ class VisionProcessor:
 
         This method is used in SEGMENTATION_PLUS_LLM mode where:
         1. Florence-2 or similar model detects objects with positions
-        2. Text LLM (not VLM) generates natural descriptions from the structured data
+        2. Text LLM (vLLM/Qwen) generates natural descriptions from the structured data
+
+        Note: This method no longer uses Ollama. It uses LlmClient which connects
+        to vLLM server, eliminating VRAM conflicts with Ollama.
         """
         lang = "日本語" if self.config.output_language == "ja" else "English"
 
-        prompt = f"""あなたは観光地ナレーションの専門家です。
-以下の画像解析結果を元に、観光地ナレーション向けの視覚情報を{lang}で生成してください。
+        system_prompt = "あなたは観光地ナレーションの専門家です。与えられた情報から簡潔な説明を生成してください。"
+
+        user_prompt = f"""以下の画像解析結果を元に、観光地ナレーション向けの視覚情報を{lang}で生成してください。
 
 {structured_data}
 
@@ -457,24 +464,22 @@ class VisionProcessor:
 各項目について、簡潔かつ具体的に記述してください。"""
 
         try:
-            # Use text LLM (not VLM) for generating descriptions from structured data
-            text_llm_model = self.config.get_text_llm_model_name()
+            # Use LlmClient (vLLM/Qwen) instead of Ollama to avoid VRAM conflicts
+            if self._text_llm is None:
+                self._text_llm = get_llm_client()
 
-            response = ollama.generate(
-                model=text_llm_model,
-                prompt=prompt,
-                stream=False,
-                options={
-                    "temperature": self.config.llm_temperature,
-                    "num_predict": self.config.llm_max_tokens,
-                }
+            raw_text = self._text_llm.call(
+                system=system_prompt,
+                user=user_prompt,
+                temperature=self.config.llm_temperature,
+                max_tokens=self.config.llm_max_tokens,
             )
-            raw_text = response.get("response", "")
             visual_info = self._parse_vision_response(raw_text)
             return visual_info, raw_text
         except Exception as e:
-            print(f"Text LLM error: {e}")
-            return self._create_visual_info_from_objects(objects), str(e)
+            # Fallback: Return minimal info without LLM
+            print(f"Warning: LLM text generation failed: {e}")
+            return self._create_visual_info_from_objects(objects), ""
 
     def _get_default_vlm_prompt(self) -> str:
         """Get default VLM analysis prompt"""

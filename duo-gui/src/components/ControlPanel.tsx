@@ -4,7 +4,7 @@ export default function ControlPanel({ apiBase, onStarted }:{ apiBase: string, o
   const [topic,setTopic]=useState('')
   const [model,setModel]=useState('')
   const [maxTurns,setMax]=useState(8)
-  const [seed,setSeed]=useState<number|''>(42)
+  const [seed,setSeed]=useState<number|''>('')
   const [noRag,setNoRag]=useState(false)
   const [imageFile, setImageFile] = useState<File|null>(null)
   const [imagePreview, setImagePreview] = useState<string|null>(null)
