@@ -756,6 +756,112 @@ def test_vision_config():
         return jsonify({"error": str(e)}), 500
 
 
+# ==================== MODEL MANAGEMENT ====================
+
+from src.model_manager import get_model_manager
+
+@app.route('/api/models', methods=['GET'])
+def get_llm_models():
+    """
+    Get list of available LLM/VLM models.
+
+    Returns:
+        JSON: {"models": [...], "current": "model_id"}
+    """
+    try:
+        manager = get_model_manager()
+        return jsonify({
+            "models": manager.get_available_models(),
+            "current": manager.get_current_model(),
+        })
+    except Exception as e:
+        logger.error(f"Error getting models: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/models/status', methods=['GET'])
+def get_model_status():
+    """
+    Get current model server status.
+
+    Returns:
+        JSON: {"status": "ready|starting|switching|stopped|error", "current_model": "..."}
+    """
+    try:
+        manager = get_model_manager()
+        return jsonify(manager.get_status())
+    except Exception as e:
+        logger.error(f"Error getting model status: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/models/switch', methods=['POST'])
+def switch_llm_model():
+    """
+    Switch to a different LLM/VLM model.
+    This operation runs in the background as it may take 1-2 minutes.
+
+    Body (JSON):
+        - model_id: Target model preset ID (e.g., "qwen2.5-14b-awq", "qwen2.5-vl-7b")
+
+    Returns:
+        JSON: {"status": "switching", "message": "..."}
+    """
+    import threading
+
+    try:
+        data = request.get_json()
+        model_id = data.get('model_id')
+
+        if not model_id:
+            return jsonify({"status": "error", "message": "model_id is required"}), 400
+
+        manager = get_model_manager()
+
+        # Check if already active
+        if model_id == manager.get_current_model() and manager.status == "ready":
+            return jsonify({
+                "status": "already_active",
+                "message": "既にこのモデルが起動中です"
+            })
+
+        # Start switch in background thread
+        def do_switch():
+            result = manager.switch_model(model_id)
+            logger.info(f"Model switch result: {result}")
+
+        thread = threading.Thread(target=do_switch, daemon=True)
+        thread.start()
+
+        return jsonify({
+            "status": "switching",
+            "message": f"{model_id} への切り替えを開始しました。1-2分お待ちください。"
+        })
+    except Exception as e:
+        logger.error(f"Error switching model: {e}")
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+
+@app.route('/api/models/log', methods=['GET'])
+def get_model_log():
+    """
+    Get recent vLLM server log output.
+
+    Query params:
+        - lines: Number of lines to return (default: 50)
+
+    Returns:
+        JSON: {"log": "..."}
+    """
+    try:
+        lines = int(request.args.get('lines', 50))
+        manager = get_model_manager()
+        return jsonify({"log": manager.get_log(lines=lines)})
+    except Exception as e:
+        logger.error(f"Error getting model log: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
 # ==================== HEALTH CHECK ====================
 
 # ==================== STATIC FILES ====================
