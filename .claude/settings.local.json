@@ -57,7 +57,8 @@
       "Bash(timeout 120 python3:*)",
       "Bash(timeout 60 python3:*)",
       "Bash(ollama list:*)",
-      "Bash(ollama pull:*)"
+      "Bash(ollama pull:*)",
+      "Bash(tail:*)"
     ]
   }
 }

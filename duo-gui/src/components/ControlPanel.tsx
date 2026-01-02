@@ -1,12 +1,9 @@
 import React, { useState, useRef, useCallback, useEffect } from 'react'
 
-interface ModelStatus {
+interface OllamaStatus {
   status: string
-  running_model: string | null
-  running_model_name: string
-  selected_model: string | null
-  supports_vision: boolean
-  needs_restart: boolean
+  model: string
+  backend: string
 }
 
 export default function ControlPanel({ apiBase, onStarted }:{ apiBase: string, onStarted: (rid?:string)=>void }){
@@ -20,16 +17,16 @@ export default function ControlPanel({ apiBase, onStarted }:{ apiBase: string, o
   const [dragOver, setDragOver] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
-  // Model status (display only)
-  const [modelInfo, setModelInfo] = useState<ModelStatus | null>(null)
+  // Ollama status (display only)
+  const [ollamaStatus, setOllamaStatus] = useState<OllamaStatus | null>(null)
 
-  // Poll model status every 3 seconds
+  // Poll Ollama status every 3 seconds
   useEffect(() => {
     const fetchStatus = () => {
-      fetch(`${apiBase}/api/models/status`)
+      fetch(`${apiBase}/api/ollama/status`)
         .then(res => res.json())
-        .then(data => setModelInfo(data))
-        .catch(() => setModelInfo(null))
+        .then(data => setOllamaStatus(data))
+        .catch(() => setOllamaStatus(null))
     }
     fetchStatus()
     const interval = setInterval(fetchStatus, 3000)
@@ -181,26 +178,16 @@ export default function ControlPanel({ apiBase, onStarted }:{ apiBase: string, o
       </div>
 
       {/* 現在のモデル表示 */}
-      {modelInfo && (
+      {ollamaStatus && (
         <div className="flex items-center gap-2 px-3 py-2 bg-gray-50 rounded text-sm">
           <span
             className={`w-2 h-2 rounded-full flex-shrink-0 ${
-              modelInfo.status === 'ready' ? 'bg-green-500' :
-              modelInfo.status === 'stopped' ? 'bg-gray-400' :
-              'bg-red-500'
+              ollamaStatus.status === 'ready' ? 'bg-green-500' : 'bg-gray-400'
             }`}
           />
           <span className="text-gray-600 truncate">
-            {modelInfo.running_model_name && modelInfo.running_model_name !== 'N/A' ? (
-              <>
-                {modelInfo.running_model_name.split('/').pop()}
-                {modelInfo.supports_vision && <span className="ml-1">📷</span>}
-              </>
-            ) : modelInfo.status === 'stopped' ? '停止中' : '接続中...'}
+            {ollamaStatus.status === 'ready' ? ollamaStatus.model : '接続中...'}
           </span>
-          {modelInfo.needs_restart && (
-            <span className="text-amber-500 text-xs">⚠️再起動必要</span>
-          )}
         </div>
       )}
 

@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useCallback, useRef } from 'react'
-import { Settings, Save, RotateCcw, Play, Loader2, Upload, X, Camera, Cpu, Layers, RefreshCw } from 'lucide-react'
+import { Settings, Save, RotateCcw, Play, Loader2, Upload, X, Camera, Cpu, Layers } from 'lucide-react'
 
 interface VisionConfig {
   mode: string
@@ -18,25 +18,19 @@ interface VisionConfig {
   custom_description_prompt: string
 }
 
-interface ModelInfo {
-  id: string
+interface OllamaModel {
   name: string
+  size: string
+  family: string
+  params: string
   vision: boolean
-  description: string
-  vram: string
-  verified: boolean
-  running: boolean
-  selected: boolean
 }
 
-interface ModelStatus {
+interface OllamaStatus {
   status: string
-  running_model: string | null
-  running_model_name: string
-  selected_model: string | null
-  selected_model_name: string
-  supports_vision: boolean
-  needs_restart: boolean
+  model: string
+  backend: string
+  base_url: string
 }
 
 const PROCESSING_MODES = [
@@ -97,14 +91,10 @@ export default function SettingsPanel({ apiBase }: { apiBase: string }) {
   const [testResult, setTestResult] = useState<Record<string, unknown> | null>(null)
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null)
 
-  // Model management state
-  const [llmModels, setLlmModels] = useState<ModelInfo[]>([])
-  const [modelStatus, setModelStatus] = useState<ModelStatus | null>(null)
-
-  // Restart state
-  const [restarting, setRestarting] = useState(false)
-  const [restartProgress, setRestartProgress] = useState(0)
-  const [restartMessage, setRestartMessage] = useState('')
+  // Ollama model management state
+  const [ollamaModels, setOllamaModels] = useState<OllamaModel[]>([])
+  const [ollamaStatus, setOllamaStatus] = useState<OllamaStatus | null>(null)
+  const [selectingModel, setSelectingModel] = useState(false)
 
   // Test image state
   const [testImageFile, setTestImageFile] = useState<File | null>(null)
@@ -117,20 +107,20 @@ export default function SettingsPanel({ apiBase }: { apiBase: string }) {
   useEffect(() => {
     const loadData = async () => {
       try {
-        const [configRes, modelsRes, statusRes] = await Promise.all([
+        const [configRes, ollamaModelsRes, ollamaStatusRes] = await Promise.all([
           fetch(`${apiBase}/api/vision/config`),
-          fetch(`${apiBase}/api/models`),
-          fetch(`${apiBase}/api/models/status`),
+          fetch(`${apiBase}/api/ollama/models`),
+          fetch(`${apiBase}/api/ollama/status`),
         ])
 
         const configData = await configRes.json()
-        const modelsData = await modelsRes.json()
-        const statusData = await statusRes.json()
+        const ollamaModelsData = await ollamaModelsRes.json()
+        const ollamaStatusData = await ollamaStatusRes.json()
 
         if (configData.config) setConfig({ ...defaultConfig, ...configData.config })
-        if (modelsData.models) setLlmModels(modelsData.models)
-        setModelStatus(statusData)
-      } catch (e) {
+        if (ollamaModelsData.models) setOllamaModels(ollamaModelsData.models)
+        setOllamaStatus(ollamaStatusData)
+      } catch {
         setMessage({ type: 'error', text: '設定の読み込みに失敗しました' })
       } finally {
         setLoading(false)
@@ -139,19 +129,48 @@ export default function SettingsPanel({ apiBase }: { apiBase: string }) {
     loadData()
   }, [apiBase])
 
-  // Poll model status
+  // Poll Ollama status
   useEffect(() => {
     const interval = setInterval(async () => {
       try {
-        const res = await fetch(`${apiBase}/api/models/status`)
+        const res = await fetch(`${apiBase}/api/ollama/status`)
         const data = await res.json()
-        setModelStatus(data)
+        setOllamaStatus(data)
       } catch {
         // Ignore errors
       }
-    }, 3000)
+    }, 5000)
     return () => clearInterval(interval)
   }, [apiBase])
+
+  // Handle Ollama model selection
+  const handleOllamaModelSelect = async (modelName: string) => {
+    if (selectingModel) return
+    setSelectingModel(true)
+    setMessage(null)
+
+    try {
+      const res = await fetch(`${apiBase}/api/ollama/select`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ model: modelName }),
+      })
+      const data = await res.json()
+      if (data.status === 'ok') {
+        setMessage({ type: 'success', text: data.message })
+        // Update status
+        const statusRes = await fetch(`${apiBase}/api/ollama/status`)
+        const statusData = await statusRes.json()
+        setOllamaStatus(statusData)
+      } else {
+        setMessage({ type: 'error', text: data.error || 'モデル選択に失敗しました' })
+      }
+    } catch {
+      setMessage({ type: 'error', text: 'モデル選択に失敗しました' })
+    } finally {
+      setSelectingModel(false)
+    }
+  }
 
   // Save configuration
   const handleSave = async () => {
@@ -173,102 +192,6 @@ export default function SettingsPanel({ apiBase }: { apiBase: string }) {
       setMessage({ type: 'error', text: '保存に失敗しました' })
     } finally {
       setSaving(false)
-    }
-  }
-
-  // Handle model selection (saves to config, requires restart)
-  const handleModelSelect = async (modelId: string) => {
-    try {
-      const res = await fetch(`${apiBase}/api/models/select`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ model_id: modelId }),
-      })
-      const data = await res.json()
-      if (data.status === 'saved') {
-        setMessage({ type: 'success', text: data.message })
-        // Refresh model list to update selected state
-        const modelsRes = await fetch(`${apiBase}/api/models`)
-        const modelsData = await modelsRes.json()
-        if (modelsData.models) setLlmModels(modelsData.models)
-        // Refresh status
-        const statusRes = await fetch(`${apiBase}/api/models/status`)
-        const statusData = await statusRes.json()
-        setModelStatus(statusData)
-      } else if (data.status === 'no_change') {
-        setMessage({ type: 'success', text: data.message })
-      } else {
-        setMessage({ type: 'error', text: data.message || 'エラーが発生しました' })
-      }
-    } catch (e) {
-      console.error('Model select error:', e)
-      setMessage({ type: 'error', text: 'モデル選択に失敗しました' })
-    }
-  }
-
-  // Handle vLLM restart
-  const handleRestart = async () => {
-    if (restarting) return
-
-    setRestarting(true)
-    setRestartProgress(0)
-    setRestartMessage('再起動を開始...')
-    setMessage(null)
-
-    try {
-      const response = await fetch(`${apiBase}/api/models/restart`, {
-        method: 'POST',
-      })
-
-      const reader = response.body?.getReader()
-      if (!reader) {
-        throw new Error('Response body is not readable')
-      }
-
-      const decoder = new TextDecoder()
-      let buffer = ''
-
-      while (true) {
-        const { done, value } = await reader.read()
-        if (done) break
-
-        buffer += decoder.decode(value, { stream: true })
-        const lines = buffer.split('\n\n')
-        buffer = lines.pop() || ''
-
-        for (const line of lines) {
-          if (line.startsWith('data: ')) {
-            try {
-              const data = JSON.parse(line.slice(6))
-              setRestartProgress(data.progress || 0)
-              setRestartMessage(data.message || '')
-
-              if (data.status === 'ready') {
-                setMessage({ type: 'success', text: data.message })
-                // Refresh model status
-                const statusRes = await fetch(`${apiBase}/api/models/status`)
-                const statusData = await statusRes.json()
-                setModelStatus(statusData)
-                // Refresh model list
-                const modelsRes = await fetch(`${apiBase}/api/models`)
-                const modelsData = await modelsRes.json()
-                if (modelsData.models) setLlmModels(modelsData.models)
-              } else if (data.status === 'error') {
-                setMessage({ type: 'error', text: data.message })
-              }
-            } catch {
-              // Ignore JSON parse errors
-            }
-          }
-        }
-      }
-    } catch (e) {
-      console.error('Restart error:', e)
-      setMessage({ type: 'error', text: 'vLLMの再起動に失敗しました' })
-    } finally {
-      setRestarting(false)
-      setRestartProgress(0)
-      setRestartMessage('')
     }
   }
 
@@ -359,7 +282,8 @@ export default function SettingsPanel({ apiBase }: { apiBase: string }) {
   }
 
   // Check if current model supports vision
-  const currentModelSupportsVision = modelStatus?.supports_vision ?? false
+  const currentOllamaModel = ollamaModels.find(m => m.name === ollamaStatus?.model)
+  const currentModelSupportsVision = currentOllamaModel?.vision ?? false
   const currentMode = PROCESSING_MODES.find(m => m.id === config.mode)
   const modeRequiresVision = currentMode?.requiresVision ?? false
   const usesSegmentation = config.mode === 'vlm_segmentation' || config.mode === 'segmentation_llm'
@@ -444,130 +368,83 @@ export default function SettingsPanel({ apiBase }: { apiBase: string }) {
         {/* Mode warning */}
         {modeRequiresVision && !currentModelSupportsVision && (
           <div className="mt-3 p-3 bg-amber-50 border border-amber-200 rounded text-sm text-amber-700">
-            現在のモデル（{modelStatus?.running_model_name}）はVLM非対応です。
+            現在のモデル（{ollamaStatus?.model}）はVLM非対応です。
             「VLM対応モデル」に切り替えるか、「セグメンテーション→LLM」モードを使用してください。
           </div>
         )}
       </div>
 
-      {/* 2. Main Model (LLM/VLM) Selection */}
+      {/* 2. Ollama Model Selection */}
       <div className="p-4 bg-white border rounded-lg">
-        <h3 className="font-medium mb-3">メインモデル（LLM/VLM）</h3>
+        <h3 className="font-medium mb-3">LLMバックエンド（Ollama）</h3>
 
         {/* Status */}
         <div className="flex items-center gap-2 mb-3 text-sm">
           <span
             className={`w-2 h-2 rounded-full ${
-              modelStatus?.status === 'ready' ? 'bg-green-500' :
-              modelStatus?.status === 'stopped' ? 'bg-gray-400' :
-              'bg-red-500'
+              ollamaStatus?.status === 'ready' ? 'bg-green-500' : 'bg-gray-400'
             }`}
           />
           <span className="text-gray-600">
-            {modelStatus?.status === 'ready' ? '起動中' :
-             modelStatus?.status === 'stopped' ? '停止' : 'エラー'}
+            {ollamaStatus?.status === 'ready' ? '起動中' : '停止'}
           </span>
-          {modelStatus?.running_model && (
-            <span className="text-gray-500">
-              - {modelStatus.running_model_name?.split('/')[1]}
-            </span>
+          {ollamaStatus?.model && (
+            <span className="text-gray-500">- {ollamaStatus.model}</span>
           )}
         </div>
 
-        {/* Restart warning and button */}
-        {(modelStatus?.needs_restart || restarting) && (
-          <div className="mb-3 p-3 bg-amber-50 border border-amber-200 rounded text-sm">
-            {restarting ? (
-              <>
-                <div className="flex items-center gap-2 font-medium text-amber-700 mb-2">
-                  <RefreshCw className="w-4 h-4 animate-spin" />
-                  vLLMを再起動中...
+        {/* Model selection */}
+        <div className="space-y-2 max-h-64 overflow-y-auto">
+          {ollamaModels.map(m => {
+            const isSelected = m.name === ollamaStatus?.model
+            return (
+              <label
+                key={m.name}
+                className={`flex items-start gap-3 p-3 rounded-lg cursor-pointer transition-colors
+                  ${isSelected ? 'bg-green-50 border-2 border-green-300' : 'bg-gray-50 border-2 border-transparent hover:bg-gray-100'}`}
+              >
+                <input
+                  type="radio"
+                  name="ollama-model"
+                  value={m.name}
+                  checked={isSelected}
+                  onChange={() => handleOllamaModelSelect(m.name)}
+                  disabled={selectingModel}
+                  className="mt-1"
+                />
+                <div className="flex-1">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="font-medium">{m.name}</span>
+                    {m.vision && (
+                      <span className="px-2 py-0.5 bg-purple-100 text-purple-700 text-xs rounded">VLM</span>
+                    )}
+                    <span className="px-2 py-0.5 bg-slate-100 text-slate-600 text-xs rounded font-mono">{m.size}</span>
+                    {m.params && (
+                      <span className="text-xs text-gray-400">{m.params}</span>
+                    )}
+                    {isSelected && (
+                      <span className="px-2 py-0.5 bg-green-100 text-green-700 text-xs rounded">使用中</span>
+                    )}
+                  </div>
+                  {m.family && (
+                    <div className="text-xs text-gray-400 mt-1">Family: {m.family}</div>
+                  )}
                 </div>
-                <div className="text-amber-600 text-xs mb-2">
-                  {restartMessage}
-                </div>
-                <div className="w-full bg-amber-200 rounded-full h-2">
-                  <div
-                    className="bg-amber-600 h-2 rounded-full transition-all duration-300"
-                    style={{ width: `${restartProgress}%` }}
-                  />
-                </div>
-                <div className="text-amber-500 text-xs mt-1 text-right">
-                  {restartProgress}%
-                </div>
-              </>
-            ) : (
-              <>
-                <div className="font-medium text-amber-700 mb-1">
-                  再起動が必要です
-                </div>
-                <div className="text-amber-600 text-xs mb-2">
-                  選択: {modelStatus?.selected_model_name?.split('/')[1]} /
-                  現在: {modelStatus?.running_model_name?.split('/')[1]}
-                </div>
-                <button
-                  onClick={handleRestart}
-                  className="w-full px-3 py-2 bg-amber-600 text-white rounded hover:bg-amber-700 flex items-center justify-center gap-2 text-sm font-medium"
-                >
-                  <RefreshCw className="w-4 h-4" />
-                  vLLMを再起動
-                </button>
-                <div className="text-amber-500 text-xs mt-2">
-                  再起動には1〜3分かかります
-                </div>
-              </>
-            )}
+              </label>
+            )
+          })}
+        </div>
+
+        {selectingModel && (
+          <div className="mt-3 flex items-center gap-2 text-sm text-blue-600">
+            <Loader2 className="w-4 h-4 animate-spin" />
+            モデルを切り替え中...
           </div>
         )}
 
-        {/* Model selection */}
-        <div className="space-y-2">
-          {llmModels.map(m => (
-            <label
-              key={m.id}
-              className={`flex items-start gap-3 p-3 rounded-lg cursor-pointer transition-colors
-                ${m.running ? 'bg-green-50 border-2 border-green-300' :
-                  m.selected ? 'bg-amber-50 border-2 border-amber-300' :
-                  'bg-gray-50 border-2 border-transparent hover:bg-gray-100'}`}
-            >
-              <input
-                type="radio"
-                name="main-model"
-                value={m.id}
-                checked={m.selected}
-                onChange={() => handleModelSelect(m.id)}
-                className="mt-1"
-              />
-              <div className="flex-1">
-                <div className="flex items-center gap-2 flex-wrap">
-                  <span className="font-medium">{m.name.split('/')[1]}</span>
-                  {m.vision ? (
-                    <span className="px-2 py-0.5 bg-purple-100 text-purple-700 text-xs rounded">VLM</span>
-                  ) : (
-                    <span className="px-2 py-0.5 bg-gray-100 text-gray-600 text-xs rounded">Text</span>
-                  )}
-                  <span className="px-2 py-0.5 bg-slate-100 text-slate-600 text-xs rounded font-mono">{m.vram}</span>
-                  {m.verified ? (
-                    <span className="text-green-600 text-xs">✓</span>
-                  ) : (
-                    <span className="text-amber-500 text-xs">⚠️要確認</span>
-                  )}
-                  {m.running && (
-                    <span className="px-2 py-0.5 bg-green-100 text-green-700 text-xs rounded">起動中</span>
-                  )}
-                  {m.selected && !m.running && (
-                    <span className="px-2 py-0.5 bg-amber-100 text-amber-700 text-xs rounded">次回起動</span>
-                  )}
-                </div>
-                <div className="text-sm text-gray-500 mt-1">{m.description}</div>
-              </div>
-            </label>
-          ))}
-        </div>
-
-        {modelStatus?.status === 'stopped' && (
+        {ollamaStatus?.status !== 'ready' && (
           <div className="mt-3 p-3 bg-gray-50 border border-gray-200 rounded text-sm text-gray-700">
-            vLLMサーバーが停止しています。ターミナルで起動してください。
+            Ollamaが停止しています。ターミナルで `ollama serve` を実行してください。
           </div>
         )}
       </div>
