@@ -284,10 +284,13 @@ class VisionProcessor:
             device = "cuda" if self.config.use_gpu and torch.cuda.is_available() else "cpu"
             dtype = torch.float16 if device == "cuda" else torch.float32
 
+            # Use attn_implementation="eager" to avoid SDPA compatibility issues
+            # with newer transformers versions (4.45+)
             self._segmentation_model = AutoModelForCausalLM.from_pretrained(
                 model_name,
                 torch_dtype=dtype,
-                trust_remote_code=True
+                trust_remote_code=True,
+                attn_implementation="eager"
             ).to(device)
 
             self._segmentation_processor = AutoProcessor.from_pretrained(
@@ -305,7 +308,23 @@ class VisionProcessor:
             text=task_prompt,
             images=image,
             return_tensors="pt"
-        ).to(self._segmentation_model.device)
+        )
+
+        # Move to device and convert dtype to match model
+        device = self._segmentation_model.device
+        model_dtype = next(self._segmentation_model.parameters()).dtype
+        processed_inputs = {}
+        for k, v in inputs.items():
+            if v is None:
+                continue
+            if hasattr(v, 'dtype') and hasattr(v, 'to'):
+                if v.dtype.is_floating_point:
+                    processed_inputs[k] = v.to(device=device, dtype=model_dtype)
+                else:
+                    processed_inputs[k] = v.to(device)
+            else:
+                processed_inputs[k] = v
+        inputs = processed_inputs
 
         generated_ids = self._segmentation_model.generate(
             **inputs,

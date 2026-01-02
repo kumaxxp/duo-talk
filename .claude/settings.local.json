@@ -58,7 +58,9 @@
       "Bash(timeout 60 python3:*)",
       "Bash(ollama list:*)",
       "Bash(ollama pull:*)",
-      "Bash(tail:*)"
+      "Bash(tail:*)",
+      "Bash(/home/owner/miniconda3/envs/duo-talk/bin/pip show:*)",
+      "Bash(/home/owner/miniconda3/envs/duo-talk/bin/pip install:*)"
     ]
   }
 }
