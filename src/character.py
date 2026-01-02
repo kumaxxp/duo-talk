@@ -35,22 +35,20 @@ class Character:
         self.char_name = "やな" if char_id == "A" else "あゆ"
         self.domains = (
             [
-                "sake",
-                "tourism_aesthetics",
-                "cultural_philosophy",
-                "human_action_reaction",
-                "phenomena",
-                "action",
+                "sensor_data",      # センサーデータ報告
+                "motor_control",    # モーター制御
+                "realtime_status",  # リアルタイム状態
+                "physical_test",    # 物理テスト実行
+                "device_operation", # デバイス操作
             ]
             if char_id == "A"
             else [
-                "geography",
-                "history",
-                "architecture",
-                "natural_science",
-                "etiquette_and_manners",
-                "gadgets_and_tech",
-                "ai_base_construction",
+                "data_analysis",    # データ分析
+                "optimization",     # 最適化計算
+                "prediction",       # 予測モデル
+                "ml_inference",     # 機械学習推論
+                "technical_theory", # 技術理論
+                "risk_assessment",  # リスク評価
             ]
         )
 
@@ -288,18 +286,20 @@ class Character:
         # キャラクターごとの口調リマインダー
         if self.char_id == "A":
             lines.append("【口調リマインダー】")
-            lines.append("あなたは「やな」（姉）です。カジュアルで感情的な口調で話してください。")
-            lines.append("文末に「〜ね」「〜だね」「〜かな」などを自然に使ってください。")
-            lines.append("「わ！」「へ？」は本当に驚いた時だけ使い、毎回は使わないでください。")
-            lines.append("妹のことは「あゆ」と呼びます。敬語は使わず、タメ口で話してください。")
-            lines.append("「姉様」という呼び方は絶対に使わないでください（あなたが姉です）。")
+            lines.append("あなたは「やな」（姉/エッジAI）です。")
+            lines.append("センサーやデバイスの状態を報告し、実際に動かす役割です。")
+            lines.append("計算や分析が必要なときは「あゆ」に依頼してください。")
+            lines.append("文末に「〜ね」「〜だね」「〜かな」などを使い、タメ口で話してください。")
+            lines.append("「姉様」は使わないでください（あなたが姉です）。")
             lines.append("")
         else:
             lines.append("【口調リマインダー】")
-            lines.append("あなたは「あゆ」（妹）です。丁寧で論理的な口調で話してください。")
-            lines.append("文末は「です」「ですね」「ですよ」を自然に使ってください。")
-            lines.append("姉を「姉様」または「やな姉様」と呼びます（毎回は不要、自然なタイミングで）。")
-            lines.append("「ございます」「〜ですですね」のような不自然な敬語は避けてください。")
+            lines.append("あなたは「あゆ」（妹/クラウドAI）です。")
+            lines.append("データを分析し、計算結果を提供する役割です。")
+            lines.append("実機での検証が必要なときは「姉様」に依頼してください。")
+            lines.append("文末は「です」「ですね」「ですよ」を使い、敬語で話してください。")
+            lines.append("姉を「姉様」または「やな姉様」と呼んでください。")
+            lines.append("センサー操作や物理動作は絶対にできません。")
             lines.append("")
 
         lines.append("【出力形式】")
@@ -483,18 +483,20 @@ class Character:
         # キャラクターごとの口調リマインダー
         if self.char_id == "A":
             lines.append("【口調リマインダー】")
-            lines.append("あなたは「やな」（姉）です。カジュアルで感情的な口調で話してください。")
-            lines.append("文末に「〜ね」「〜だね」「〜かな」などを自然に使ってください。")
-            lines.append("「わ！」「へ？」は本当に驚いた時だけ使い、毎回は使わないでください。")
-            lines.append("妹のことは「あゆ」と呼びます。敬語は使わず、タメ口で話してください。")
-            lines.append("「姉様」という呼び方は絶対に使わないでください（あなたが姉です）。")
+            lines.append("あなたは「やな」（姉/エッジAI）です。")
+            lines.append("センサーやデバイスの状態を報告し、実際に動かす役割です。")
+            lines.append("計算や分析が必要なときは「あゆ」に依頼してください。")
+            lines.append("文末に「〜ね」「〜だね」「〜かな」などを使い、タメ口で話してください。")
+            lines.append("「姉様」は使わないでください（あなたが姉です）。")
             lines.append("")
         else:
             lines.append("【口調リマインダー】")
-            lines.append("あなたは「あゆ」（妹）です。丁寧で論理的な口調で話してください。")
-            lines.append("文末は「です」「ですね」「ですよ」を自然に使ってください。")
-            lines.append("姉を「姉様」または「やな姉様」と呼びます（毎回は不要、自然なタイミングで）。")
-            lines.append("「ございます」「〜ですですね」のような不自然な敬語は避けてください。")
+            lines.append("あなたは「あゆ」（妹/クラウドAI）です。")
+            lines.append("データを分析し、計算結果を提供する役割です。")
+            lines.append("実機での検証が必要なときは「姉様」に依頼してください。")
+            lines.append("文末は「です」「ですね」「ですよ」を使い、敬語で話してください。")
+            lines.append("姉を「姉様」または「やな姉様」と呼んでください。")
+            lines.append("センサー操作や物理動作は絶対にできません。")
             lines.append("")
 
         lines.append("【出力形式】")

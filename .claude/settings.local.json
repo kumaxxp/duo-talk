@@ -60,7 +60,11 @@
       "Bash(ollama pull:*)",
       "Bash(tail:*)",
       "Bash(/home/owner/miniconda3/envs/duo-talk/bin/pip show:*)",
-      "Bash(/home/owner/miniconda3/envs/duo-talk/bin/pip install:*)"
+      "Bash(/home/owner/miniconda3/envs/duo-talk/bin/pip install:*)",
+      "Bash(for:*)",
+      "Bash(do)",
+      "Bash(if [ -f \"$f\" ])",
+      "Bash(else)"
     ]
   }
 }

@@ -49,6 +49,7 @@ class SegmentationModel(str, Enum):
     FLORENCE2_LARGE = "florence2-large"
     GROUNDED_SAM2 = "grounded-sam2"
     GROUNDING_DINO = "grounding-dino"
+    YOLO_V8 = "yolov8"  # Fast and reliable alternative
     NONE = "none"
 
 

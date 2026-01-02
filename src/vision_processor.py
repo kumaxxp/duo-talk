@@ -253,6 +253,8 @@ class VisionProcessor:
                 SegmentationModel.FLORENCE2_LARGE
             ]:
                 return self._run_florence2(image_file)
+            elif self.config.segmentation_model == SegmentationModel.YOLO_V8:
+                return self._run_yolo(image_file)
             elif self.config.segmentation_model == SegmentationModel.GROUNDED_SAM2:
                 return self._run_grounded_sam2(image_file)
             elif self.config.segmentation_model == SegmentationModel.GROUNDING_DINO:
@@ -364,6 +366,65 @@ class VisionProcessor:
                 obj = DetectedObject(
                     label=label,
                     confidence=1.0,  # Florence-2 doesn't provide confidence
+                    bbox=norm_bbox,
+                    position_description=self._bbox_to_position(norm_bbox),
+                    size_description=self._bbox_to_size(norm_bbox)
+                )
+                detected_objects.append(obj)
+
+        return detected_objects
+
+    def _run_yolo(self, image_file: Path) -> List[DetectedObject]:
+        """Run YOLOv8 for object detection"""
+        try:
+            from ultralytics import YOLO
+            from PIL import Image
+        except ImportError:
+            print("YOLOv8 requires: pip install ultralytics")
+            return []
+
+        # Load model (cached after first load)
+        if self._segmentation_model is None or not hasattr(self._segmentation_model, 'predict'):
+            # Use YOLOv8 medium model for good balance of speed/accuracy
+            self._segmentation_model = YOLO('yolov8m.pt')
+
+        # Load image
+        image = Image.open(image_file).convert("RGB")
+        img_width, img_height = image.size
+
+        # Run detection
+        results = self._segmentation_model.predict(
+            source=image,
+            conf=self.config.segmentation_confidence_threshold,
+            verbose=False
+        )
+
+        detected_objects = []
+        if results and len(results) > 0:
+            result = results[0]
+            boxes = result.boxes
+
+            for i, box in enumerate(boxes):
+                if i >= self.config.max_objects:
+                    break
+
+                # Get box coordinates (xyxy format)
+                xyxy = box.xyxy[0].cpu().numpy()
+                confidence = float(box.conf[0].cpu().numpy())
+                class_id = int(box.cls[0].cpu().numpy())
+                label = result.names[class_id]
+
+                # Normalize bbox
+                norm_bbox = [
+                    xyxy[0] / img_width,
+                    xyxy[1] / img_height,
+                    xyxy[2] / img_width,
+                    xyxy[3] / img_height
+                ]
+
+                obj = DetectedObject(
+                    label=label,
+                    confidence=confidence,
                     bbox=norm_bbox,
                     position_description=self._bbox_to_position(norm_bbox),
                     size_description=self._bbox_to_size(norm_bbox)
