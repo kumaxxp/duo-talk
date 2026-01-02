@@ -1,103 +1,146 @@
-import React, { useEffect, useState } from 'react'
-import { Settings, Save, RotateCcw, Play, ChevronDown, ChevronUp, Loader2 } from 'lucide-react'
+import React, { useEffect, useState, useCallback, useRef } from 'react'
+import { Settings, Save, RotateCcw, Play, Loader2, Upload, X, Camera, Cpu, Layers } from 'lucide-react'
 
 interface VisionConfig {
   mode: string
-  vlm_type: string
-  vlm_custom_model: string
-  text_llm_type: string
-  text_llm_custom_model: string
   segmentation_model: string
   segmentation_confidence_threshold: number
   enable_ocr: boolean
-  enable_depth_estimation: boolean
   max_objects: number
   vlm_temperature: number
   vlm_max_tokens: number
   llm_temperature: number
   llm_max_tokens: number
   use_gpu: boolean
-  batch_size: number
   output_language: string
   include_coordinates: boolean
   include_confidence: boolean
-  custom_detection_prompt: string
   custom_description_prompt: string
 }
 
-interface Preset {
+interface ModelInfo {
+  id: string
   name: string
+  vision: boolean
   description: string
-  config: VisionConfig
+  vram: string
+  active: boolean
 }
 
-interface ModelOptions {
-  vlm_types: { value: string; label: string }[]
-  text_llm_types: { value: string; label: string }[]
-  segmentation_models: { value: string; label: string }[]
-  modes: { value: string; label: string }[]
+interface ModelStatus {
+  status: string
+  current_model: string | null
+  model_name: string
+  supports_vision: boolean
 }
+
+const PROCESSING_MODES = [
+  {
+    id: 'single_vlm',
+    name: 'VLMのみ',
+    icon: Camera,
+    description: '画像をVLMに直接入力して説明を生成',
+    detail: 'シンプルで高速。VLM対応モデルが必要です。',
+    requiresVision: true,
+  },
+  {
+    id: 'segmentation_llm',
+    name: 'セグメンテーション→LLM',
+    icon: Layers,
+    description: 'Florence-2で物体検出→LLMで説明生成',
+    detail: '正確な位置情報。VLM非対応モデルでも動作。',
+    requiresVision: false,
+  },
+  {
+    id: 'vlm_segmentation',
+    name: 'VLM+セグメンテーション',
+    icon: Cpu,
+    description: 'VLMとセグメンテーションを併用',
+    detail: '最も詳細な解析。VLM対応モデルが必要。',
+    requiresVision: true,
+  },
+]
+
+const SEGMENTATION_MODELS = [
+  { id: 'none', name: 'なし', description: '物体検出を使用しない' },
+  { id: 'florence2-base', name: 'Florence-2 Base', description: '軽量・高速（約1GB）' },
+  { id: 'florence2-large', name: 'Florence-2 Large', description: '高精度（約2GB）' },
+]
 
 const defaultConfig: VisionConfig = {
   mode: 'single_vlm',
-  vlm_type: 'llava:latest',
-  vlm_custom_model: '',
-  text_llm_type: 'gemma3:12b',
-  text_llm_custom_model: '',
   segmentation_model: 'none',
   segmentation_confidence_threshold: 0.5,
   enable_ocr: false,
-  enable_depth_estimation: false,
   max_objects: 20,
   vlm_temperature: 0.3,
   vlm_max_tokens: 1024,
   llm_temperature: 0.5,
   llm_max_tokens: 512,
   use_gpu: true,
-  batch_size: 1,
   output_language: 'ja',
   include_coordinates: true,
   include_confidence: true,
-  custom_detection_prompt: '',
   custom_description_prompt: '',
 }
 
 export default function SettingsPanel({ apiBase }: { apiBase: string }) {
   const [config, setConfig] = useState<VisionConfig>(defaultConfig)
-  const [presets, setPresets] = useState<Preset[]>([])
-  const [models, setModels] = useState<ModelOptions | null>(null)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [testing, setTesting] = useState(false)
-  const [testResult, setTestResult] = useState<any>(null)
-  const [testImagePath, setTestImagePath] = useState('')
-  const [showAdvanced, setShowAdvanced] = useState(false)
+  const [testResult, setTestResult] = useState<Record<string, unknown> | null>(null)
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null)
+
+  // Model management state
+  const [llmModels, setLlmModels] = useState<ModelInfo[]>([])
+  const [modelStatus, setModelStatus] = useState<ModelStatus | null>(null)
+
+  // Test image state
+  const [testImageFile, setTestImageFile] = useState<File | null>(null)
+  const [testImagePreview, setTestImagePreview] = useState<string | null>(null)
+  const [testImagePath, setTestImagePath] = useState<string>('')
+  const [dragOver, setDragOver] = useState(false)
+  const fileInputRef = useRef<HTMLInputElement>(null)
 
   // Load initial data
   useEffect(() => {
     const loadData = async () => {
       try {
-        const [configRes, presetsRes, modelsRes] = await Promise.all([
+        const [configRes, modelsRes, statusRes] = await Promise.all([
           fetch(`${apiBase}/api/vision/config`),
-          fetch(`${apiBase}/api/vision/presets`),
-          fetch(`${apiBase}/api/vision/models`),
+          fetch(`${apiBase}/api/models`),
+          fetch(`${apiBase}/api/models/status`),
         ])
 
         const configData = await configRes.json()
-        const presetsData = await presetsRes.json()
         const modelsData = await modelsRes.json()
+        const statusData = await statusRes.json()
 
         if (configData.config) setConfig({ ...defaultConfig, ...configData.config })
-        if (presetsData.presets) setPresets(presetsData.presets)
-        if (modelsData.models) setModels(modelsData.models)
+        if (modelsData.models) setLlmModels(modelsData.models)
+        setModelStatus(statusData)
       } catch (e) {
-        setMessage({ type: 'error', text: 'Failed to load settings' })
+        setMessage({ type: 'error', text: '設定の読み込みに失敗しました' })
       } finally {
         setLoading(false)
       }
     }
     loadData()
+  }, [apiBase])
+
+  // Poll model status
+  useEffect(() => {
+    const interval = setInterval(async () => {
+      try {
+        const res = await fetch(`${apiBase}/api/models/status`)
+        const data = await res.json()
+        setModelStatus(data)
+      } catch {
+        // Ignore errors
+      }
+    }, 3000)
+    return () => clearInterval(interval)
   }, [apiBase])
 
   // Save configuration
@@ -112,42 +155,88 @@ export default function SettingsPanel({ apiBase }: { apiBase: string }) {
       })
       const data = await res.json()
       if (data.status === 'ok') {
-        setMessage({ type: 'success', text: 'Settings saved successfully' })
+        setMessage({ type: 'success', text: '設定を保存しました' })
       } else {
-        setMessage({ type: 'error', text: data.error || 'Failed to save' })
+        setMessage({ type: 'error', text: data.error || '保存に失敗しました' })
       }
-    } catch (e) {
-      setMessage({ type: 'error', text: 'Failed to save settings' })
+    } catch {
+      setMessage({ type: 'error', text: '保存に失敗しました' })
     } finally {
       setSaving(false)
     }
   }
 
-  // Apply preset
-  const handleApplyPreset = async (presetName: string) => {
-    setMessage(null)
+  // Handle model switch
+  const handleModelSwitch = async (modelId: string) => {
+    if (modelStatus?.status === 'switching') return
     try {
-      const res = await fetch(`${apiBase}/api/vision/presets/apply`, {
+      await fetch(`${apiBase}/api/models/switch`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ preset_name: presetName }),
+        body: JSON.stringify({ model_id: modelId }),
       })
-      const data = await res.json()
-      if (data.config) {
-        setConfig({ ...defaultConfig, ...data.config })
-        setMessage({ type: 'success', text: `Preset "${presetName}" applied` })
-      }
     } catch (e) {
-      setMessage({ type: 'error', text: 'Failed to apply preset' })
+      console.error('Model switch error:', e)
     }
   }
 
-  // Test configuration
-  const handleTest = async () => {
-    if (!testImagePath) {
-      setMessage({ type: 'error', text: 'Please enter an image path' })
+  // Handle image selection for test
+  const handleImageSelect = useCallback((file: File) => {
+    if (!file.type.startsWith('image/')) {
+      setMessage({ type: 'error', text: '画像ファイルを選択してください' })
       return
     }
+    setTestImageFile(file)
+    setTestImagePath('')
+    const reader = new FileReader()
+    reader.onload = (e) => setTestImagePreview(e.target?.result as string)
+    reader.readAsDataURL(file)
+  }, [])
+
+  const handleDrop = useCallback((e: React.DragEvent) => {
+    e.preventDefault()
+    setDragOver(false)
+    const file = e.dataTransfer.files[0]
+    if (file) handleImageSelect(file)
+  }, [handleImageSelect])
+
+  const clearTestImage = useCallback(() => {
+    setTestImageFile(null)
+    setTestImagePreview(null)
+    setTestImagePath('')
+    if (fileInputRef.current) fileInputRef.current.value = ''
+  }, [])
+
+  // Test configuration
+  const handleTest = async () => {
+    let imagePath = testImagePath
+
+    // Upload image if file is selected
+    if (testImageFile) {
+      const formData = new FormData()
+      formData.append('image', testImageFile)
+      try {
+        const uploadRes = await fetch(`${apiBase}/api/image/upload`, {
+          method: 'POST',
+          body: formData,
+        })
+        const uploadData = await uploadRes.json()
+        if (uploadData.error) {
+          setMessage({ type: 'error', text: `画像アップロードエラー: ${uploadData.error}` })
+          return
+        }
+        imagePath = uploadData.path
+      } catch {
+        setMessage({ type: 'error', text: '画像アップロードに失敗しました' })
+        return
+      }
+    }
+
+    if (!imagePath) {
+      setMessage({ type: 'error', text: '画像を選択またはパスを入力してください' })
+      return
+    }
+
     setTesting(true)
     setTestResult(null)
     setMessage(null)
@@ -155,17 +244,18 @@ export default function SettingsPanel({ apiBase }: { apiBase: string }) {
       const res = await fetch(`${apiBase}/api/vision/test`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ image_path: testImagePath, config }),
+        body: JSON.stringify({ image_path: imagePath, config }),
       })
       const data = await res.json()
       if (data.result) {
         setTestResult(data.result)
-        setMessage({ type: 'success', text: `Test completed in ${data.result.processing_time_ms?.toFixed(0)}ms` })
+        const timeMs = (data.result.processing_time_ms as number)?.toFixed(0) || '?'
+        setMessage({ type: 'success', text: `解析完了（${timeMs}ms）` })
       } else {
-        setMessage({ type: 'error', text: data.error || 'Test failed' })
+        setMessage({ type: 'error', text: data.error || 'テストに失敗しました' })
       }
-    } catch (e) {
-      setMessage({ type: 'error', text: 'Test request failed' })
+    } catch {
+      setMessage({ type: 'error', text: 'テストリクエストに失敗しました' })
     } finally {
       setTesting(false)
     }
@@ -176,16 +266,17 @@ export default function SettingsPanel({ apiBase }: { apiBase: string }) {
     setConfig(prev => ({ ...prev, [key]: value }))
   }
 
-  // Check if mode uses segmentation
+  // Check if current model supports vision
+  const currentModelSupportsVision = modelStatus?.supports_vision ?? false
+  const currentMode = PROCESSING_MODES.find(m => m.id === config.mode)
+  const modeRequiresVision = currentMode?.requiresVision ?? false
   const usesSegmentation = config.mode === 'vlm_segmentation' || config.mode === 'segmentation_llm'
-  // Check if mode uses text LLM (not VLM)
-  const usesTextLLM = config.mode === 'segmentation_llm'
 
   if (loading) {
     return (
       <div className="flex items-center justify-center p-8">
         <Loader2 className="w-6 h-6 animate-spin text-slate-400" />
-        <span className="ml-2 text-slate-500">Loading settings...</span>
+        <span className="ml-2 text-slate-500">設定を読み込み中...</span>
       </div>
     )
   }
@@ -196,14 +287,14 @@ export default function SettingsPanel({ apiBase }: { apiBase: string }) {
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
           <Settings className="w-5 h-5 text-slate-600" />
-          <h2 className="text-lg font-semibold">Vision Settings</h2>
+          <h2 className="text-lg font-semibold">Vision設定</h2>
         </div>
         <div className="flex items-center gap-2">
           <button
             onClick={() => setConfig(defaultConfig)}
             className="px-3 py-1.5 text-sm border rounded hover:bg-slate-50 flex items-center gap-1"
           >
-            <RotateCcw className="w-4 h-4" /> Reset
+            <RotateCcw className="w-4 h-4" /> リセット
           </button>
           <button
             onClick={handleSave}
@@ -211,7 +302,7 @@ export default function SettingsPanel({ apiBase }: { apiBase: string }) {
             className="px-3 py-1.5 text-sm bg-slate-900 text-white rounded hover:bg-slate-800 flex items-center gap-1 disabled:opacity-50"
           >
             {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
-            Save
+            保存
           </button>
         </div>
       </div>
@@ -227,357 +318,342 @@ export default function SettingsPanel({ apiBase }: { apiBase: string }) {
         </div>
       )}
 
-      {/* Presets */}
-      <div className="p-4 bg-slate-50 rounded-lg">
-        <h3 className="font-medium mb-3">Quick Presets</h3>
-        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-2">
-          {presets.map(preset => (
-            <button
-              key={preset.name}
-              onClick={() => handleApplyPreset(preset.name)}
-              className="p-3 bg-white border rounded-lg hover:border-slate-400 text-left transition-colors"
+      {/* 1. Processing Mode Selection */}
+      <div className="p-4 bg-white border rounded-lg">
+        <h3 className="font-medium mb-3">処理モード</h3>
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+          {PROCESSING_MODES.map(mode => {
+            const Icon = mode.icon
+            const isSelected = config.mode === mode.id
+            const isDisabled = mode.requiresVision && !currentModelSupportsVision
+            return (
+              <button
+                key={mode.id}
+                onClick={() => !isDisabled && updateConfig('mode', mode.id)}
+                disabled={isDisabled}
+                className={`p-4 rounded-lg border-2 text-left transition-all
+                  ${isSelected ? 'border-blue-500 bg-blue-50' : 'border-gray-200 hover:border-gray-300'}
+                  ${isDisabled ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}`}
+              >
+                <div className="flex items-center gap-2 mb-2">
+                  <Icon className={`w-5 h-5 ${isSelected ? 'text-blue-600' : 'text-gray-500'}`} />
+                  <span className={`font-medium ${isSelected ? 'text-blue-700' : ''}`}>{mode.name}</span>
+                </div>
+                <p className="text-sm text-gray-600">{mode.description}</p>
+                <p className="text-xs text-gray-400 mt-1">{mode.detail}</p>
+                {isDisabled && (
+                  <p className="text-xs text-red-500 mt-2">※ VLM対応モデルに切り替えてください</p>
+                )}
+              </button>
+            )
+          })}
+        </div>
+
+        {/* Mode warning */}
+        {modeRequiresVision && !currentModelSupportsVision && (
+          <div className="mt-3 p-3 bg-amber-50 border border-amber-200 rounded text-sm text-amber-700">
+            現在のモデル（{modelStatus?.model_name}）はVLM非対応です。
+            「VLM対応モデル」に切り替えるか、「セグメンテーション→LLM」モードを使用してください。
+          </div>
+        )}
+      </div>
+
+      {/* 2. Main Model (LLM/VLM) Selection */}
+      <div className="p-4 bg-white border rounded-lg">
+        <h3 className="font-medium mb-3">メインモデル（LLM/VLM）</h3>
+
+        {/* Status */}
+        <div className="flex items-center gap-2 mb-3 text-sm">
+          <span
+            className={`w-2 h-2 rounded-full ${
+              modelStatus?.status === 'ready' ? 'bg-green-500' :
+              modelStatus?.status === 'switching' || modelStatus?.status === 'starting' ? 'bg-yellow-500 animate-pulse' :
+              'bg-gray-400'
+            }`}
+          />
+          <span className="text-gray-600">
+            {modelStatus?.status === 'ready' ? '起動中' :
+             modelStatus?.status === 'switching' ? '切り替え中...' :
+             modelStatus?.status === 'starting' ? '起動中...' :
+             modelStatus?.status === 'stopped' ? '停止' : '不明'}
+          </span>
+          {modelStatus?.current_model && (
+            <span className="text-gray-500">
+              - {llmModels.find(m => m.id === modelStatus.current_model)?.name?.split('/')[1]}
+            </span>
+          )}
+        </div>
+
+        {/* Model selection */}
+        <div className="space-y-2">
+          {llmModels.map(m => (
+            <label
+              key={m.id}
+              className={`flex items-start gap-3 p-3 rounded-lg cursor-pointer transition-colors
+                ${m.id === modelStatus?.current_model ? 'bg-blue-50 border-2 border-blue-300' : 'bg-gray-50 border-2 border-transparent hover:bg-gray-100'}
+                ${modelStatus?.status === 'switching' ? 'opacity-50 cursor-not-allowed' : ''}`}
             >
-              <div className="font-medium text-sm">{preset.name}</div>
-              <div className="text-xs text-slate-500 mt-1 line-clamp-2">{preset.description}</div>
+              <input
+                type="radio"
+                name="main-model"
+                value={m.id}
+                checked={m.id === modelStatus?.current_model}
+                onChange={() => handleModelSwitch(m.id)}
+                disabled={modelStatus?.status === 'switching'}
+                className="mt-1"
+              />
+              <div className="flex-1">
+                <div className="flex items-center gap-2">
+                  <span className="font-medium">{m.name.split('/')[1]}</span>
+                  {m.vision && <span className="px-2 py-0.5 bg-purple-100 text-purple-700 text-xs rounded">VLM対応</span>}
+                </div>
+                <div className="text-sm text-gray-500 mt-1">{m.description}（{m.vram}）</div>
+              </div>
+            </label>
+          ))}
+        </div>
+
+        {modelStatus?.status === 'switching' && (
+          <div className="mt-3 p-3 bg-yellow-50 border border-yellow-200 rounded text-sm text-yellow-700">
+            モデルを切り替え中です。1-2分お待ちください...
+          </div>
+        )}
+      </div>
+
+      {/* 3. Segmentation Model Selection */}
+      <div className={`p-4 bg-white border rounded-lg ${!usesSegmentation ? 'opacity-50' : ''}`}>
+        <h3 className="font-medium mb-3">
+          セグメンテーションモデル
+          {!usesSegmentation && <span className="text-xs text-gray-500 ml-2">（現在のモードでは使用しません）</span>}
+        </h3>
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+          {SEGMENTATION_MODELS.map(seg => (
+            <button
+              key={seg.id}
+              onClick={() => usesSegmentation && updateConfig('segmentation_model', seg.id)}
+              disabled={!usesSegmentation}
+              className={`p-3 rounded-lg border-2 text-left transition-all
+                ${config.segmentation_model === seg.id ? 'border-green-500 bg-green-50' : 'border-gray-200'}
+                ${!usesSegmentation ? 'cursor-not-allowed' : 'cursor-pointer hover:border-gray-300'}`}
+            >
+              <div className={`font-medium ${config.segmentation_model === seg.id ? 'text-green-700' : ''}`}>
+                {seg.name}
+              </div>
+              <p className="text-sm text-gray-500 mt-1">{seg.description}</p>
             </button>
           ))}
         </div>
       </div>
 
-      {/* Mode Selection */}
+      {/* 4. Parameters */}
       <div className="p-4 bg-white border rounded-lg">
-        <h3 className="font-medium mb-3">Processing Mode</h3>
-        <select
-          value={config.mode}
-          onChange={e => updateConfig('mode', e.target.value)}
-          className="w-full px-3 py-2 border rounded"
-        >
-          {models?.modes.map(m => (
-            <option key={m.value} value={m.value}>
-              {m.label}
-            </option>
-          ))}
-        </select>
-        <div className="mt-3 p-3 bg-slate-50 rounded text-sm">
-          {config.mode === 'single_vlm' && (
-            <div>
-              <strong>VLMのみモード:</strong> 画像をVLM (LLaVA, LLaMA Vision等) に入力し、直接説明を生成します。
-              <br />シンプルで高速ですが、位置情報は概略的です。
-            </div>
-          )}
-          {config.mode === 'vlm_segmentation' && (
-            <div>
-              <strong>VLM + セグメンテーション併用:</strong> VLMで全体説明を生成しつつ、Florence-2で詳細な物体検出を行います。
-              <br />両方の結果を統合して、位置情報付きの詳細な説明を提供します。
-            </div>
-          )}
-          {config.mode === 'segmentation_llm' && (
-            <div>
-              <strong>セグメンテーション → テキストLLMモード:</strong> Florence-2で物体を検出し、その構造化データをテキストLLM (Gemma3等) に渡して説明を生成します。
-              <br />VLMなしで動作し、正確な位置情報を活用した説明が可能です。
-            </div>
-          )}
-        </div>
-      </div>
-
-      {/* Main Settings */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-        {/* VLM Selection */}
-        <div className={`p-4 bg-white border rounded-lg ${usesTextLLM ? 'opacity-50' : ''}`}>
-          <h3 className="font-medium mb-3">
-            VLM Model
-            {usesTextLLM && <span className="text-xs text-slate-500 ml-2">(not used in current mode)</span>}
-          </h3>
-          <select
-            value={config.vlm_type}
-            onChange={e => updateConfig('vlm_type', e.target.value)}
-            className="w-full px-3 py-2 border rounded"
-            disabled={usesTextLLM}
-          >
-            {models?.vlm_types.map(m => (
-              <option key={m.value} value={m.value}>
-                {m.label} ({m.value})
-              </option>
-            ))}
-          </select>
-          {config.vlm_type === 'custom' && (
+        <h3 className="font-medium mb-4">パラメータ</h3>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+          {/* Temperature */}
+          <div>
+            <label className="text-sm text-gray-600 block mb-2">
+              Temperature: <span className="font-mono">{config.vlm_temperature}</span>
+            </label>
             <input
-              type="text"
-              placeholder="Custom model name (e.g., my-vlm:latest)"
-              value={config.vlm_custom_model}
-              onChange={e => updateConfig('vlm_custom_model', e.target.value)}
-              className="w-full px-3 py-2 border rounded mt-2"
-              disabled={usesTextLLM}
+              type="range"
+              min="0"
+              max="1"
+              step="0.1"
+              value={config.vlm_temperature}
+              onChange={e => updateConfig('vlm_temperature', parseFloat(e.target.value))}
+              className="w-full"
             />
-          )}
-          <p className="text-xs text-slate-500 mt-2">Vision Language Model (画像入力対応)</p>
-        </div>
+            <div className="flex justify-between text-xs text-gray-400 mt-1">
+              <span>正確（0.0）</span>
+              <span>創造的（1.0）</span>
+            </div>
+          </div>
 
-        {/* Text LLM Selection */}
-        <div className={`p-4 bg-white border rounded-lg ${!usesTextLLM ? 'opacity-50' : ''}`}>
-          <h3 className="font-medium mb-3">
-            Text LLM Model
-            {!usesTextLLM && <span className="text-xs text-slate-500 ml-2">(only for segmentation_llm mode)</span>}
-          </h3>
-          <select
-            value={config.text_llm_type}
-            onChange={e => updateConfig('text_llm_type', e.target.value)}
-            className="w-full px-3 py-2 border rounded"
-            disabled={!usesTextLLM}
-          >
-            {models?.text_llm_types?.map(m => (
-              <option key={m.value} value={m.value}>
-                {m.label} ({m.value})
-              </option>
-            ))}
-          </select>
-          {config.text_llm_type === 'custom' && (
+          {/* Max Tokens */}
+          <div>
+            <label className="text-sm text-gray-600 block mb-2">最大トークン数</label>
             <input
-              type="text"
-              placeholder="Custom model name (e.g., my-llm:latest)"
-              value={config.text_llm_custom_model}
-              onChange={e => updateConfig('text_llm_custom_model', e.target.value)}
-              className="w-full px-3 py-2 border rounded mt-2"
-              disabled={!usesTextLLM}
+              type="number"
+              value={config.vlm_max_tokens}
+              onChange={e => updateConfig('vlm_max_tokens', parseInt(e.target.value) || 512)}
+              className="w-full px-3 py-2 border rounded"
             />
-          )}
-          <p className="text-xs text-slate-500 mt-2">Text LLM (セグメンテーション結果の説明生成用)</p>
-        </div>
+          </div>
 
-        {/* Segmentation Model */}
-        <div className={`p-4 bg-white border rounded-lg ${!usesSegmentation ? 'opacity-50' : ''}`}>
-          <h3 className="font-medium mb-3">
-            Segmentation Model
-            {!usesSegmentation && <span className="text-xs text-slate-500 ml-2">(not used in current mode)</span>}
-          </h3>
-          <select
-            value={config.segmentation_model}
-            onChange={e => updateConfig('segmentation_model', e.target.value)}
-            className="w-full px-3 py-2 border rounded"
-            disabled={!usesSegmentation}
-          >
-            {models?.segmentation_models.map(m => (
-              <option key={m.value} value={m.value}>
-                {m.label}
-              </option>
-            ))}
-          </select>
-          <p className="text-xs text-slate-500 mt-2">
-            Florence-2: 軽量で高速な物体検出
-            <br />
-            Grounded SAM 2: 高精度セグメンテーション
-          </p>
-        </div>
+          {/* Max Objects */}
+          <div>
+            <label className="text-sm text-gray-600 block mb-2">最大検出オブジェクト数</label>
+            <input
+              type="number"
+              value={config.max_objects}
+              onChange={e => updateConfig('max_objects', parseInt(e.target.value) || 20)}
+              className="w-full px-3 py-2 border rounded"
+              disabled={!usesSegmentation}
+            />
+          </div>
 
-        {/* Parameters */}
-        <div className="p-4 bg-white border rounded-lg">
-          <h3 className="font-medium mb-3">Model Parameters</h3>
-          <div className="space-y-3">
-            <div>
-              <label className="text-sm text-slate-600">
-                {usesTextLLM ? 'LLM' : 'VLM'} Temperature: {usesTextLLM ? config.llm_temperature : config.vlm_temperature}
-              </label>
+          {/* Options */}
+          <div className="space-y-2">
+            <label className="flex items-center gap-2">
               <input
-                type="range"
-                min="0"
-                max="1"
-                step="0.1"
-                value={usesTextLLM ? config.llm_temperature : config.vlm_temperature}
-                onChange={e => updateConfig(
-                  usesTextLLM ? 'llm_temperature' : 'vlm_temperature',
-                  parseFloat(e.target.value)
-                )}
-                className="w-full"
+                type="checkbox"
+                checked={config.use_gpu}
+                onChange={e => updateConfig('use_gpu', e.target.checked)}
               />
-            </div>
-            <div>
-              <label className="text-sm text-slate-600">Max Tokens</label>
+              <span className="text-sm">GPUを使用</span>
+            </label>
+            <label className="flex items-center gap-2">
               <input
-                type="number"
-                value={usesTextLLM ? config.llm_max_tokens : config.vlm_max_tokens}
-                onChange={e => updateConfig(
-                  usesTextLLM ? 'llm_max_tokens' : 'vlm_max_tokens',
-                  parseInt(e.target.value) || 512
-                )}
-                className="w-full px-3 py-2 border rounded"
+                type="checkbox"
+                checked={config.include_coordinates}
+                onChange={e => updateConfig('include_coordinates', e.target.checked)}
               />
-            </div>
+              <span className="text-sm">座標情報を含める</span>
+            </label>
           </div>
         </div>
       </div>
 
-      {/* Advanced Settings */}
-      <div className="border rounded-lg">
-        <button
-          onClick={() => setShowAdvanced(!showAdvanced)}
-          className="w-full p-4 flex items-center justify-between hover:bg-slate-50"
-        >
-          <span className="font-medium">Advanced Settings</span>
-          {showAdvanced ? <ChevronUp className="w-5 h-5" /> : <ChevronDown className="w-5 h-5" />}
-        </button>
-        {showAdvanced && (
-          <div className="p-4 border-t space-y-4">
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-              <label className="flex items-center gap-2">
-                <input
-                  type="checkbox"
-                  checked={config.use_gpu}
-                  onChange={e => updateConfig('use_gpu', e.target.checked)}
-                />
-                <span className="text-sm">Use GPU</span>
-              </label>
-              <label className="flex items-center gap-2">
-                <input
-                  type="checkbox"
-                  checked={config.enable_ocr}
-                  onChange={e => updateConfig('enable_ocr', e.target.checked)}
-                />
-                <span className="text-sm">Enable OCR</span>
-              </label>
-              <label className="flex items-center gap-2">
-                <input
-                  type="checkbox"
-                  checked={config.include_coordinates}
-                  onChange={e => updateConfig('include_coordinates', e.target.checked)}
-                />
-                <span className="text-sm">Include Coordinates</span>
-              </label>
-              <label className="flex items-center gap-2">
-                <input
-                  type="checkbox"
-                  checked={config.include_confidence}
-                  onChange={e => updateConfig('include_confidence', e.target.checked)}
-                />
-                <span className="text-sm">Include Confidence</span>
-              </label>
-            </div>
+      {/* 5. Test Area */}
+      <div className="p-4 bg-white border rounded-lg">
+        <h3 className="font-medium mb-4">テスト</h3>
 
-            <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
-              <div>
-                <label className="text-sm text-slate-600">Max Objects</label>
-                <input
-                  type="number"
-                  value={config.max_objects}
-                  onChange={e => updateConfig('max_objects', parseInt(e.target.value) || 20)}
-                  className="w-full px-3 py-2 border rounded"
-                />
-              </div>
-              <div>
-                <label className="text-sm text-slate-600">Segmentation Threshold</label>
-                <input
-                  type="number"
-                  min="0"
-                  max="1"
-                  step="0.1"
-                  value={config.segmentation_confidence_threshold}
-                  onChange={e => updateConfig('segmentation_confidence_threshold', parseFloat(e.target.value) || 0.5)}
-                  className="w-full px-3 py-2 border rounded"
-                />
-              </div>
-              <div>
-                <label className="text-sm text-slate-600">Output Language</label>
-                <select
-                  value={config.output_language}
-                  onChange={e => updateConfig('output_language', e.target.value)}
-                  className="w-full px-3 py-2 border rounded"
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          {/* Image drop zone */}
+          <div
+            className={`border-2 border-dashed rounded-lg p-6 text-center transition-colors cursor-pointer
+              ${dragOver ? 'border-blue-500 bg-blue-50' : 'border-gray-300 hover:border-gray-400'}
+              ${testImagePreview ? 'border-green-500 bg-green-50' : ''}`}
+            onDrop={handleDrop}
+            onDragOver={e => { e.preventDefault(); setDragOver(true) }}
+            onDragLeave={e => { e.preventDefault(); setDragOver(false) }}
+            onClick={() => fileInputRef.current?.click()}
+          >
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept="image/*"
+              className="hidden"
+              onChange={e => e.target.files?.[0] && handleImageSelect(e.target.files[0])}
+            />
+            {testImagePreview ? (
+              <div className="relative inline-block">
+                <img src={testImagePreview} alt="テスト画像" className="max-h-40 mx-auto rounded" />
+                <button
+                  className="absolute -top-2 -right-2 bg-red-500 text-white rounded-full w-6 h-6 flex items-center justify-center hover:bg-red-600"
+                  onClick={(e) => { e.stopPropagation(); clearTestImage() }}
                 >
-                  <option value="ja">Japanese</option>
-                  <option value="en">English</option>
-                </select>
-              </div>
-            </div>
-
-            <div>
-              <label className="text-sm text-slate-600">Custom Description Prompt</label>
-              <textarea
-                value={config.custom_description_prompt}
-                onChange={e => updateConfig('custom_description_prompt', e.target.value)}
-                placeholder="Leave empty to use default prompt"
-                className="w-full px-3 py-2 border rounded h-24 font-mono text-sm"
-              />
-            </div>
-          </div>
-        )}
-      </div>
-
-      {/* Test Section */}
-      <div className="p-4 bg-white border rounded-lg">
-        <h3 className="font-medium mb-3">Test Configuration</h3>
-        <div className="flex gap-2">
-          <input
-            type="text"
-            placeholder="Image path (e.g., /path/to/image.jpg)"
-            value={testImagePath}
-            onChange={e => setTestImagePath(e.target.value)}
-            className="flex-1 px-3 py-2 border rounded"
-          />
-          <button
-            onClick={handleTest}
-            disabled={testing}
-            className="px-4 py-2 bg-emerald-600 text-white rounded hover:bg-emerald-700 flex items-center gap-2 disabled:opacity-50"
-          >
-            {testing ? <Loader2 className="w-4 h-4 animate-spin" /> : <Play className="w-4 h-4" />}
-            Test
-          </button>
-        </div>
-
-        {testResult && (
-          <div className="mt-4 p-4 bg-slate-50 rounded">
-            <div className="flex items-center justify-between mb-2">
-              <span className="font-medium">Test Result</span>
-              <span className="text-sm text-slate-500">
-                Mode: {testResult.mode_used} | Time: {testResult.processing_time_ms?.toFixed(0)}ms
-              </span>
-            </div>
-            {testResult.status === 'success' ? (
-              <div className="space-y-2 text-sm">
-                {testResult.visual_info && (
-                  <div>
-                    <div className="font-medium text-slate-700">Visual Info:</div>
-                    <pre className="mt-1 p-2 bg-white rounded text-xs overflow-auto max-h-40">
-                      {JSON.stringify(testResult.visual_info, null, 2)}
-                    </pre>
-                  </div>
-                )}
-                {testResult.detected_objects?.length > 0 && (
-                  <div>
-                    <div className="font-medium text-slate-700">
-                      Detected Objects ({testResult.detected_objects.length}):
-                    </div>
-                    <div className="mt-1 flex flex-wrap gap-1">
-                      {testResult.detected_objects.map((obj: any, i: number) => (
-                        <span key={i} className="px-2 py-1 bg-white rounded text-xs">
-                          {obj.label} ({obj.position}, {obj.size})
-                        </span>
-                      ))}
-                    </div>
-                  </div>
-                )}
+                  <X className="w-4 h-4" />
+                </button>
+                <p className="text-xs text-green-600 mt-2">{testImageFile?.name}</p>
               </div>
             ) : (
-              <div className="text-red-600 text-sm">{testResult.error}</div>
+              <div className="text-gray-500">
+                <Upload className="w-8 h-8 mx-auto mb-2 text-gray-400" />
+                <p className="text-sm">画像をドラッグ&ドロップ</p>
+                <p className="text-xs text-gray-400">またはクリックして選択</p>
+              </div>
             )}
           </div>
-        )}
+
+          {/* Path input and test button */}
+          <div className="space-y-3">
+            <div>
+              <label className="text-sm text-gray-600 block mb-1">または画像パスを入力</label>
+              <input
+                type="text"
+                placeholder="/path/to/image.jpg"
+                value={testImagePath}
+                onChange={e => { setTestImagePath(e.target.value); setTestImageFile(null); setTestImagePreview(null) }}
+                className="w-full px-3 py-2 border rounded text-sm"
+              />
+            </div>
+
+            <button
+              onClick={handleTest}
+              disabled={testing || (!testImageFile && !testImagePath)}
+              className="w-full px-4 py-3 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {testing ? (
+                <>
+                  <Loader2 className="w-5 h-5 animate-spin" />
+                  解析中...
+                </>
+              ) : (
+                <>
+                  <Play className="w-5 h-5" />
+                  テスト実行
+                </>
+              )}
+            </button>
+          </div>
+        </div>
       </div>
 
-      {/* Installation Note */}
-      <div className="p-4 bg-amber-50 border border-amber-200 rounded-lg text-sm">
-        <h4 className="font-medium text-amber-800 mb-2">Installation Note</h4>
-        <p className="text-amber-700">
-          Florence-2 segmentation requires additional dependencies:
-        </p>
-        <code className="block mt-2 p-2 bg-white rounded text-xs">
-          pip install -r requirements-vision.txt
-        </code>
-        <p className="text-amber-700 mt-2">
-          Also ensure required Ollama models are installed:
-        </p>
-        <code className="block mt-2 p-2 bg-white rounded text-xs">
-          ollama pull llava:latest<br/>
-          ollama pull gemma3:12b
-        </code>
-      </div>
+      {/* 6. Test Results */}
+      {testResult && (
+        <div className="p-4 bg-white border rounded-lg">
+          <div className="flex items-center justify-between mb-3">
+            <h3 className="font-medium">解析結果</h3>
+            <span className="text-sm text-gray-500">
+              モード: {(testResult.mode_used as string) || '?'} |
+              処理時間: {((testResult.processing_time_ms as number) || 0).toFixed(0)}ms
+            </span>
+          </div>
+
+          {(testResult.status as string) === 'success' ? (
+            <div className="space-y-4">
+              {/* Visual Info */}
+              {testResult.visual_info && (
+                <div>
+                  <h4 className="text-sm font-medium text-gray-700 mb-2">映像情報</h4>
+                  <div className="bg-gray-50 rounded-lg p-3 space-y-2 text-sm">
+                    {Object.entries(testResult.visual_info as Record<string, string>).map(([key, value]) => (
+                      value && (
+                        <div key={key}>
+                          <span className="text-gray-500">{key}:</span>
+                          <span className="ml-2 text-gray-800">{value}</span>
+                        </div>
+                      )
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Detected Objects */}
+              {(testResult.detected_objects as Array<{label: string; position: string; size: string}>)?.length > 0 && (
+                <div>
+                  <h4 className="text-sm font-medium text-gray-700 mb-2">
+                    検出オブジェクト（{(testResult.detected_objects as Array<unknown>).length}件）
+                  </h4>
+                  <div className="flex flex-wrap gap-2">
+                    {(testResult.detected_objects as Array<{label: string; position: string; size: string}>).map((obj, i) => (
+                      <span key={i} className="px-3 py-1 bg-blue-50 text-blue-700 rounded-full text-sm">
+                        {obj.label}
+                        <span className="text-blue-400 ml-1">({obj.position}, {obj.size})</span>
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Raw Text */}
+              {testResult.raw_text && (
+                <div>
+                  <h4 className="text-sm font-medium text-gray-700 mb-2">生テキスト</h4>
+                  <pre className="bg-gray-50 rounded-lg p-3 text-xs overflow-auto max-h-60 whitespace-pre-wrap">
+                    {testResult.raw_text as string}
+                  </pre>
+                </div>
+              )}
+            </div>
+          ) : (
+            <div className="text-red-600 text-sm p-3 bg-red-50 rounded">
+              エラー: {testResult.error as string}
+            </div>
+          )}
+        </div>
+      )}
     </div>
   )
 }

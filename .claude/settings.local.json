@@ -38,7 +38,8 @@
       "Bash(done)",
       "Bash(kill:*)",
       "Bash(netstat:*)",
-      "Bash(then echo \"vLLM is ready!\" curl -s http://localhost:8000/v1/models)"
+      "Bash(then echo \"vLLM is ready!\" curl -s http://localhost:8000/v1/models)",
+      "Bash(ss:*)"
     ]
   }
 }

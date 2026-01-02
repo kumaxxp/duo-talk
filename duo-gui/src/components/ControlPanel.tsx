@@ -11,7 +11,6 @@ interface ModelInfo {
 
 export default function ControlPanel({ apiBase, onStarted }:{ apiBase: string, onStarted: (rid?:string)=>void }){
   const [topic,setTopic]=useState('')
-  const [model,setModel]=useState('')
   const [maxTurns,setMax]=useState(8)
   const [seed,setSeed]=useState<number|''>('')
   const [noRag,setNoRag]=useState(false)
@@ -127,7 +126,6 @@ export default function ControlPanel({ apiBase, onStarted }:{ apiBase: string, o
 
       const body = {
         topic,
-        model,
         maxTurns,
         seed: (seed===''?undefined:seed),
         noRag,
@@ -192,14 +190,6 @@ export default function ControlPanel({ apiBase, onStarted }:{ apiBase: string, o
         placeholder={imagePreview ? "トピック（オプション：画像から自動生成）" : "トピック（必須）"}
         value={topic}
         onChange={e=>setTopic(e.target.value)}
-      />
-
-      {/* モデル選択 */}
-      <input
-        className="w-full px-3 py-2 border rounded"
-        placeholder="model (e.g., gemma3:12b)"
-        value={model}
-        onChange={e=>setModel(e.target.value)}
       />
 
       {/* オプション */}
