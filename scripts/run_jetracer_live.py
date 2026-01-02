@@ -19,7 +19,7 @@ import os
 # プロジェクトルートをパスに追加
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from src.jetracer_client import JetRacerClient, JetRacerState
+from src.jetracer_client import JetRacerClient, JetRacerState, load_config
 from src.character import Character
 from src.director import Director
 
@@ -51,13 +51,23 @@ def format_state_summary(state: JetRacerState) -> str:
 
 
 def main():
+    # 設定読み込み（config.yaml）
+    config = load_config()
+    jetracer_config = config.get("jetracer", {})
+    default_host = jetracer_config.get("host", "localhost")
+    default_port = jetracer_config.get("port", 8000)
+    default_url = f"http://{default_host}:{default_port}"
+    commentary_config = config.get("commentary", {})
+    default_interval = commentary_config.get("interval", 3.0)
+    default_turns = commentary_config.get("turns_per_frame", 4)
+
     parser = argparse.ArgumentParser(description="JetRacer Live Commentary")
-    parser.add_argument("--url", "-u", 
-                        default=os.getenv("JETRACER_URL", "http://localhost:8000"),
+    parser.add_argument("--url", "-u",
+                        default=default_url,
                         help="JetRacer API URL")
-    parser.add_argument("--interval", "-i", type=float, default=3.0,
+    parser.add_argument("--interval", "-i", type=float, default=default_interval,
                         help="Update interval in seconds")
-    parser.add_argument("--turns", "-t", type=int, default=4,
+    parser.add_argument("--turns", "-t", type=int, default=default_turns,
                         help="Number of conversation turns per frame")
     parser.add_argument("--dry-run", action="store_true",
                         help="Use mock data instead of real JetRacer")
