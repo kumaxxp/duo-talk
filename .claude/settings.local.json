@@ -65,7 +65,8 @@
       "Bash(do)",
       "Bash(if [ -f \"$f\" ])",
       "Bash(else)",
-      "Bash(timeout 60 /home/owner/miniconda3/envs/duo-talk/bin/python:*)"
+      "Bash(timeout 60 /home/owner/miniconda3/envs/duo-talk/bin/python:*)",
+      "Bash(timeout 15 /home/owner/miniconda3/envs/duo-talk/bin/python:*)"
     ]
   }
 }

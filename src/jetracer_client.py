@@ -7,10 +7,33 @@ JetRacer Data Fetcher - Jetsonからセンサーデータを取得
     frame_desc = client.to_frame_description(data)
 """
 import httpx
+import yaml
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Optional, Dict, Any
 import time
 import os
+
+
+def load_config(config_path: str = None) -> dict:
+    """設定ファイルを読み込む
+
+    Args:
+        config_path: 設定ファイルのパス。Noneの場合はプロジェクトルートのconfig.yamlを使用
+
+    Returns:
+        設定辞書。ファイルが存在しない場合は空辞書
+    """
+    if config_path is None:
+        # プロジェクトルートの config.yaml を探す
+        project_root = Path(__file__).parent.parent
+        config_path = project_root / "config.yaml"
+
+    config_path = Path(config_path)
+    if config_path.exists():
+        with open(config_path, "r", encoding="utf-8") as f:
+            return yaml.safe_load(f) or {}
+    return {}
 
 
 @dataclass
@@ -47,15 +70,25 @@ class JetRacerState:
 
 class JetRacerClient:
     """JetRacer HTTP APIクライアント"""
-    
-    def __init__(self, base_url: Optional[str] = None, timeout: float = 5.0):
+
+    def __init__(self, base_url: Optional[str] = None, timeout: float = None):
         """
         Args:
-            base_url: JetRacer APIのURL。Noneの場合は環境変数JETRACER_URLを使用
-            timeout: HTTPタイムアウト秒数
+            base_url: JetRacer APIのURL。Noneの場合はconfig.yaml→環境変数の順で取得
+            timeout: HTTPタイムアウト秒数。Noneの場合はconfig.yaml→デフォルト値(10.0)
         """
+        config = load_config()
+        jetracer_config = config.get("jetracer", {})
+
         if base_url is None:
-            base_url = os.getenv("JETRACER_URL", "http://localhost:8000")
+            # config.yaml → 環境変数 → デフォルト値 の順で取得
+            host = jetracer_config.get("host", os.getenv("JETRACER_HOST", "localhost"))
+            port = jetracer_config.get("port", int(os.getenv("JETRACER_PORT", "8000")))
+            base_url = f"http://{host}:{port}"
+
+        if timeout is None:
+            timeout = jetracer_config.get("timeout", 10.0)
+
         self.base_url = base_url.rstrip("/")
         self.timeout = timeout
         self._client = httpx.Client(timeout=timeout)

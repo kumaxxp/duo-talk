@@ -1,0 +1,17 @@
+# duo-talk Configuration
+
+jetracer:
+  host: "192.168.1.65"
+  port: 8000
+  timeout: 10.0
+
+llm:
+  # vLLM server on A5000
+  base_url: "http://localhost:8001/v1"
+  model: "Qwen/Qwen2.5-14B-Instruct"
+  temperature: 0.7
+  max_tokens: 256
+
+commentary:
+  interval: 3.0  # フレーム間隔（秒）
+  turns_per_frame: 4  # 1フレームあたりの会話ターン数
