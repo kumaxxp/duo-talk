@@ -64,7 +64,8 @@
       "Bash(for:*)",
       "Bash(do)",
       "Bash(if [ -f \"$f\" ])",
-      "Bash(else)"
+      "Bash(else)",
+      "Bash(timeout 60 /home/owner/miniconda3/envs/duo-talk/bin/python:*)"
     ]
   }
 }

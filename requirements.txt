@@ -15,6 +15,7 @@ duckduckgo-search>=6.0,<7
 
 # Utilities
 requests>=2.31,<3
+httpx>=0.25.0
 
 # Vision Processing (optional - for Florence-2 segmentation)
 # Install with: pip install -r requirements-vision.txt

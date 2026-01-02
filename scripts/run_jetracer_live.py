@@ -179,12 +179,12 @@ def main():
                 
                 # リトライが必要な場合
                 retry_count = 0
-                while evaluation.get("decision") == "RETRY" and retry_count < 2:
+                while evaluation.status.name == "RETRY" and retry_count < 2:
                     retry_count += 1
                     response = speaker.speak(
                         frame_description=frame_desc,
                         partner_speech=partner_speech,
-                        director_instruction=evaluation.get("instruction"),
+                        director_instruction=evaluation.suggestion,
                     )
                     evaluation = director.evaluate_response(
                         frame_description=frame_desc,
