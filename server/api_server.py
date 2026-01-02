@@ -766,13 +766,14 @@ def get_llm_models():
     Get list of available LLM/VLM models.
 
     Returns:
-        JSON: {"models": [...], "current": "model_id"}
+        JSON: {"models": [...], "running": "model_id", "selected": "model_id"}
     """
     try:
         manager = get_model_manager()
         return jsonify({
             "models": manager.get_available_models(),
-            "current": manager.get_current_model(),
+            "running": manager.get_running_model(),
+            "selected": manager.get_selected_model(),
         })
     except Exception as e:
         logger.error(f"Error getting models: {e}")
@@ -785,7 +786,12 @@ def get_model_status():
     Get current model server status.
 
     Returns:
-        JSON: {"status": "ready|starting|switching|stopped|error", "current_model": "..."}
+        JSON: {
+            "status": "ready|stopped|error",
+            "running_model": "...",
+            "selected_model": "...",
+            "needs_restart": bool
+        }
     """
     try:
         manager = get_model_manager()
@@ -795,20 +801,20 @@ def get_model_status():
         return jsonify({"error": str(e)}), 500
 
 
-@app.route('/api/models/switch', methods=['POST'])
-def switch_llm_model():
+@app.route('/api/models/select', methods=['POST'])
+def select_llm_model():
     """
-    Switch to a different LLM/VLM model.
-    This operation runs in the background as it may take 1-2 minutes.
+    Select a model for next restart.
+
+    This does NOT switch the model live - it saves the selection.
+    Server restart is required to apply the change.
 
     Body (JSON):
         - model_id: Target model preset ID (e.g., "qwen2.5-14b-awq", "qwen2.5-vl-7b")
 
     Returns:
-        JSON: {"status": "switching", "message": "..."}
+        JSON: {"status": "saved", "message": "...", "needs_restart": bool}
     """
-    import threading
-
     try:
         data = request.get_json()
         model_id = data.get('model_id')
@@ -817,29 +823,27 @@ def switch_llm_model():
             return jsonify({"status": "error", "message": "model_id is required"}), 400
 
         manager = get_model_manager()
-
-        # Check if already active
-        if model_id == manager.get_current_model() and manager.status == "ready":
-            return jsonify({
-                "status": "already_active",
-                "message": "既にこのモデルが起動中です"
-            })
-
-        # Start switch in background thread
-        def do_switch():
-            result = manager.switch_model(model_id)
-            logger.info(f"Model switch result: {result}")
-
-        thread = threading.Thread(target=do_switch, daemon=True)
-        thread.start()
-
-        return jsonify({
-            "status": "switching",
-            "message": f"{model_id} への切り替えを開始しました。1-2分お待ちください。"
-        })
+        result = manager.select_model(model_id)
+        return jsonify(result)
     except Exception as e:
-        logger.error(f"Error switching model: {e}")
+        logger.error(f"Error selecting model: {e}")
         return jsonify({"status": "error", "message": str(e)}), 500
+
+
+@app.route('/api/models/command', methods=['GET'])
+def get_vllm_command():
+    """
+    Get vLLM start command for the selected model.
+
+    Returns:
+        JSON: {"command": "vllm serve ..."}
+    """
+    try:
+        manager = get_model_manager()
+        return jsonify({"command": manager.get_vllm_command()})
+    except Exception as e:
+        logger.error(f"Error getting vLLM command: {e}")
+        return jsonify({"error": str(e)}), 500
 
 
 @app.route('/api/models/log', methods=['GET'])
@@ -860,6 +864,38 @@ def get_model_log():
     except Exception as e:
         logger.error(f"Error getting model log: {e}")
         return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/models/restart', methods=['POST'])
+def restart_vllm():
+    """
+    Restart vLLM server with the selected model.
+
+    This endpoint streams progress updates using Server-Sent Events.
+
+    Returns:
+        SSE stream with progress updates:
+        - status: stopping|stopped|starting|waiting|ready|error
+        - message: Human-readable status message
+        - progress: 0-100 percentage
+    """
+    def generate():
+        try:
+            manager = get_model_manager()
+            for update in manager.restart_vllm():
+                yield f"data: {json.dumps(update)}\n\n"
+        except Exception as e:
+            logger.error(f"Error restarting vLLM: {e}")
+            yield f"data: {json.dumps({'status': 'error', 'message': str(e)})}\n\n"
+
+    return Response(
+        generate(),
+        mimetype='text/event-stream',
+        headers={
+            'Cache-Control': 'no-cache',
+            'Connection': 'keep-alive',
+        }
+    )
 
 
 # ==================== HEALTH CHECK ====================

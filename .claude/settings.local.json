@@ -39,7 +39,25 @@
       "Bash(kill:*)",
       "Bash(netstat:*)",
       "Bash(then echo \"vLLM is ready!\" curl -s http://localhost:8000/v1/models)",
-      "Bash(ss:*)"
+      "Bash(ss:*)",
+      "Bash(for i in {1..60})",
+      "Bash(then echo \"vLLM ready after $is\" curl -s http://localhost:8000/v1/models)",
+      "Bash(if [ $i -eq 60 ])",
+      "Bash(for i in 1 2 3)",
+      "Bash(do curl -s -w \"%{http_code}\" -o /dev/null http://localhost:8000/v1/models)",
+      "Bash(strace:*)",
+      "Bash(timeout 3 cat:*)",
+      "Bash(pgrep:*)",
+      "Bash(PYTHONUNBUFFERED=1 /home/owner/miniconda3/envs/duo-talk/bin/vllm serve:*)",
+      "Bash(do sleep 1)",
+      "Bash(/home/owner/miniconda3/envs/duo-talk/bin/vllm serve:*)",
+      "Bash(git log:*)",
+      "Bash(timeout 120 ollama run:*)",
+      "Bash(ollama show:*)",
+      "Bash(timeout 120 python3:*)",
+      "Bash(timeout 60 python3:*)",
+      "Bash(ollama list:*)",
+      "Bash(ollama pull:*)"
     ]
   }
 }

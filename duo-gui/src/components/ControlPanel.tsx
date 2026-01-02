@@ -1,12 +1,12 @@
 import React, { useState, useRef, useCallback, useEffect } from 'react'
 
-interface ModelInfo {
-  id: string
-  name: string
-  vision: boolean
-  description: string
-  vram: string
-  active: boolean
+interface ModelStatus {
+  status: string
+  running_model: string | null
+  running_model_name: string
+  selected_model: string | null
+  supports_vision: boolean
+  needs_restart: boolean
 }
 
 export default function ControlPanel({ apiBase, onStarted }:{ apiBase: string, onStarted: (rid?:string)=>void }){
@@ -20,54 +20,21 @@ export default function ControlPanel({ apiBase, onStarted }:{ apiBase: string, o
   const [dragOver, setDragOver] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
-  // Model management state
-  const [llmModels, setLlmModels] = useState<ModelInfo[]>([])
-  const [currentLlmModel, setCurrentLlmModel] = useState<string|null>(null)
-  const [modelStatus, setModelStatus] = useState<string>('unknown')
-  const [showModelSettings, setShowModelSettings] = useState(false)
-
-  // Fetch available models on mount
-  useEffect(() => {
-    fetch(`${apiBase}/api/models`)
-      .then(res => res.json())
-      .then(data => {
-        setLlmModels(data.models || [])
-        setCurrentLlmModel(data.current)
-      })
-      .catch(console.error)
-  }, [apiBase])
+  // Model status (display only)
+  const [modelInfo, setModelInfo] = useState<ModelStatus | null>(null)
 
   // Poll model status every 3 seconds
   useEffect(() => {
-    const interval = setInterval(() => {
+    const fetchStatus = () => {
       fetch(`${apiBase}/api/models/status`)
         .then(res => res.json())
-        .then(data => {
-          setModelStatus(data.status)
-          setCurrentLlmModel(data.current_model)
-        })
-        .catch(() => setModelStatus('error'))
-    }, 3000)
+        .then(data => setModelInfo(data))
+        .catch(() => setModelInfo(null))
+    }
+    fetchStatus()
+    const interval = setInterval(fetchStatus, 3000)
     return () => clearInterval(interval)
   }, [apiBase])
-
-  // Handle model switch
-  const handleModelSwitch = useCallback(async (modelId: string) => {
-    if (modelStatus === 'switching') return
-    try {
-      const res = await fetch(`${apiBase}/api/models/switch`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ model_id: modelId })
-      })
-      const data = await res.json()
-      if (data.status === 'switching') {
-        setModelStatus('switching')
-      }
-    } catch (e) {
-      console.error('Model switch error:', e)
-    }
-  }, [apiBase, modelStatus])
 
   const handleImageSelect = useCallback((file: File) => {
     if (!file.type.startsWith('image/')) {
@@ -213,81 +180,29 @@ export default function ControlPanel({ apiBase, onStarted }:{ apiBase: string, o
         </label>
       </div>
 
-      {/* LLM/VLM モデル設定 */}
-      <div className="border rounded-lg overflow-hidden">
-        <button
-          className="w-full px-3 py-2 text-left text-sm font-medium bg-gray-50 hover:bg-gray-100 flex justify-between items-center"
-          onClick={() => setShowModelSettings(!showModelSettings)}
-        >
-          <span>
-            🤖 LLM/VLM設定
-            {currentLlmModel && (
-              <span className="ml-2 text-xs text-gray-500">
-                ({llmModels.find(m => m.id === currentLlmModel)?.name?.split('/')[1] || currentLlmModel})
-              </span>
-            )}
+      {/* 現在のモデル表示 */}
+      {modelInfo && (
+        <div className="flex items-center gap-2 px-3 py-2 bg-gray-50 rounded text-sm">
+          <span
+            className={`w-2 h-2 rounded-full flex-shrink-0 ${
+              modelInfo.status === 'ready' ? 'bg-green-500' :
+              modelInfo.status === 'stopped' ? 'bg-gray-400' :
+              'bg-red-500'
+            }`}
+          />
+          <span className="text-gray-600 truncate">
+            {modelInfo.running_model_name && modelInfo.running_model_name !== 'N/A' ? (
+              <>
+                {modelInfo.running_model_name.split('/').pop()}
+                {modelInfo.supports_vision && <span className="ml-1">📷</span>}
+              </>
+            ) : modelInfo.status === 'stopped' ? '停止中' : '接続中...'}
           </span>
-          <span className={`transform transition-transform ${showModelSettings ? 'rotate-180' : ''}`}>▼</span>
-        </button>
-
-        {showModelSettings && (
-          <div className="p-3 space-y-2 bg-white border-t">
-            {/* Status indicator */}
-            <div className="flex items-center gap-2 text-sm">
-              <span
-                className={`w-2 h-2 rounded-full ${
-                  modelStatus === 'ready' ? 'bg-green-500' :
-                  modelStatus === 'switching' || modelStatus === 'starting' ? 'bg-yellow-500 animate-pulse' :
-                  modelStatus === 'stopped' ? 'bg-gray-400' :
-                  'bg-red-500'
-                }`}
-              />
-              <span className="text-gray-600">
-                {modelStatus === 'ready' ? '起動中' :
-                 modelStatus === 'switching' ? '切り替え中...' :
-                 modelStatus === 'starting' ? '起動中...' :
-                 modelStatus === 'stopped' ? '停止' :
-                 modelStatus === 'error' ? 'エラー' : '不明'}
-              </span>
-            </div>
-
-            {/* Model selection */}
-            <div className="space-y-1">
-              {llmModels.map(m => (
-                <label
-                  key={m.id}
-                  className={`flex items-start gap-2 p-2 rounded cursor-pointer transition-colors
-                    ${m.id === currentLlmModel ? 'bg-blue-50 border border-blue-200' : 'hover:bg-gray-50'}
-                    ${modelStatus === 'switching' ? 'opacity-50 cursor-not-allowed' : ''}`}
-                >
-                  <input
-                    type="radio"
-                    name="llm-model"
-                    value={m.id}
-                    checked={m.id === currentLlmModel}
-                    onChange={() => handleModelSwitch(m.id)}
-                    disabled={modelStatus === 'switching'}
-                    className="mt-1"
-                  />
-                  <div className="flex-1">
-                    <div className="flex items-center gap-1">
-                      <span className="font-medium text-sm">{m.name.split('/')[1]}</span>
-                      {m.vision && <span title="画像対応">📷</span>}
-                    </div>
-                    <div className="text-xs text-gray-500">{m.description} ({m.vram})</div>
-                  </div>
-                </label>
-              ))}
-            </div>
-
-            {modelStatus === 'switching' && (
-              <div className="text-xs text-yellow-600 bg-yellow-50 p-2 rounded">
-                ⏳ モデルを切り替え中です。1-2分お待ちください...
-              </div>
-            )}
-          </div>
-        )}
-      </div>
+          {modelInfo.needs_restart && (
+            <span className="text-amber-500 text-xs">⚠️再起動必要</span>
+          )}
+        </div>
+      )}
 
       {/* 開始ボタン */}
       <button

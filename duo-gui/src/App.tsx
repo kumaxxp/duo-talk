@@ -36,6 +36,15 @@ export default function App(){
   const [styleRate, setStyleRate] = useState<number|undefined>()
   const autoPicked = useRef(false)
 
+  // Clear state when run_id changes
+  useEffect(() => {
+    setDirectors({})
+    setRag({})
+    setSpeaks({})
+    setPrompts({})
+    setSelected(undefined)
+  }, [rid])
+
   const listRuns = async ()=>{
     const r = await fetch(`${API}/api/run/list`)
     const js = await r.json()

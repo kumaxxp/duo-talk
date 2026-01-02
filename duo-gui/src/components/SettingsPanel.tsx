@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useCallback, useRef } from 'react'
-import { Settings, Save, RotateCcw, Play, Loader2, Upload, X, Camera, Cpu, Layers } from 'lucide-react'
+import { Settings, Save, RotateCcw, Play, Loader2, Upload, X, Camera, Cpu, Layers, RefreshCw } from 'lucide-react'
 
 interface VisionConfig {
   mode: string
@@ -24,14 +24,19 @@ interface ModelInfo {
   vision: boolean
   description: string
   vram: string
-  active: boolean
+  verified: boolean
+  running: boolean
+  selected: boolean
 }
 
 interface ModelStatus {
   status: string
-  current_model: string | null
-  model_name: string
+  running_model: string | null
+  running_model_name: string
+  selected_model: string | null
+  selected_model_name: string
   supports_vision: boolean
+  needs_restart: boolean
 }
 
 const PROCESSING_MODES = [
@@ -95,6 +100,11 @@ export default function SettingsPanel({ apiBase }: { apiBase: string }) {
   // Model management state
   const [llmModels, setLlmModels] = useState<ModelInfo[]>([])
   const [modelStatus, setModelStatus] = useState<ModelStatus | null>(null)
+
+  // Restart state
+  const [restarting, setRestarting] = useState(false)
+  const [restartProgress, setRestartProgress] = useState(0)
+  const [restartMessage, setRestartMessage] = useState('')
 
   // Test image state
   const [testImageFile, setTestImageFile] = useState<File | null>(null)
@@ -166,17 +176,99 @@ export default function SettingsPanel({ apiBase }: { apiBase: string }) {
     }
   }
 
-  // Handle model switch
-  const handleModelSwitch = async (modelId: string) => {
-    if (modelStatus?.status === 'switching') return
+  // Handle model selection (saves to config, requires restart)
+  const handleModelSelect = async (modelId: string) => {
     try {
-      await fetch(`${apiBase}/api/models/switch`, {
+      const res = await fetch(`${apiBase}/api/models/select`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ model_id: modelId }),
       })
+      const data = await res.json()
+      if (data.status === 'saved') {
+        setMessage({ type: 'success', text: data.message })
+        // Refresh model list to update selected state
+        const modelsRes = await fetch(`${apiBase}/api/models`)
+        const modelsData = await modelsRes.json()
+        if (modelsData.models) setLlmModels(modelsData.models)
+        // Refresh status
+        const statusRes = await fetch(`${apiBase}/api/models/status`)
+        const statusData = await statusRes.json()
+        setModelStatus(statusData)
+      } else if (data.status === 'no_change') {
+        setMessage({ type: 'success', text: data.message })
+      } else {
+        setMessage({ type: 'error', text: data.message || 'エラーが発生しました' })
+      }
     } catch (e) {
-      console.error('Model switch error:', e)
+      console.error('Model select error:', e)
+      setMessage({ type: 'error', text: 'モデル選択に失敗しました' })
+    }
+  }
+
+  // Handle vLLM restart
+  const handleRestart = async () => {
+    if (restarting) return
+
+    setRestarting(true)
+    setRestartProgress(0)
+    setRestartMessage('再起動を開始...')
+    setMessage(null)
+
+    try {
+      const response = await fetch(`${apiBase}/api/models/restart`, {
+        method: 'POST',
+      })
+
+      const reader = response.body?.getReader()
+      if (!reader) {
+        throw new Error('Response body is not readable')
+      }
+
+      const decoder = new TextDecoder()
+      let buffer = ''
+
+      while (true) {
+        const { done, value } = await reader.read()
+        if (done) break
+
+        buffer += decoder.decode(value, { stream: true })
+        const lines = buffer.split('\n\n')
+        buffer = lines.pop() || ''
+
+        for (const line of lines) {
+          if (line.startsWith('data: ')) {
+            try {
+              const data = JSON.parse(line.slice(6))
+              setRestartProgress(data.progress || 0)
+              setRestartMessage(data.message || '')
+
+              if (data.status === 'ready') {
+                setMessage({ type: 'success', text: data.message })
+                // Refresh model status
+                const statusRes = await fetch(`${apiBase}/api/models/status`)
+                const statusData = await statusRes.json()
+                setModelStatus(statusData)
+                // Refresh model list
+                const modelsRes = await fetch(`${apiBase}/api/models`)
+                const modelsData = await modelsRes.json()
+                if (modelsData.models) setLlmModels(modelsData.models)
+              } else if (data.status === 'error') {
+                setMessage({ type: 'error', text: data.message })
+              }
+            } catch {
+              // Ignore JSON parse errors
+            }
+          }
+        }
+      }
+    } catch (e) {
+      console.error('Restart error:', e)
+      setMessage({ type: 'error', text: 'vLLMの再起動に失敗しました' })
+    } finally {
+      setRestarting(false)
+      setRestartProgress(0)
+      setRestartMessage('')
     }
   }
 
@@ -352,7 +444,7 @@ export default function SettingsPanel({ apiBase }: { apiBase: string }) {
         {/* Mode warning */}
         {modeRequiresVision && !currentModelSupportsVision && (
           <div className="mt-3 p-3 bg-amber-50 border border-amber-200 rounded text-sm text-amber-700">
-            現在のモデル（{modelStatus?.model_name}）はVLM非対応です。
+            現在のモデル（{modelStatus?.running_model_name}）はVLM非対応です。
             「VLM対応モデル」に切り替えるか、「セグメンテーション→LLM」モードを使用してください。
           </div>
         )}
@@ -367,22 +459,66 @@ export default function SettingsPanel({ apiBase }: { apiBase: string }) {
           <span
             className={`w-2 h-2 rounded-full ${
               modelStatus?.status === 'ready' ? 'bg-green-500' :
-              modelStatus?.status === 'switching' || modelStatus?.status === 'starting' ? 'bg-yellow-500 animate-pulse' :
-              'bg-gray-400'
+              modelStatus?.status === 'stopped' ? 'bg-gray-400' :
+              'bg-red-500'
             }`}
           />
           <span className="text-gray-600">
             {modelStatus?.status === 'ready' ? '起動中' :
-             modelStatus?.status === 'switching' ? '切り替え中...' :
-             modelStatus?.status === 'starting' ? '起動中...' :
-             modelStatus?.status === 'stopped' ? '停止' : '不明'}
+             modelStatus?.status === 'stopped' ? '停止' : 'エラー'}
           </span>
-          {modelStatus?.current_model && (
+          {modelStatus?.running_model && (
             <span className="text-gray-500">
-              - {llmModels.find(m => m.id === modelStatus.current_model)?.name?.split('/')[1]}
+              - {modelStatus.running_model_name?.split('/')[1]}
             </span>
           )}
         </div>
+
+        {/* Restart warning and button */}
+        {(modelStatus?.needs_restart || restarting) && (
+          <div className="mb-3 p-3 bg-amber-50 border border-amber-200 rounded text-sm">
+            {restarting ? (
+              <>
+                <div className="flex items-center gap-2 font-medium text-amber-700 mb-2">
+                  <RefreshCw className="w-4 h-4 animate-spin" />
+                  vLLMを再起動中...
+                </div>
+                <div className="text-amber-600 text-xs mb-2">
+                  {restartMessage}
+                </div>
+                <div className="w-full bg-amber-200 rounded-full h-2">
+                  <div
+                    className="bg-amber-600 h-2 rounded-full transition-all duration-300"
+                    style={{ width: `${restartProgress}%` }}
+                  />
+                </div>
+                <div className="text-amber-500 text-xs mt-1 text-right">
+                  {restartProgress}%
+                </div>
+              </>
+            ) : (
+              <>
+                <div className="font-medium text-amber-700 mb-1">
+                  再起動が必要です
+                </div>
+                <div className="text-amber-600 text-xs mb-2">
+                  選択: {modelStatus?.selected_model_name?.split('/')[1]} /
+                  現在: {modelStatus?.running_model_name?.split('/')[1]}
+                </div>
+                <button
+                  onClick={handleRestart}
+                  className="w-full px-3 py-2 bg-amber-600 text-white rounded hover:bg-amber-700 flex items-center justify-center gap-2 text-sm font-medium"
+                >
+                  <RefreshCw className="w-4 h-4" />
+                  vLLMを再起動
+                </button>
+                <div className="text-amber-500 text-xs mt-2">
+                  再起動には1〜3分かかります
+                </div>
+              </>
+            )}
+          </div>
+        )}
 
         {/* Model selection */}
         <div className="space-y-2">
@@ -390,32 +526,48 @@ export default function SettingsPanel({ apiBase }: { apiBase: string }) {
             <label
               key={m.id}
               className={`flex items-start gap-3 p-3 rounded-lg cursor-pointer transition-colors
-                ${m.id === modelStatus?.current_model ? 'bg-blue-50 border-2 border-blue-300' : 'bg-gray-50 border-2 border-transparent hover:bg-gray-100'}
-                ${modelStatus?.status === 'switching' ? 'opacity-50 cursor-not-allowed' : ''}`}
+                ${m.running ? 'bg-green-50 border-2 border-green-300' :
+                  m.selected ? 'bg-amber-50 border-2 border-amber-300' :
+                  'bg-gray-50 border-2 border-transparent hover:bg-gray-100'}`}
             >
               <input
                 type="radio"
                 name="main-model"
                 value={m.id}
-                checked={m.id === modelStatus?.current_model}
-                onChange={() => handleModelSwitch(m.id)}
-                disabled={modelStatus?.status === 'switching'}
+                checked={m.selected}
+                onChange={() => handleModelSelect(m.id)}
                 className="mt-1"
               />
               <div className="flex-1">
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-2 flex-wrap">
                   <span className="font-medium">{m.name.split('/')[1]}</span>
-                  {m.vision && <span className="px-2 py-0.5 bg-purple-100 text-purple-700 text-xs rounded">VLM対応</span>}
+                  {m.vision ? (
+                    <span className="px-2 py-0.5 bg-purple-100 text-purple-700 text-xs rounded">VLM</span>
+                  ) : (
+                    <span className="px-2 py-0.5 bg-gray-100 text-gray-600 text-xs rounded">Text</span>
+                  )}
+                  <span className="px-2 py-0.5 bg-slate-100 text-slate-600 text-xs rounded font-mono">{m.vram}</span>
+                  {m.verified ? (
+                    <span className="text-green-600 text-xs">✓</span>
+                  ) : (
+                    <span className="text-amber-500 text-xs">⚠️要確認</span>
+                  )}
+                  {m.running && (
+                    <span className="px-2 py-0.5 bg-green-100 text-green-700 text-xs rounded">起動中</span>
+                  )}
+                  {m.selected && !m.running && (
+                    <span className="px-2 py-0.5 bg-amber-100 text-amber-700 text-xs rounded">次回起動</span>
+                  )}
                 </div>
-                <div className="text-sm text-gray-500 mt-1">{m.description}（{m.vram}）</div>
+                <div className="text-sm text-gray-500 mt-1">{m.description}</div>
               </div>
             </label>
           ))}
         </div>
 
-        {modelStatus?.status === 'switching' && (
-          <div className="mt-3 p-3 bg-yellow-50 border border-yellow-200 rounded text-sm text-yellow-700">
-            モデルを切り替え中です。1-2分お待ちください...
+        {modelStatus?.status === 'stopped' && (
+          <div className="mt-3 p-3 bg-gray-50 border border-gray-200 rounded text-sm text-gray-700">
+            vLLMサーバーが停止しています。ターミナルで起動してください。
           </div>
         )}
       </div>

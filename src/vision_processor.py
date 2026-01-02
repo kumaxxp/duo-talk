@@ -149,26 +149,37 @@ class VisionProcessor:
             timeout=config.timeout,
         )
 
+        # Build messages with optional system message for language control
+        messages = []
+
+        # Add system message for Japanese-only output
+        if self.config.output_language == "ja":
+            messages.append({
+                "role": "system",
+                "content": "あなたは日本語のみで回答するアシスタントです。英語は絶対に使用しないでください。すべての出力を日本語で行ってください。"
+            })
+
+        # Add user message with image
+        messages.append({
+            "role": "user",
+            "content": [
+                {
+                    "type": "image_url",
+                    "image_url": {
+                        "url": f"data:{mime_type};base64,{image_data}"
+                    },
+                },
+                {
+                    "type": "text",
+                    "text": prompt,
+                },
+            ],
+        })
+
         # Call VLM with multimodal message format
         response = client.chat.completions.create(
             model=config.openai_model,
-            messages=[
-                {
-                    "role": "user",
-                    "content": [
-                        {
-                            "type": "image_url",
-                            "image_url": {
-                                "url": f"data:{mime_type};base64,{image_data}"
-                            },
-                        },
-                        {
-                            "type": "text",
-                            "text": prompt,
-                        },
-                    ],
-                }
-            ],
+            messages=messages,
             max_tokens=self.config.vlm_max_tokens,
             temperature=self.config.vlm_temperature,
         )
@@ -503,9 +514,10 @@ class VisionProcessor:
 
     def _get_default_vlm_prompt(self) -> str:
         """Get default VLM analysis prompt"""
-        lang = "日本語" if self.config.output_language == "ja" else "English"
+        if self.config.output_language == "ja":
+            return """【重要】回答は必ず日本語のみで行ってください。英語は使用しないでください。
 
-        return f"""この画像を詳細に分析してください。以下の観点から、観光地ナレーション向けの視覚情報を{lang}で提供してください：
+この画像を詳細に分析してください。以下の観点から、観光地ナレーション向けの視覚情報を日本語で提供してください：
 
 【メイン被写体】
 - 画像の中心的な被写体は何か？
@@ -530,7 +542,34 @@ class VisionProcessor:
 【特筆すべき詳細】
 - 観光地ナレーション時に言及すると面白い、珍しい要素は？
 
-各項目について、簡潔かつ具体的に記述してください。"""
+各項目について、簡潔かつ具体的に日本語で記述してください。英語での回答は禁止です。"""
+        else:
+            return """Analyze this image in detail. Provide visual information for tourism narration from the following perspectives:
+
+【Main Subject】
+- What is the central subject?
+- Features, size, position?
+
+【Environment/Background】
+- Surrounding environment condition?
+- Important background elements?
+
+【People/Activity】
+- Are there people? Their state?
+- Any activities happening?
+
+【Color/Lighting】
+- Overall color tone?
+- Quality of light (morning sun, backlit, cloudy, etc.)?
+
+【Composition/Perspective】
+- Image composition?
+- Foreground, midground, background distribution?
+
+【Notable Details】
+- Interesting or unusual elements worth mentioning?
+
+Be concise and specific for each item."""
 
     def _parse_vision_response(self, text: str) -> dict:
         """Parse VLM response into structured sections"""
