@@ -51,9 +51,9 @@ class Config:
     def validate(self) -> bool:
         """Validate critical configuration"""
         required_paths = [
-            self.persona_dir / "char_a.prompt.txt",
-            self.persona_dir / "char_b.prompt.txt",
-            self.persona_dir / "director.prompt.txt",
+            self.persona_dir / "char_a" / "system_fixed.txt",
+            self.persona_dir / "char_b" / "system_fixed.txt",
+            self.persona_dir / "director" / "system_fixed.txt",
         ]
 
         for path in required_paths:

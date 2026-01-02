@@ -110,6 +110,8 @@ class Director:
         self.last_fact_check: Optional[FactCheckResult] = None
         # Director v3: Topic Manager
         self.topic_state = TopicState()
+        # 前回処理したフレーム番号（フレーム変更検出用）
+        self.last_frame_num: int = -1
 
     def _default_system_prompt(self) -> str:
         """Default director prompt if file not found (deprecated)"""
@@ -137,6 +139,7 @@ Respond ONLY with JSON:
         speaker_domains: list = None,
         conversation_history: list = None,
         turn_number: int = 1,
+        frame_num: int = 1,
     ) -> DirectorEvaluation:
         """
         Evaluate a character's response.
@@ -153,6 +156,12 @@ Respond ONLY with JSON:
         Returns:
             DirectorEvaluation with status, reasoning, and next pattern/instruction
         """
+        # フレームが変わったらTopic Stateをリセット
+        if frame_num != self.last_frame_num:
+            self.reset_topic_state()
+            self.last_frame_num = frame_num
+            print(f"    🔄 Frame changed to {frame_num}, topic state reset")
+
         # Get current beat stage from turn number
         current_beat = self.beat_tracker.get_current_beat(turn_number)
         beat_info = self.beat_tracker.get_beat_info(current_beat)
@@ -1111,9 +1120,9 @@ JSON ONLY:
         if len(response) < 80:
             return {"detected": False, "issues": []}
 
-        # 読点が多すぎる（5個以上で散漫と判定）← 4→5に緩和
+        # 読点が多すぎる（8個以上で散漫と判定）← 技術説明向けに緩和
         comma_count = response.count("、")
-        if comma_count >= 5:
+        if comma_count >= 8:
             issues.append(f"読点が多すぎる({comma_count}個)")
 
         # 列挙表現が多い（3回以上で散漫）← 2→3に緩和
@@ -1131,10 +1140,10 @@ JSON ONLY:
         if scatter_count >= 3:
             issues.append(f"列挙表現が多い({scatter_count}回)")
 
-        # 文の数が多すぎる（4文以上で散漫と判定）← 3→4に緩和
+        # 文の数が多すぎる（5文以上で散漫と判定）← 技術説明向けに緩和
         # 疑問文「？」は除外（質問は自然なので）
         sentence_count = len(re.findall(r'[。！]', response))
-        if sentence_count >= 4:
+        if sentence_count >= 5:
             issues.append(f"文が多すぎる({sentence_count}文)")
 
         if issues:

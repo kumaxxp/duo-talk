@@ -106,6 +106,7 @@ def run_commentary(
                 response=response,
                 partner_previous_speech=partner_speech,
                 speaker_domains=character.domains,
+                frame_num=frame_num,
             )
 
             print(f"   [Director] {evaluation.status}: {evaluation.reason}")
@@ -126,6 +127,7 @@ def run_commentary(
                         response=response,
                         partner_previous_speech=partner_speech,
                         speaker_domains=character.domains,
+                        frame_num=frame_num,
                     )
                     print(f"   [Director] {evaluation.status}: {evaluation.reason}")
                 except Exception as e:
