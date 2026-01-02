@@ -20,6 +20,7 @@ import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from src.jetracer_client import JetRacerClient, JetRacerState, load_config
+from src.jetracer_provider import JetRacerProvider, DataMode, VisionData
 from src.character import Character
 from src.director import Director
 
@@ -38,7 +39,7 @@ def create_risk_instruction(risks: dict) -> str:
         return None  # 特別な指示なし
 
 
-def format_state_summary(state: JetRacerState) -> str:
+def format_state_summary(state: JetRacerState, vision: VisionData = None) -> str:
     """状態サマリーを表示用にフォーマット"""
     lines = []
     lines.append(f"🌡️  温度: {state.temperature:.1f}°C")
@@ -47,6 +48,12 @@ def format_state_summary(state: JetRacerState) -> str:
     lines.append(f"📍 モード: {state.mode}")
     if state.min_distance > 0:
         lines.append(f"📏 前方距離: {state.min_distance}mm")
+
+    # VISION追加
+    if vision and vision.road_percentage > 0:
+        lines.append(f"🛤️ ROAD: {vision.road_percentage:.1f}%")
+        lines.append(f"⚡ 推論: {vision.inference_time_ms:.0f}ms")
+
     return " | ".join(lines)
 
 
@@ -94,16 +101,17 @@ def main():
         print(f"❌ Failed to load characters: {e}")
         return 1
     
-    # JetRacerクライアント初期化
+    # JetRacer Provider初期化
     if args.dry_run:
         print("\n🔧 Dry-run mode (using mock data)")
-        client = None
+        provider = None
     else:
         print(f"\n🔌 Connecting to JetRacer at {args.url}...")
-        client = JetRacerClient(args.url)
-        
+        provider = JetRacerProvider()  # config.yamlからモード自動取得
+        print(f"📊 Data mode: {provider.mode.value}")
+
         # 接続テスト
-        test_data = client.get_status()
+        test_data = provider.client.get_status()
         if test_data:
             print("✅ Connected to JetRacer")
         else:
@@ -134,23 +142,25 @@ def main():
                     timestamp=time.time(),
                     valid=True
                 )
-                frame_desc = client.to_frame_description(state) if client else \
-                    f"スロットル50%で走行中。温度{state.temperature:.0f}度。前方{state.min_distance}mmに物体。"
+                vision = VisionData(road_percentage=65.0 + frame_num, inference_time_ms=12.5)
+                frame_desc = f"スロットル50%で走行中。温度{state.temperature:.0f}度。前方{state.min_distance}mmに物体。走行可能領域{vision.road_percentage:.0f}%。"
                 risks = {"overall": "low", "temperature": "low", "collision": "medium"}
             else:
-                state = client.fetch_and_parse()
-                if not state.valid:
+                full_state = provider.fetch()
+                if not full_state.valid or full_state.sensor is None:
                     print(f"⚠️  Frame {frame_num}: Sensor data unavailable")
                     time.sleep(args.interval)
                     continue
-                frame_desc = client.to_frame_description(state)
-                risks = client.get_risk_level(state)
+                state = full_state.sensor
+                vision = full_state.vision
+                frame_desc = provider.to_frame_description(full_state)
+                risks = provider.client.get_risk_level(state)
             
             # フレーム表示
             print(f"\n{'─' * 60}")
             print(f"📊 Frame {frame_num}")
             print(f"{'─' * 60}")
-            print(format_state_summary(state))
+            print(format_state_summary(state, vision))
             print(f"\n📝 状況: {frame_desc}")
             
             # リスク表示
@@ -221,8 +231,8 @@ def main():
         print("=" * 60)
     
     finally:
-        if client:
-            client.close()
+        if provider:
+            provider.close()
     
     return 0
 
