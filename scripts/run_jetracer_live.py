@@ -60,6 +60,7 @@ def main():
     commentary_config = config.get("commentary", {})
     default_interval = commentary_config.get("interval", 3.0)
     default_turns = commentary_config.get("turns_per_frame", 4)
+    fact_check_enabled = commentary_config.get("fact_check_enabled", True)
 
     parser = argparse.ArgumentParser(description="JetRacer Live Commentary")
     parser.add_argument("--url", "-u",
@@ -79,6 +80,7 @@ def main():
     print(f"API URL: {args.url}")
     print(f"Interval: {args.interval}s")
     print(f"Turns per frame: {args.turns}")
+    print(f"Fact check: {'enabled' if fact_check_enabled else 'disabled'}")
     print("=" * 60)
     
     # キャラクター初期化
@@ -86,7 +88,7 @@ def main():
     try:
         char_a = Character("A")  # やな（Edge AI）
         char_b = Character("B")  # あゆ（Cloud AI）
-        director = Director()
+        director = Director(enable_fact_check=fact_check_enabled)
         print("✅ Characters loaded")
     except Exception as e:
         print(f"❌ Failed to load characters: {e}")

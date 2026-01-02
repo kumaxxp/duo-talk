@@ -15,3 +15,4 @@ llm:
 commentary:
   interval: 3.0  # フレーム間隔（秒）
   turns_per_frame: 4  # 1フレームあたりの会話ターン数
+  fact_check_enabled: false  # JetRacerモードではファクトチェック無効（センサーデータは実測値）
