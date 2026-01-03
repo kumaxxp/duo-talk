@@ -18,6 +18,7 @@ from src.jetracer_client import load_config
 from src.jetracer_provider import JetRacerProvider, DataMode
 from src.character import Character
 from src.director import Director
+from src.logger import get_logger
 
 
 class DuoTalkDashboard:
@@ -41,6 +42,9 @@ class DuoTalkDashboard:
         self.char_b = None
         self.director = None
         self.frame_count = 0
+        self.turn_count = 0
+        self.run_id = None
+        self.logger = get_logger()
 
         # UI要素
         self.timeline_widget = None
@@ -172,6 +176,16 @@ class DuoTalkDashboard:
             if self.timeline_widget:
                 self.timeline_widget.clear()
             self.frame_count = 0
+            self.turn_count = 0
+
+            # run_id生成とログ開始
+            self.run_id = f"dashboard_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+            self.logger.log_run_start(
+                run_id=self.run_id,
+                frame_count=0,
+                metadata={"mode": self.data_mode, "interval": self.interval, "turns_per_frame": self.turns_per_frame}
+            )
+            print(f"[Dashboard] Logging started: {self.run_id}")
 
             # 初期メッセージ
             self._add_info_entry(f'Started at {datetime.now().strftime("%H:%M:%S")}')
@@ -201,6 +215,12 @@ class DuoTalkDashboard:
         if self.provider:
             self.provider.close()
             self.provider = None
+
+        # ログ終了
+        if self.run_id:
+            self.logger.log_run_end(run_id=self.run_id, total_turns=self.turn_count)
+            print(f"[Dashboard] Logging ended: {self.run_id}, total_turns={self.turn_count}")
+            self.run_id = None
 
         self.start_btn.props(remove='disabled')
         self.stop_btn.props('disabled')
@@ -275,6 +295,16 @@ class DuoTalkDashboard:
                     )
                 )
                 print(f"[Dashboard] {speaker_id} response: {response[:50]}...")
+
+                # ログ記録
+                self.turn_count += 1
+                self.logger.log_turn(
+                    run_id=self.run_id,
+                    turn_num=self.turn_count,
+                    frame_num=self.frame_count,
+                    speaker="A" if speaker_id == 'yana' else "B",
+                    text=response
+                )
 
                 if speaker_id == 'yana':
                     self._add_yana_entry(response)
