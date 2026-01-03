@@ -1,215 +1,117 @@
-# Tourism AI Commentary System
+# duo-talk
 
-ローカルLLMを使用した、観光地やドローン映像の対話実況システムです。
-姉（行動的）と妹（クール）の2人のAIキャラクターが、ディレクターLLMの監督のもと、自然で面白い対話を生成します。
+JetRacerの実況システム。姉妹AIが自律走行車の状態を実況します。
 
-## システム概要
-
-```
-Input: Frame Description / Image
-  ↓
-[Director LLM] - 監視: 進行度・参加度・知識領域
-  ↓
-[Character A (Elder Sister)] + [Character B (Younger Sister)]
-  ↓
-[Validation] - 言語チェック・口調チェック
-  ↓
-Output: Dialogue JSON / Text
-```
-
-## 特徴
-
-- **ディレクターLLM**: 2人のキャラクターの対話品質を監視
-  - 進行度: フレームへの対応度
-  - 参加度: 両者のバランス
-  - 知識領域: キャラクター固有の知識の適切な使用
-
-- **キャラクター分化**: 知識領域を分離
-  - 姉: 観光・行動・現象
-  - 妹: 地理・歴史・建築
-
-- **自然な対話生成**: RAGによる知識提供
-
-## インストール
+## クイックスタート
 
 ```bash
-python -m venv .venv
-source .venv/bin/activate  # Windows: .venv\Scripts\activate
-
+# セットアップ
+conda activate duo-talk
 pip install -r requirements.txt
+
+# サーバー起動
+python server/api_server.py
+
+# ブラウザで開く
+open http://localhost:5000
 ```
 
-## セットアップ
+## システム構成
 
-### 1. 環境変数
+```
+JetRacer (192.168.1.65:8000)
+    ↓ センサー + カメラ
+duo-talk Server (Flask)
+    ↓ DuoSignals + NoveltyGuard
+LLM (Ollama/vLLM)
+    ↓ 対話生成
+GUI (React) / TTS
+```
 
-`.env.example` をコピーして `.env` を作成:
+## v2.1 新機能
+
+- **DuoSignals**: スレッドセーフな状態共有
+- **NoveltyGuard**: 話題ループ検知・戦略ローテーション
+- **SilenceController**: 状況に応じた自然な沈黙
+- **VLMAnalyzer**: カメラ画像の解析
+- **LivePanel**: リアルタイムGUI監視
+
+## テスト
 
 ```bash
-cp .env.example .env
-```
+# ユニットテスト
+pytest tests/ -v
 
-中身を編集（Ollama/LM Studio の設定を合わせます）:
+# ライブ対話テスト（JetRacer接続時）
+python scripts/test_live_v2.py --turns 10
 
-```env
-OPENAI_BASE_URL=http://localhost:11434/v1
-OPENAI_API_KEY=not-needed
-OPENAI_MODEL=mistral
-```
+# センサーシミュレーション
+python scripts/test_sensor_simulation.py
 
-### 2. Ollama の起動
-
-```bash
-ollama serve
-# 別のターミナル
-ollama pull mistral
-```
-
-または LM Studio を起動して同等の設定にします。
-
-## 使い方
-
-### 基本的な実行
-
-```bash
-python scripts/run_commentary.py "最初のフレーム説明" "2番目のフレーム説明" "3番目のフレーム説明"
-```
-
-例：
-```bash
-python scripts/run_commentary.py \
-  "富士山の頂上がクローズアップされている。雪が積もっている。" \
-  "ドローンが富士山を回りながら麓の町を映す。" \
-  "富士山の影が地面に映っている。夕方の光が当たっている。"
-```
-
-### オプション
-
-```bash
-python scripts/run_commentary.py --help
-
-# より多くの対話ターンを生成
-python scripts/run_commentary.py --max-turns-per-frame 3 "フレーム1" "フレーム2"
-```
-
-## ログとデバッグ
-
-すべてのイベントは `runs/commentary_runs.jsonl` に記録されます（JSONL形式）。
-
-```bash
-# 最新のrun_idを取得
-RID=$(tac runs/commentary_runs.jsonl | jq -r 'select(.event=="run_start")|.run_id' | head -1)
-
-# そのrunのすべてのイベントを表示
-jq -r --arg RID "$RID" 'select(.run_id==$RID)' runs/commentary_runs.jsonl
-
-# ターンのみを表示
-jq -r --arg RID "$RID" 'select(.run_id==$RID and .event=="turn")' runs/commentary_runs.jsonl
-```
-
-## ディレクトリ構造
-
-```
-duo-talk/
-├── src/
-│   ├── __init__.py
-│   ├── config.py              # 設定管理
-│   ├── types.py               # 型定義
-│   ├── llm_client.py          # LLM API呼び出し
-│   ├── rag.py                 # 知識検索（RAG）
-│   ├── director.py            # ディレクターLLM
-│   ├── character.py           # キャラクター実装
-│   ├── validator.py           # バリデーション
-│   └── logger.py              # JSONL ロギング
-│
-├── persona/
-│   ├── char_a.prompt.txt      # 姉のシステムプロンプト
-│   ├── char_b.prompt.txt      # 妹のシステムプロンプト
-│   └── director.prompt.txt    # ディレクターのプロンプト
-│
-├── rag_data/
-│   ├── char_a_domain/         # 姉の知識領域
-│   │   ├── tourism.md
-│   │   ├── action.md
-│   │   └── phenomena.md
-│   │
-│   └── char_b_domain/         # 妹の知識領域
-│       ├── geography.md
-│       ├── history.md
-│       └── architecture.md
-│
-├── scripts/
-│   └── run_commentary.py      # メイン実行スクリプト
-│
-├── runs/
-│   └── commentary_runs.jsonl  # ログファイル（自動生成）
-│
-├── requirements.txt
-├── .env.example
-└── README.md
+# ループ検知テスト
+python scripts/test_loop_detection.py --turns 15
 ```
 
 ## キャラクター設定
 
-### 姉 (Character A)
+### やな（姉/Edge AI）
+- **役割**: 発見役、質問者
+- **口調**: カジュアル、「〜じゃない？」「〜かな？」
+- **特性**: 直感的、行動優先、感覚表現
 
-- **性格**: 行動的、直感的、感情豊か
-- **話し方**: 「〜ね」「〜だよ」「へ？」「わ！」
-- **知識領域**: 観光、行動、現象
-- **役割**: 反応と質問でリード
+### あゆ（妹/Cloud AI）
+- **役割**: 補足役、解説者
+- **口調**: 敬語、「姉様」呼び
+- **特性**: データ重視、分析的、正確性優先
 
-### 妹 (Character B)
+## v2.1 機能一覧
 
-- **性格**: クール、ロジカル、思慮深い
-- **話し方**: 「〜な」「ちょっと待て」「なるほど」
-- **知識領域**: 地理、歴史、建築
-- **役割**: 説明と補足
+| 機能 | 説明 |
+|------|------|
+| DuoSignals | スレッドセーフな状態共有、イベント履歴 |
+| PromptBuilder | 優先度ベースのプロンプト構築 |
+| NoveltyGuard | 話題ループ検知、戦略ローテーション |
+| SilenceController | 状況に応じた自然な沈黙 |
+| speak_v2 | 統合された発話生成メソッド |
+| LivePanel | リアルタイムGUI監視 |
 
-## RAG（知識検索）について
-
-各キャラクターは自分の知識領域内から関連情報を自動検索します。
-
-```
-rag_data/char_a_domain/       ← 姉の知識ベース
-rag_data/char_b_domain/       ← 妹の知識ベース
-```
-
-知識を追加する場合は、対応するフォルダに `.md` ファイルを追加してください。
-
-## トラブルシューティング
-
-### LLM が応答しない
+## ディレクトリ構成
 
 ```
-✓ Ollama が起動しているか確認: ollama serve
-✓ .env の OPENAI_BASE_URL が正しいか確認
-✓ モデルがダウンロード済みか確認: ollama list
+duo-talk/
+├── src/                    # コアモジュール
+│   ├── signals.py          # DuoSignals
+│   ├── injection.py        # PromptBuilder
+│   ├── novelty_guard.py    # NoveltyGuard
+│   ├── silence_controller.py
+│   ├── character.py        # キャラクター
+│   ├── vlm_analyzer.py     # VLM解析
+│   └── vision_to_signals.py
+├── server/                 # APIサーバー
+│   ├── api_server.py
+│   └── api_v2.py           # v2.1 API
+├── duo-gui/                # Reactフロントエンド
+│   └── src/components/
+│       ├── LivePanel.tsx
+│       └── SignalsPanel.tsx
+├── persona/                # キャラクター設定
+│   ├── char_a/prompt.yaml
+│   ├── char_b/prompt.yaml
+│   └── world_rules.yaml
+├── scripts/                # テストスクリプト
+│   ├── test_live_v2.py
+│   ├── test_sensor_simulation.py
+│   └── test_loop_detection.py
+└── docs/                   # ドキュメント
+    └── v2_1_guide.md
 ```
-
-### ダイアログが面白くない
-
-- `persona/*.prompt.txt` を調整
-- `rag_data/` の知識を追加・改善
-- `Director.py` の評価ロジックを調整
-
-### 言語が混ざる
-
-- `Validator.py` の日本語チェックが機能
-- LoRA fine-tuning で日本語能力を向上させることを検討
-
-## 今後の拡張
-
-- [ ] TTS（音声合成）統合
-- [ ] 画像入力対応（Vision API）
-- [ ] キャラクター数を増やす
-- [ ] GUI（リアルタイム可視化）
-- [ ] キャラクター一貫性スコア
-- [ ] 自動評価メトリクス
 
 ## ライセンス
 
 MIT License
 
-## 参考
+## 謝辞
 
-このシステムはゆっくり実況（霊夢と魔理沙）のような対話スタイルを目指しています。
+- JetRacer by NVIDIA
+- Qwen 2.5 by Alibaba
+- LivePortrait for avatar animation
