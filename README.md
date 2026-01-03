@@ -75,6 +75,56 @@ python scripts/test_loop_detection.py --turns 15
 | speak_v2 | 統合された発話生成メソッド |
 | LivePanel | リアルタイムGUI監視 |
 
+## GUIサーバー
+
+### 起動方法
+
+```bash
+conda activate duo-talk
+python server/api_server.py
+# ブラウザで http://localhost:5000 を開く
+```
+
+### GUIタブ
+
+| タブ | 機能 |
+|------|------|
+| Runs | 過去の実行ログ閲覧 |
+| Settings | 設定確認 |
+| Live | JetRacerリアルタイム実況 |
+
+### v2.1 API エンドポイント
+
+| エンドポイント | メソッド | 説明 |
+|---------------|---------|------|
+| `/api/v2/signals` | GET | DuoSignals状態取得 |
+| `/api/v2/novelty/status` | GET | NoveltyGuard状態 |
+| `/api/v2/silence/check` | GET | 沈黙判定 |
+| `/api/v2/speak` | POST | speak_v2発話生成 |
+| `/api/v2/jetracer/connect` | POST | JetRacer接続 |
+| `/api/v2/jetracer/fetch` | GET | センサーデータ取得 |
+| `/api/v2/live/dialogue` | POST | ライブ対話生成 |
+
+### API呼び出し例
+
+```bash
+# JetRacer接続
+curl -X POST http://localhost:5000/api/v2/jetracer/connect \
+  -H "Content-Type: application/json" \
+  -d '{"url": "http://192.168.1.65:8000", "mode": "vision"}'
+
+# センサーデータ取得
+curl http://localhost:5000/api/v2/jetracer/fetch
+
+# 対話生成
+curl -X POST http://localhost:5000/api/v2/live/dialogue \
+  -H "Content-Type: application/json" \
+  -d '{"frame_description": "走行可能領域80%", "turns": 2}'
+
+# シグナル状態確認
+curl http://localhost:5000/api/v2/signals
+```
+
 ## ディレクトリ構成
 
 ```
