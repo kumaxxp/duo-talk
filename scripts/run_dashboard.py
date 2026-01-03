@@ -60,7 +60,11 @@ class DuoTalkDashboard:
         """UI作成"""
         ui.dark_mode(False)
 
-        with ui.column().classes('w-full max-w-6xl mx-auto p-4 gap-4'):
+        # キャラクターアイコンのパス
+        self.icon_yana = str(project_root / 'icon' / 'yana_face.png')
+        self.icon_ayu = str(project_root / 'icon' / 'ayu_face.png')
+
+        with ui.column().classes('w-full p-4 gap-4'):  # 幅制限なし
             # ヘッダー
             with ui.row().classes('w-full items-center gap-4'):
                 ui.label('🚗 duo-talk JetRacer Live').classes('text-2xl font-bold')
@@ -73,7 +77,7 @@ class DuoTalkDashboard:
                     self.frame_info_label = ui.label('--').classes('font-mono text-sm flex-grow')
                 self.frame_desc_label = ui.label('--').classes('text-gray-600 text-sm')
 
-            with ui.row().classes('w-full gap-4'):
+            with ui.row().classes('w-full gap-4 flex-nowrap'):
                 # 左: コントロールパネル
                 with ui.card().classes('w-64 shrink-0'):
                     ui.label('🎛️ Control').classes('text-lg font-bold mb-2')
@@ -118,9 +122,9 @@ class DuoTalkDashboard:
                         ui.label('Cloud AI').classes('text-xs text-gray-500')
 
                 # 右: Timeline
-                with ui.card().classes('flex-grow'):
+                with ui.card().classes('flex-grow min-w-[1000px]'):
                     ui.label('💬 Timeline').classes('text-lg font-bold mb-2')
-                    with ui.scroll_area().classes('w-full h-96') as scroll:
+                    with ui.scroll_area().classes('w-full h-[800px]') as scroll:
                         self.scroll_area = scroll
                         with ui.timeline(side='right').classes('w-full') as timeline:
                             self.timeline_widget = timeline
@@ -311,7 +315,9 @@ class DuoTalkDashboard:
         self._hide_placeholder()
         with self.timeline_widget:
             with ui.timeline_entry(title='やな', icon='memory', color='pink'):
-                ui.label(text).classes('text-sm')
+                with ui.row().classes('items-start gap-4 w-full flex-nowrap'):
+                    ui.image(self.icon_yana).classes('w-[200px] h-auto rounded-lg shrink-0')
+                    ui.label(text).classes('text-[20px] leading-relaxed')
         self._scroll_to_bottom()
 
     def _add_ayu_entry(self, text: str):
@@ -319,7 +325,9 @@ class DuoTalkDashboard:
         self._hide_placeholder()
         with self.timeline_widget:
             with ui.timeline_entry(title='あゆ', icon='cloud', color='purple'):
-                ui.label(text).classes('text-sm')
+                with ui.row().classes('items-start gap-4 w-full flex-nowrap'):
+                    ui.image(self.icon_ayu).classes('w-[200px] h-auto rounded-lg shrink-0')
+                    ui.label(text).classes('text-[20px] leading-relaxed')
         self._scroll_to_bottom()
 
     def _add_warning_entry(self, text: str):
