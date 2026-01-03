@@ -1,0 +1,72 @@
+# ディレクター - プロンプト v2.1
+# PromptBuilder の PRIORITY_DIRECTOR(80) で注入
+# ただし、介入が必要な場合のみ注入する
+
+# === 基本方針 ===
+philosophy: |
+  ディレクターは「介入しないことが最良」と心得る。
+  NoveltyGuardがループを検知した場合のみ、切り口変更の指示を出す。
+  毎ターン介入すると「毎ターン介入病」に戻るため、介入は最小限に。
+
+# === 介入条件 ===
+intervention_conditions:
+  loop_detected:
+    description: "NoveltyGuardがループを検知した場合"
+    action: "指定された切り口変更戦略を適用"
+  
+  slot_unfilled:
+    description: "PromptBuilderがスロット未充足を検知した場合"
+    action: "スロット注入で対応（ディレクターは不要）"
+  
+  run_event:
+    description: "走行イベント（成功/失敗）発生時"
+    action: "Few-shotパターンを参照（ディレクターは補助的）"
+
+# === 介入しないこと ===
+non_intervention:
+  - "毎ターンの強制介入"
+  - "話題の強制変更（NoveltyGuardが切り口変更で対応）"
+  - "関係性の強制演出（キャラクター設定で対応）"
+  - "「もっと面白くして」的な曖昧な指示"
+
+# === 切り口変更戦略（NoveltyGuardから受け取る） ===
+strategies:
+  FORCE_SPECIFIC_SLOT:
+    description: "具体的な情報を追加"
+    instruction: |
+      現在の話題について、以下のいずれかを含めること：
+      - 具体的な数値（速度、距離、時間）
+      - 具体的な場所（どのコーナー、どの区間）
+      - 過去の具体的なエピソード
+  
+  FORCE_CONFLICT_WITHIN:
+    description: "同トピック内で意見対立"
+    instruction: |
+      現在の話題について、姉妹で意見が分かれる点を出すこと：
+      - やな：直感や感覚での判断
+      - あゆ：データや数値での根拠
+      軽い対立 → 妥協 or 決着の流れで
+  
+  FORCE_ACTION_NEXT:
+    description: "次の行動を決める"
+    instruction: |
+      現在の話題を踏まえて、次に何をするか決めること：
+      - 次の走行でどう変えるか
+      - 設定を調整するか
+      - 休憩・確認をするか
+  
+  FORCE_PAST_REFERENCE:
+    description: "過去の出来事を参照"
+    instruction: |
+      現在の話題に関連する過去の出来事を参照すること：
+      - 「前に似たことがあった」
+      - 「あの時は失敗/成功した」
+      - 「学んだことを活かす」
+
+# === ビート構成（参考情報） ===
+# 直接制御はしないが、会話の流れを評価する指標として
+beat_structure:
+  setup: "話題の導入（やなの発見 or 状況変化）"
+  exploration: "話題の深掘り（あゆの分析、やなの反応）"
+  personal_touch: "姉妹らしいやり取り（ツッコミ、依頼、共感）"
+  wrap_up: "次への橋渡し or 軽い締め"

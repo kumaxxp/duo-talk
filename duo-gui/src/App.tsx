@@ -5,6 +5,8 @@ import TurnCard from './components/TurnCard'
 import RagPanel from './components/RagPanel'
 import CovSpark from './components/CovSpark'
 import SettingsPanel from './components/SettingsPanel'
+import LivePanel from './components/LivePanel'
+import SignalsPanel from './components/SignalsPanel'
 import { useSSE } from './hooks/useSSE'
 import { covRate } from './hooks/useCov'
 import type { DirectorEvent, RAGEvent, SpeakEvent, PromptDbg } from './lib/types'
@@ -12,7 +14,7 @@ import PromptModal from './components/PromptModal'
 
 const API = (import.meta as any).env?.VITE_API_BASE || ''
 
-type TabType = 'runs' | 'settings'
+type TabType = 'runs' | 'settings' | 'live'
 
 export default function App(){
   const [activeTab, setActiveTab] = useState<TabType>('runs')
@@ -174,6 +176,14 @@ export default function App(){
             >
               Vision Settings
             </button>
+            <button
+              onClick={() => setActiveTab('live')}
+              className={`px-4 py-1.5 rounded-md text-sm font-medium transition-colors ${
+                activeTab === 'live' ? 'bg-white shadow text-slate-900' : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              Live
+            </button>
           </nav>
         </div>
         {activeTab === 'runs' && (
@@ -243,6 +253,16 @@ export default function App(){
       {activeTab === 'settings' && (
         <div className="p-4 bg-white rounded-lg shadow">
           <SettingsPanel apiBase={API} />
+        </div>
+      )}
+
+      {/* Live Tab Content */}
+      {activeTab === 'live' && (
+        <div className="space-y-4">
+          <div className="p-4 bg-white rounded-lg shadow">
+            <h2 className="text-lg font-medium mb-4">Live Commentary - JetRacer</h2>
+            <LivePanel jetracer_url="http://192.168.1.65:8000" />
+          </div>
         </div>
       )}
     </div>

@@ -1073,6 +1073,11 @@ def health():
     return jsonify({"status": "ok"})
 
 
+# ==================== v2.1 API Extensions ====================
+from server.api_v2 import v2_api
+app.register_blueprint(v2_api)
+
+
 # ==================== STARTUP ====================
 
 if __name__ == '__main__':

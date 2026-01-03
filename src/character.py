@@ -1,15 +1,31 @@
 """
 Character implementation for dialogue generation.
+
+v2.1 additions:
+- DuoSignals: スレッドセーフな状態管理
+- PromptBuilder: 優先度ベースのプロンプト組み立て
+- NoveltyGuard: 話題ループ検知
+- SilenceController: 沈黙判定
+- world_rules.yaml: 世界設定の固定注入
 """
 
 from pathlib import Path
-from typing import List, Optional, Tuple
+from typing import List, Optional, Tuple, Dict, Any
+import yaml
 
 from src.llm_client import get_llm_client
 from src.rag import get_rag_system
 from src.config import config
 from src.prompt_manager import get_prompt_manager
 from src.beat_tracker import get_beat_tracker
+
+# v2.1 imports
+from src.signals import DuoSignals, SignalEvent, EventType
+from src.injection import PromptBuilder, Priority
+from src.novelty_guard import NoveltyGuard, LoopBreakStrategy
+from src.silence_controller import SilenceController
+from src.prompt_loader import PromptLoader, CharacterPrompt, DirectorPrompt
+from src.few_shot_injector import FewShotInjector
 
 
 class Character:
@@ -57,6 +73,23 @@ class Character:
 
         # Initialize beat tracker for pattern information
         self.beat_tracker = get_beat_tracker()
+
+        # v2.1: Initialize new components
+        self.signals = DuoSignals()
+        self.novelty_guard = NoveltyGuard()
+        self.silence_controller = SilenceController()
+
+        # v2.1: Internal ID for file paths ("char_a" or "char_b")
+        self.internal_id = "char_a" if char_id == "A" else "char_b"
+
+        # v2.1: Initialize prompt loader and few-shot injector
+        self.prompt_loader = PromptLoader("persona")
+        self.few_shot_injector = FewShotInjector("persona/few_shots/patterns.yaml")
+
+        # v2.1: Preload prompts
+        self._character_prompt: CharacterPrompt = self.prompt_loader.load_character(self.internal_id)
+        self._director_prompt: DirectorPrompt = self.prompt_loader.load_director()
+        self._world_rules: str = self.prompt_loader.load_world_rules()
 
     def speak(
         self,
@@ -505,3 +538,291 @@ class Character:
         lines.append("- 2-4文で簡潔に応答してください")
 
         return "\n".join(lines)
+
+    # ========================================
+    # v2.1 Methods
+    # ========================================
+
+    def speak_v2(
+        self,
+        last_utterance: str,
+        context: Optional[Dict[str, Any]] = None,
+        frame_description: Optional[str] = None,
+        dialogue_pattern: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """
+        v2.1: キャラクターの応答を生成（新しいアーキテクチャ）
+
+        Args:
+            last_utterance: 直前の相手の発言
+            context: 追加のコンテキスト情報
+            frame_description: 現在のフレーム説明
+            dialogue_pattern: 対話パターン（"A"〜"E"）
+
+        Returns:
+            dict: {
+                "type": "speech" | "silence",
+                "content": str (speech) | dict (silence),
+                "debug": dict
+            }
+        """
+        context = context or {}
+
+        # 1. 状態のスナップショットを取得
+        state = self.signals.snapshot()
+
+        # 2. 沈黙判定
+        silence = self.silence_controller.should_silence(state)
+        if silence:
+            return {
+                "type": "silence",
+                "content": silence.to_dict(),
+                "debug": {"reason": "silence_controller"}
+            }
+
+        # 3. ループ検知
+        loop_result = self.novelty_guard.check_and_update(last_utterance)
+
+        # 4. プロンプト組み立て（PromptBuilder使用）
+        builder = PromptBuilder()
+
+        # 4.1 システムプロンプト
+        builder.add(
+            self._get_system_prompt(),
+            Priority.SYSTEM,
+            "system"
+        )
+
+        # 4.2 世界設定（固定注入）
+        builder.add(
+            self._world_rules,
+            Priority.WORLD_RULES,
+            "world_rules"
+        )
+
+        # 4.3 キャラクター設定
+        builder.add(
+            self._character_prompt.to_injection_text(),
+            Priority.DEEP_VALUES,
+            "character"
+        )
+
+        # 4.4 RAG知識
+        rag_hints = self._get_rag_hints(
+            query=frame_description,
+            partner_speech=last_utterance,
+        )
+        if rag_hints:
+            builder.add(
+                "【Knowledge from your expertise】\n" + "\n".join(f"- {h}" for h in rag_hints),
+                Priority.RAG,
+                "rag"
+            )
+
+        # 4.5 会話履歴
+        if context.get("history"):
+            builder.add(
+                self._format_history_v2(context["history"]),
+                Priority.HISTORY,
+                "history"
+            )
+
+        # 4.6 直前の発言（HISTORYの直後）
+        other_name = "あゆ" if self.char_id == "A" else "やな"
+        builder.add(
+            f"【直前の{other_name}の発言】\n{last_utterance}",
+            Priority.LAST_UTTERANCE,
+            "last_utterance"
+        )
+
+        # 4.7 シーン情報
+        if state.scene_facts:
+            builder.add(
+                f"【現在のシーン】\n{self._format_scene_v2(state.scene_facts)}",
+                Priority.SCENE_FACTS,
+                "scene"
+            )
+
+        # 4.8 走行状態
+        builder.add(
+            self._format_world_state_v2(state),
+            Priority.WORLD_STATE,
+            "world_state"
+        )
+
+        # 4.9 スロット充足チェック
+        unfilled = builder.check_and_inject_slots(
+            state.current_topic or "走行",
+            topic_depth=state.topic_depth
+        )
+
+        # 4.10 ディレクター指示（ループ検知時のみ）
+        if loop_result.loop_detected:
+            # NoveltyGuardの注入を使用
+            if loop_result.injection:
+                builder.add(
+                    loop_result.injection,
+                    Priority.DIRECTOR,
+                    "novelty_guard"
+                )
+
+            # ディレクターの戦略指示も追加
+            strategy_instruction = self._director_prompt.get_strategy_instruction(
+                loop_result.strategy.name
+            )
+            if strategy_instruction:
+                builder.add(
+                    f"【ディレクター補足】\n{strategy_instruction}",
+                    Priority.DIRECTOR + 1,  # NoveltyGuardの直後
+                    "director"
+                )
+
+        # 4.11 Few-shotパターン
+        # イベントタイプの判定
+        event_type = None
+        if state.recent_events:
+            last_event = state.recent_events[-1]
+            if isinstance(last_event, dict):
+                event_type = last_event.get("type")
+
+        few_shot = self.few_shot_injector.select_pattern(
+            signals_state=state,
+            loop_strategy=loop_result.strategy if loop_result.loop_detected else None,
+            event_type=event_type
+        )
+        if few_shot:
+            builder.add(
+                f"【参考: このような会話パターンで】\n{few_shot}",
+                Priority.FEW_SHOT,
+                "few_shot"
+            )
+
+        # 5. プロンプト生成
+        prompt = builder.build()
+
+        # 6. LLM呼び出し
+        response = self._call_llm(prompt, self.char_id)
+
+        # 7. 会話イベントを記録
+        self.signals.update(SignalEvent(
+            event_type=EventType.CONVERSATION,
+            data={
+                "speaker": self._character_prompt.name,
+                "topic": self._extract_topic(response),
+                "unfilled_slots": unfilled
+            }
+        ))
+
+        return {
+            "type": "speech",
+            "content": response,
+            "debug": {
+                "character": self._character_prompt.name,
+                "loop_detected": loop_result.loop_detected,
+                "strategy": loop_result.strategy.value if loop_result.loop_detected else None,
+                "unfilled_slots": unfilled,
+                "few_shot_used": few_shot is not None,
+                "prompt_structure": builder.get_structure()
+            }
+        }
+
+    def reload_prompts(self) -> None:
+        """プロンプトを再読み込み（ホットリロード）"""
+        self.prompt_loader.clear_cache()
+        self._character_prompt = self.prompt_loader.load_character(self.internal_id)
+        self._director_prompt = self.prompt_loader.load_director()
+        self._world_rules = self.prompt_loader.load_world_rules()
+        self.few_shot_injector.reload_patterns()
+
+    def _get_system_prompt(self) -> str:
+        """システムプロンプトを取得"""
+        return f"""あなたは「{self._character_prompt.name}」として振る舞ってください。
+JetRacer自動運転車の走行を実況・解説する姉妹AIの一人です。
+
+相手の発言に自然に反応し、キャラクターの個性を活かした短い発話を生成してください。
+発話は1〜3文程度で、会話のテンポを維持してください。"""
+
+    def _get_v2_character_prompt(self) -> str:
+        """v2.1用のキャラクタープロンプトを取得（レガシー互換）"""
+        if self.char_id == "A":
+            return """## やな（姉/Edge AI）
+- 発見役：「あ、なんか〜」「見て見て」
+- 感覚表現：「なんか良い感じ」「ちょっと怖い」
+- 口調：カジュアル、「〜じゃん」「〜でしょ」
+- 判断基準：迷ったらとりあえず試す、数字より手応え"""
+        else:
+            return """## あゆ（妹/Cloud AI）
+- 補足役：姉様の発見に数値や分析を付け加える
+- 敬語ベース：ですます調だが堅すぎない
+- やなを「姉様」と呼ぶ
+- 判断基準：数字で裏付けてから判断、過去のログは宝"""
+
+    def _format_history_v2(self, history: List[Dict[str, str]]) -> str:
+        """v2.1: 会話履歴をフォーマット"""
+        lines = ["【会話履歴】"]
+        for h in history[-5:]:  # 直近5ターン
+            speaker = h.get("speaker", "?")
+            content = h.get("content", "")
+            lines.append(f"{speaker}: {content}")
+        return "\n".join(lines)
+
+    def _format_scene_v2(self, scene_facts: Dict[str, str]) -> str:
+        """v2.1: シーン情報をフォーマット"""
+        parts = []
+        for key, value in scene_facts.items():
+            parts.append(f"- {key}: {value}")
+        return "\n".join(parts)
+
+    def _format_world_state_v2(self, state: Any) -> str:
+        """v2.1: 走行状態をフォーマット"""
+        return f"""【現在の走行状態】
+- モード: {state.jetracer_mode}
+- 速度: {state.current_speed:.2f} m/s
+- 舵角: {state.steering_angle:.1f}°
+- センサー: {state.distance_sensors}"""
+
+    def _extract_topic(self, text: str) -> str:
+        """テキストから主要トピックを抽出（簡易版）"""
+        import re
+        nouns = re.findall(r'[ァ-ヶー]{2,}|[一-龯]{2,}', text)
+        return nouns[0] if nouns else "走行"
+
+    def _call_llm(self, prompt: str, char_id: str) -> str:
+        """
+        v2.1: LLM呼び出しを統合
+
+        Args:
+            prompt: PromptBuilderで構築したプロンプト
+            char_id: キャラクターID ("A" or "B")
+
+        Returns:
+            LLMの応答テキスト
+        """
+        # リトライロジック付きでLLMを呼び出し
+        max_attempts = 2
+
+        for attempt in range(max_attempts):
+            response = self.llm.call(
+                system=self._get_system_prompt(),
+                user=prompt,
+                temperature=config.temperature + (0.2 * attempt),
+                max_tokens=100,  # 50〜80文字制限に合わせて短く
+            )
+            result = response.strip()
+
+            # 繰り返しチェック
+            if not self._has_repetition(result):
+                return result
+
+            print(f"    ⚠️ 繰り返し検出 (試行 {attempt + 1}/{max_attempts}): 再生成中...")
+
+        # 全試行で繰り返しがあった場合は最後の結果を返す
+        return result
+
+    def update_signals(self, event: SignalEvent) -> None:
+        """外部からシグナルを更新"""
+        self.signals.update(event)
+
+    def get_signals_snapshot(self) -> Any:
+        """現在のシグナル状態を取得"""
+        return self.signals.snapshot()
