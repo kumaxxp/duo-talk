@@ -11,3 +11,41 @@ export type PromptDbg     = { ts:string; event:'prompt_debug'; run_id:string; tu
 export type RunStartEnd   = { ts:string; event:'run_start'|'run_end'; run_id:string; model?:string; topic?:string }
 
 export type EventRow = DirectorEvent | SpeakEvent | RAGEvent | PromptDbg | RunStartEnd
+
+// v2.1 Types
+export type SignalsState = {
+  jetracer_mode: string
+  current_speed: number
+  steering_angle: number
+  distance_sensors: Record<string, number>
+  scene_facts: Record<string, string>
+  turn_count: number
+  topic_depth: number
+  is_stale: boolean
+  timestamp: string
+}
+
+export type NoveltyStatus = {
+  history_length: number
+  recent_strategies: string[]
+  current_nouns: string[]
+}
+
+export type SilenceInfo = {
+  type: string
+  duration: number
+  allow_short: boolean
+  sfx: string | null
+  bgm_intensity: number
+}
+
+export type LiveDialogue = {
+  speaker: string
+  content: string
+  debug?: {
+    loop_detected?: boolean
+    strategy?: string
+    unfilled_slots?: string[]
+    few_shot_used?: boolean
+  }
+}

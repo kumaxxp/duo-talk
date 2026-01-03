@@ -70,7 +70,9 @@
       "Bash(timeout 5 /home/owner/miniconda3/envs/duo-talk/bin/python:*)",
       "Bash(timeout 3 /home/owner/miniconda3/envs/duo-talk/bin/python:*)",
       "Bash(pytest:*)",
-      "Bash(timeout 30 python:*)"
+      "Bash(timeout 30 python:*)",
+      "Bash(timeout 10 python:*)",
+      "Bash(timeout 600 python scripts/test_live_v2.py:*)"
     ]
   }
 }
