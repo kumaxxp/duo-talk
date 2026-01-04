@@ -484,3 +484,111 @@ def generate_live_dialogue():
         "type": "dialogue",
         "dialogue": dialogue
     })
+
+
+# ==================== Sister Memory API ====================
+
+@v2_api.route('/memory/search', methods=['GET'])
+def memory_search():
+    """関連する記憶を検索"""
+    query = request.args.get('query', '')
+    character = request.args.get('character', 'yana')
+    n = int(request.args.get('n', 3))
+
+    memory = get_sister_memory()
+    results = memory.search(query, character, n)
+
+    return jsonify({
+        "status": "ok",
+        "results": [{
+            'event_id': r.event_id,
+            'summary': r.summary,
+            'perspective': r.perspective,
+            'emotional_tag': r.emotional_tag,
+            'relevance_score': r.relevance_score,
+            'timestamp': r.timestamp
+        } for r in results]
+    })
+
+
+@v2_api.route('/memory/stats', methods=['GET'])
+def memory_stats():
+    """記憶の統計情報を取得"""
+    memory = get_sister_memory()
+    stats = memory.get_stats()
+
+    return jsonify({
+        "status": "ok",
+        "stats": {
+            'total_memories': stats.total_memories,
+            'buffer_size': stats.buffer_size,
+            'emotional_tag_distribution': stats.emotional_tag_distribution,
+            'oldest_memory': stats.oldest_memory,
+            'newest_memory': stats.newest_memory
+        }
+    })
+
+
+@v2_api.route('/memory/buffer', methods=['POST'])
+def memory_buffer():
+    """記憶をバッファに追加"""
+    data = request.get_json()
+    memory = get_sister_memory()
+
+    event_id = memory.buffer_event(
+        event_summary=data.get('event_summary', ''),
+        yana_perspective=data.get('yana_perspective', ''),
+        ayu_perspective=data.get('ayu_perspective', ''),
+        emotional_tag=data.get('emotional_tag', 'routine'),
+        context_tags=data.get('context_tags', []),
+        run_id=data.get('run_id'),
+        turn_number=data.get('turn_number')
+    )
+
+    return jsonify({
+        "status": "ok",
+        "event_id": event_id,
+        "buffer_size": memory.get_buffer_size()
+    })
+
+
+@v2_api.route('/memory/flush', methods=['POST'])
+def memory_flush():
+    """バッファの記憶をDBに書き込み"""
+    data = request.get_json() or {}
+    validate = data.get('validate', True)
+
+    memory = get_sister_memory()
+    result = memory.flush_buffer(validate)
+
+    return jsonify({
+        "status": "ok",
+        "result": {
+            'total': result.total,
+            'written': result.written,
+            'skipped': result.skipped,
+            'errors': result.errors,
+            'skipped_reasons': result.skipped_reasons
+        }
+    })
+
+
+@v2_api.route('/memory/buffer/size', methods=['GET'])
+def memory_buffer_size():
+    """現在のバッファサイズを取得"""
+    memory = get_sister_memory()
+    return jsonify({
+        "status": "ok",
+        "buffer_size": memory.get_buffer_size()
+    })
+
+
+@v2_api.route('/memory/buffer', methods=['DELETE'])
+def memory_buffer_clear():
+    """バッファをクリア"""
+    memory = get_sister_memory()
+    memory.clear_buffer()
+    return jsonify({
+        "status": "ok",
+        "message": "Buffer cleared"
+    })
