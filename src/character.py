@@ -553,6 +553,7 @@ class Character:
         context: Optional[Dict[str, Any]] = None,
         frame_description: Optional[str] = None,
         dialogue_pattern: Optional[str] = None,
+        owner_instruction: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         v2.1: キャラクターの応答を生成（新しいアーキテクチャ）
@@ -562,6 +563,7 @@ class Character:
             context: 追加のコンテキスト情報
             frame_description: 現在のフレーム説明
             dialogue_pattern: 対話パターン（"A"〜"E"）
+            owner_instruction: オーナーからの介入指示
 
         Returns:
             dict: {
@@ -714,6 +716,14 @@ class Character:
                 f"【参考: このような会話パターンで】\n{few_shot}",
                 Priority.FEW_SHOT,
                 "few_shot"
+            )
+
+        # 4.12 オーナー介入指示
+        if owner_instruction:
+            builder.add(
+                owner_instruction,
+                Priority.OWNER_INSTRUCTION,
+                "owner_instruction"
             )
 
         # 5. プロンプト生成

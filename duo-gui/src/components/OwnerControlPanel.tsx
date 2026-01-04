@@ -10,9 +10,10 @@ import type {
 interface OwnerControlPanelProps {
   apiBase: string
   runId?: string
+  onPauseChange?: (paused: boolean) => void
 }
 
-export default function OwnerControlPanel({ apiBase, runId }: OwnerControlPanelProps) {
+export default function OwnerControlPanel({ apiBase, runId, onPauseChange }: OwnerControlPanelProps) {
   const [status, setStatus] = useState<InterventionStatus | null>(null)
   const [log, setLog] = useState<InterventionLogEntry[]>([])
   const [message, setMessage] = useState('')
@@ -62,6 +63,8 @@ export default function OwnerControlPanel({ apiBase, runId }: OwnerControlPanelP
 
   // Pause dialogue
   const handlePause = async () => {
+    // Immediately notify parent to stop dialogue generation
+    onPauseChange?.(true)
     setLoading(true)
     setError(null)
     try {
@@ -73,12 +76,16 @@ export default function OwnerControlPanel({ apiBase, runId }: OwnerControlPanelP
       const data = await res.json()
       if (data.status === 'error') {
         setError(data.message)
+        // Revert on error
+        onPauseChange?.(false)
       } else {
         fetchStatus()
         fetchLog()
       }
     } catch (e) {
       setError('Failed to pause')
+      // Revert on error
+      onPauseChange?.(false)
     } finally {
       setLoading(false)
     }
@@ -86,6 +93,8 @@ export default function OwnerControlPanel({ apiBase, runId }: OwnerControlPanelP
 
   // Resume dialogue
   const handleResume = async () => {
+    // Immediately notify parent to allow dialogue generation
+    onPauseChange?.(false)
     setLoading(true)
     setError(null)
     try {
@@ -95,6 +104,8 @@ export default function OwnerControlPanel({ apiBase, runId }: OwnerControlPanelP
       const data = await res.json()
       if (data.status === 'error') {
         setError(data.message)
+        // Revert on error - stay paused
+        onPauseChange?.(true)
       } else {
         setQueryBack(null)
         fetchStatus()
@@ -102,6 +113,8 @@ export default function OwnerControlPanel({ apiBase, runId }: OwnerControlPanelP
       }
     } catch (e) {
       setError('Failed to resume')
+      // Revert on error - stay paused
+      onPauseChange?.(true)
     } finally {
       setLoading(false)
     }
@@ -128,6 +141,8 @@ export default function OwnerControlPanel({ apiBase, runId }: OwnerControlPanelP
         if (result.needs_clarification && result.query_back) {
           setQueryBack(result.query_back)
         } else {
+          // 指示が受理され、RESUMING状態になった → 対話再開を許可
+          onPauseChange?.(false)
           setMessage('')
           fetchStatus()
           fetchLog()
@@ -155,6 +170,8 @@ export default function OwnerControlPanel({ apiBase, runId }: OwnerControlPanelP
       if (data.status === 'error') {
         setError(data.result?.error || data.message)
       } else {
+        // 回答が受理され、RESUMING状態になった → 対話再開を許可
+        onPauseChange?.(false)
         setQueryBack(null)
         setMessage('')
         fetchStatus()

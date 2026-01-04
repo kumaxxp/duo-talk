@@ -438,6 +438,23 @@ def generate_live_dialogue():
     history = data.get('history', [])
     turns = data.get('turns', 2)
 
+    # 介入状態チェック
+    intervention_manager = get_intervention_manager()
+    current_state = intervention_manager.get_state()
+
+    # PAUSED, PROCESSING, QUERY_BACK の場合は対話生成を停止
+    if current_state in [InterventionState.PAUSED, InterventionState.PROCESSING, InterventionState.QUERY_BACK]:
+        return jsonify({
+            "status": "ok",
+            "type": "paused",
+            "state": current_state.value,
+            "message": "Dialogue generation is paused by intervention"
+        })
+
+    # RESUMING の場合は指示を適用して対話生成し、状態を RUNNING に戻す
+    if current_state == InterventionState.RESUMING:
+        intervention_manager.resume()  # 状態を RUNNING に変更
+
     signals = get_signals()
     novelty_guard = get_novelty_guard()
     silence_controller = get_silence_controller()
@@ -456,6 +473,10 @@ def generate_live_dialogue():
             }
         })
 
+    # 適用待ちの介入指示を取得
+    pending_instruction = intervention_manager.get_pending_instruction()
+    target_character = intervention_manager.get_target_character()
+
     # 対話生成
     dialogue = []
     for turn in range(turns):
@@ -466,10 +487,18 @@ def generate_live_dialogue():
             history[-1]["content"] if history else "(画面を見ている)"
         )
 
+        # 介入指示がある場合、対象キャラに適用
+        owner_instruction = None
+        if pending_instruction:
+            char_name = "yana" if char_id == "A" else "ayu"
+            if target_character in [char_name, "both", None]:
+                owner_instruction = pending_instruction
+
         result = character.speak_v2(
             last_utterance=last_utterance,
             context={"history": history + dialogue},
-            frame_description=frame_description
+            frame_description=frame_description,
+            owner_instruction=owner_instruction
         )
 
         if result["type"] == "speech":
@@ -479,6 +508,10 @@ def generate_live_dialogue():
                 "content": result["content"],
                 "debug": result.get("debug", {})
             })
+
+    # 介入指示を適用したらクリア
+    if pending_instruction and dialogue:
+        intervention_manager.clear_pending_instruction()
 
     return jsonify({
         "status": "ok",

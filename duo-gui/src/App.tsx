@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import ControlPanel from './components/ControlPanel'
 import RunList from './components/RunList'
 import TurnCard from './components/TurnCard'
@@ -6,7 +6,6 @@ import RagPanel from './components/RagPanel'
 import CovSpark from './components/CovSpark'
 import SettingsPanel from './components/SettingsPanel'
 import LivePanel from './components/LivePanel'
-import SignalsPanel from './components/SignalsPanel'
 import OwnerControlPanel from './components/OwnerControlPanel'
 import { useSSE } from './hooks/useSSE'
 import { covRate } from './hooks/useCov'
@@ -38,6 +37,8 @@ export default function App(){
   const [ragScore, setRagScore] = useState<{f1?:number, cite?:number}|undefined>()
   const [styleRate, setStyleRate] = useState<number|undefined>()
   const autoPicked = useRef(false)
+  // Intervention state (shared between LivePanel and OwnerControlPanel)
+  const [interventionPaused, setInterventionPaused] = useState(false)
 
   // Clear state when run_id changes
   useEffect(() => {
@@ -207,6 +208,12 @@ export default function App(){
               <h2 className="font-medium mb-2">New Run</h2>
               <ControlPanel apiBase={API} onStarted={(r)=> { if(r){ autoPicked.current = true; setRid(r) } }} />
             </div>
+            {/* Owner Intervention Control */}
+            <OwnerControlPanel
+              apiBase={API}
+              runId={rid}
+              onPauseChange={setInterventionPaused}
+            />
             <div className="p-4 bg-white rounded-lg shadow">
               <h2 className="font-medium mb-2">Runs</h2>
               <div className="max-h-64 overflow-auto md:max-h-80">
@@ -262,10 +269,17 @@ export default function App(){
         <div className="grid grid-cols-1 lg:grid-cols-4 gap-4">
           <div className="lg:col-span-3 p-4 bg-white rounded-lg shadow">
             <h2 className="text-lg font-medium mb-4">Live Commentary - JetRacer</h2>
-            <LivePanel jetracer_url="http://192.168.1.65:8000" />
+            <LivePanel
+              jetracer_url="http://192.168.1.65:8000"
+              externalPaused={interventionPaused}
+            />
           </div>
           <div className="lg:col-span-1">
-            <OwnerControlPanel apiBase={API} runId={rid} />
+            <OwnerControlPanel
+              apiBase={API}
+              runId={rid}
+              onPauseChange={setInterventionPaused}
+            />
           </div>
         </div>
       )}

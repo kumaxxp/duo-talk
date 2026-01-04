@@ -16,6 +16,7 @@ from src.vision_processor import VisionProcessor
 from src.character import Character
 from src.director import Director
 from src.logger import Logger
+from src.owner_intervention import get_intervention_manager, InterventionState
 
 
 class NarrationPipeline:
@@ -45,6 +46,44 @@ class NarrationPipeline:
         self.char_b = Character("B")
         self.director = Director()
         self.logger = Logger()
+        self.intervention_manager = get_intervention_manager()
+
+    def _wait_for_intervention(self, run_id: str) -> Optional[str]:
+        """
+        介入状態をチェックし、一時停止中は待機する。
+
+        Returns:
+            オーナー指示がある場合はその内容、なければNone
+        """
+        import time
+
+        while True:
+            state = self.intervention_manager.get_state()
+
+            if state == InterventionState.RUNNING:
+                # 実行中：オーナー指示があれば取得
+                instruction = self.intervention_manager.get_pending_instruction()
+                if instruction:
+                    # 指示をクリア（一度だけ適用）
+                    self.intervention_manager.clear_pending_instruction()
+                return instruction
+
+            elif state in [InterventionState.PAUSED, InterventionState.PROCESSING,
+                          InterventionState.QUERY_BACK]:
+                # 一時停止中：待機
+                print(f"    ⏸️  Paused by owner intervention (state: {state.value})")
+                time.sleep(1.0)  # 1秒ごとにチェック
+
+            elif state == InterventionState.RESUMING:
+                # 再開中：指示を取得して実行再開
+                instruction = self.intervention_manager.get_pending_instruction()
+                if instruction:
+                    self.intervention_manager.clear_pending_instruction()
+                return instruction
+
+            else:
+                # 不明な状態は実行継続
+                return None
 
     @staticmethod
     def _truncate_response(response: str, max_sentences: int = 2, max_chars: int = 100) -> str:
@@ -352,6 +391,12 @@ class NarrationPipeline:
 
         # A が初手を打つ
         print(f"\n  Turn {turn_counter + 1}/{max_iterations}")
+
+        # オーナー介入チェック（一時停止中は待機）
+        owner_instruction = self._wait_for_intervention(run_id)
+        if owner_instruction:
+            print(f"    📢 Owner instruction: {owner_instruction[:50]}...")
+
         print("    > 澄ヶ瀬やな (姉) is speaking...")
         # 初回は履歴なし
         if use_stateful_history:
@@ -381,6 +426,13 @@ class NarrationPipeline:
         # 残りのターンを交互に生成
         for turn in range(1, max_iterations):
             print(f"\n  Turn {turn + 1}/{max_iterations}")
+
+            # オーナー介入チェック（一時停止中は待機）
+            owner_instruction = self._wait_for_intervention(run_id)
+            if owner_instruction:
+                print(f"    📢 Owner instruction: {owner_instruction[:50]}...")
+                # オーナー指示をDirector Guidanceとして適用
+                director_guidance = owner_instruction
 
             # 前のスピーカーを取得
             last_speaker, last_speech = dialogue_history[-1]

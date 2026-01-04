@@ -28,6 +28,7 @@ class Priority(IntEnum):
     WORLD_STATE = 70         # 現在の走行状態
     SLOT_FILLER = 75         # 未充足スロットの強制注入
     DIRECTOR = 80            # ディレクター指示
+    OWNER_INSTRUCTION = 82   # オーナー介入指示
     FEW_SHOT = 85            # Few-shot例（状況トリガー）
 
 
