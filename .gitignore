@@ -25,3 +25,4 @@ duo-gui/.vite/
 duo-gui/*.log
 duo-gui/.env*
 runs/uploads/
+memories/

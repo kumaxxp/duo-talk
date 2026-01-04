@@ -17,6 +17,8 @@ from src.silence_controller import SilenceController
 from src.novelty_guard import NoveltyGuard
 from src.jetracer_client import JetRacerClient
 from src.jetracer_provider import JetRacerProvider, DataMode
+from src.owner_intervention import get_intervention_manager, InterventionState
+from src.memory_generator import get_memory_generator
 
 
 def run_live_test(
@@ -41,6 +43,14 @@ def run_live_test(
     signals = DuoSignals()
     silence_controller = SilenceController()
     novelty_guard = NoveltyGuard()
+
+    # オーナー介入マネージャー
+    intervention = get_intervention_manager()
+    print("   Intervention manager ready")
+
+    # 記憶生成
+    memory_generator = get_memory_generator()
+    print("   Memory generator ready")
 
     char_a = Character("A")
     char_b = Character("B")
@@ -70,7 +80,9 @@ def run_live_test(
         "total_turns": 0,
         "silences": 0,
         "loop_detections": 0,
-        "errors": 0
+        "errors": 0,
+        "interventions": 0,
+        "memories_generated": 0
     }
 
     print(f"\nStarting live commentary ({turns} turns)...")
@@ -79,6 +91,26 @@ def run_live_test(
     try:
         for turn_idx in range(turns):
             print(f"\n[Turn {turn_idx + 1}/{turns}]")
+
+            # オーナー介入状態チェック
+            intervention_state = intervention.get_state()
+
+            if intervention_state in [InterventionState.PAUSED,
+                                       InterventionState.PROCESSING,
+                                       InterventionState.QUERY_BACK]:
+                print(f"   ⏸️ Intervention in progress ({intervention_state.value})")
+                time.sleep(1.0)  # 短い待機
+                continue
+
+            # RESUMING状態なら指示を取得
+            owner_instruction = None
+            if intervention_state == InterventionState.RESUMING:
+                owner_instruction = intervention.get_pending_instruction()
+                target_char = intervention.get_target_character()
+                if owner_instruction:
+                    print(f"   📝 Owner instruction for {target_char}: {owner_instruction[:40]}...")
+                intervention.clear_pending_instruction()
+                intervention.resume()  # RUNNINGに戻す
 
             # センサーデータ取得
             try:
@@ -141,10 +173,20 @@ def run_live_test(
 
                 last_utterance = history[-1]["content"] if history else "(watching screen)"
 
+                # 介入指示の適用判定
+                instruction_for_this_turn = None
+                if owner_instruction:
+                    target = intervention.get_target_character()
+                    # 両方向け、または特定キャラクター向けの場合に適用
+                    if target in [None, "both", speaker_name]:
+                        instruction_for_this_turn = owner_instruction
+                        owner_instruction = None  # 一度使ったらクリア
+
                 result = speaker.speak_v2(
                     last_utterance=last_utterance,
                     context={"history": history[-5:]},
-                    frame_description=frame_desc
+                    frame_description=frame_desc,
+                    owner_instruction=instruction_for_this_turn
                 )
 
                 if result["type"] == "speech":
@@ -163,11 +205,30 @@ def run_live_test(
                     if debug.get("loop_detected"):
                         print(f"      Loop: {debug.get('strategy')}")
                         stats["loop_detections"] += 1
+                    if instruction_for_this_turn:
+                        print(f"      📝 Applied owner instruction")
+                        stats["interventions"] += 1
+
+            # 記憶生成（4ターンごと）
+            if len(history) >= 4 and len(history) % 4 == 0:
+                mem_ids = memory_generator.process_dialogue(
+                    history[-4:],
+                    run_id=f"live_{datetime.now().strftime('%Y%m%d_%H%M%S')}",
+                    context_tags=["live", mode]
+                )
+                if mem_ids:
+                    print(f"   💾 Generated {len(mem_ids)} memories")
+                    stats["memories_generated"] += len(mem_ids)
 
             time.sleep(interval)
 
     except KeyboardInterrupt:
         print("\n\nTest interrupted by user")
+
+    # 記憶をフラッシュ
+    print("\nFlushing memories to database...")
+    flush_result = memory_generator.flush_memories(validate=True)
+    print(f"   Written: {flush_result['written']}, Skipped: {flush_result['skipped']}")
 
     # サマリー
     print("\n" + "=" * 60)
@@ -176,6 +237,8 @@ def run_live_test(
     print(f"   Total turns: {stats['total_turns']}")
     print(f"   Silences: {stats['silences']}")
     print(f"   Loop detections: {stats['loop_detections']}")
+    print(f"   Interventions: {stats['interventions']}")
+    print(f"   Memories generated: {stats['memories_generated']}")
     print(f"   Errors: {stats['errors']}")
     print(f"   History length: {len(history)}")
 
