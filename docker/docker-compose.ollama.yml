@@ -1,0 +1,37 @@
+# Ollama Docker Compose Configuration (Reference)
+# Use this as an alternative to native Ollama installation
+
+services:
+  ollama:
+    image: ollama/ollama:latest
+    container_name: duo-talk-ollama
+    runtime: nvidia
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=all
+      - OLLAMA_KEEP_ALIVE=24h
+    volumes:
+      - ollama_data:/root/.ollama
+    ports:
+      - "${OLLAMA_PORT:-11434}:11434"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:11434/api/tags"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+volumes:
+  ollama_data:
+    name: duo-talk-ollama-data
+
+networks:
+  default:
+    name: duo-talk-network

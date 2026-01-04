@@ -1,0 +1,40 @@
+# vLLM Docker Compose Configuration
+# duo-talk v2.1 LLM Backend
+
+services:
+  vllm:
+    image: vllm/vllm-openai:latest
+    container_name: duo-talk-vllm
+    runtime: nvidia
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=all
+      - HUGGING_FACE_HUB_TOKEN=${HF_TOKEN:-}
+    volumes:
+      - ${HF_CACHE:-~/.cache/huggingface}:/root/.cache/huggingface
+    ports:
+      - "${VLLM_PORT:-8000}:8000"
+    ipc: host
+    command: >
+      --model ${VLLM_MODEL:-RedHatAI/gemma-3-12b-it-quantized.w8a8}
+      --gpu-memory-utilization ${GPU_MEMORY_UTIL:-0.85}
+      --max-model-len ${MAX_MODEL_LEN:-8192}
+      --trust-remote-code
+      ${VLLM_EXTRA_ARGS:-}
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/v1/models"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 120s
+
+networks:
+  default:
+    name: duo-talk-network

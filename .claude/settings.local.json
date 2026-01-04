@@ -87,7 +87,10 @@
       "Bash(exit 0)",
       "Bash(docker logs:*)",
       "Bash(docker stop:*)",
-      "Bash(mkdir:*)"
+      "Bash(mkdir:*)",
+      "Bash(chmod:*)",
+      "Bash(docker compose config:*)",
+      "Bash(/home/owner/work/duo-talk/docker/scripts/health-check.sh:*)"
     ]
   }
 }
