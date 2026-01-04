@@ -19,6 +19,7 @@ class Priority(IntEnum):
     WORLD_RULES = 15         # 姉妹共同行動ルール（固定）
     DEEP_VALUES = 20         # キャラクター深層設定（短く）
     LONG_MEMORY = 30         # 長期記憶（姉妹の共有体験）
+    SISTER_MEMORY = 35       # 姉妹視点記憶（過去の体験）
     RAG = 40                 # RAG知識
     HISTORY = 50             # 会話履歴
     LAST_UTTERANCE = 55      # 直前の相手の発言（HISTORYの直後）

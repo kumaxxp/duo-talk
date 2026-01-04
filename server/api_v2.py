@@ -20,6 +20,7 @@ from src.silence_controller import SilenceController, SilenceType
 from src.character import Character
 from src.jetracer_client import JetRacerClient
 from src.jetracer_provider import JetRacerProvider, DataMode
+from src.sister_memory import get_sister_memory
 
 # Blueprint for v2.1 APIs
 v2_api = Blueprint('v2_api', __name__, url_prefix='/api/v2')

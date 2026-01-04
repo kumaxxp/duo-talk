@@ -26,6 +26,7 @@ from src.novelty_guard import NoveltyGuard, LoopBreakStrategy
 from src.silence_controller import SilenceController
 from src.prompt_loader import PromptLoader, CharacterPrompt, DirectorPrompt
 from src.few_shot_injector import FewShotInjector
+from src.sister_memory import get_sister_memory
 
 
 class Character:
@@ -85,6 +86,9 @@ class Character:
         # v2.1: Initialize prompt loader and few-shot injector
         self.prompt_loader = PromptLoader("persona")
         self.few_shot_injector = FewShotInjector("persona/few_shots/patterns.yaml")
+
+        # v2.1: Sister memory for perspective-based recall
+        self.sister_memory = get_sister_memory()
 
         # v2.1: Preload prompts
         self._character_prompt: CharacterPrompt = self.prompt_loader.load_character(self.internal_id)
@@ -617,6 +621,21 @@ class Character:
                 "【Knowledge from your expertise】\n" + "\n".join(f"- {h}" for h in rag_hints),
                 Priority.RAG,
                 "rag"
+            )
+
+        # 4.4.5 姉妹視点記憶（過去の関連体験）
+        character_name = "yana" if self.char_id == "A" else "ayu"
+        memories = self.sister_memory.search(
+            query=frame_description or last_utterance,
+            character=character_name,
+            n_results=2
+        )
+        if memories:
+            memory_text = "\n".join([m.to_prompt_text() for m in memories])
+            builder.add(
+                f"【関連する過去の記憶】\n{memory_text}",
+                Priority.SISTER_MEMORY,
+                "sister_memory"
             )
 
         # 4.5 会話履歴
