@@ -6,6 +6,38 @@
 
 set -e
 
+# Process IDs
+BACKEND_PID=""
+FRONTEND_PID=""
+
+# Cleanup function - called on Ctrl+C or exit
+cleanup() {
+    echo ""
+    echo -e "\n${YELLOW}⏹️  Shutting down services...${NC}"
+
+    # Kill backend
+    if [ -n "$BACKEND_PID" ] && kill -0 "$BACKEND_PID" 2>/dev/null; then
+        echo "   Stopping Backend (PID: $BACKEND_PID)..."
+        kill "$BACKEND_PID" 2>/dev/null || true
+    fi
+
+    # Kill frontend
+    if [ -n "$FRONTEND_PID" ] && kill -0 "$FRONTEND_PID" 2>/dev/null; then
+        echo "   Stopping Frontend (PID: $FRONTEND_PID)..."
+        kill "$FRONTEND_PID" 2>/dev/null || true
+    fi
+
+    # Kill any remaining processes
+    pkill -f "python.*api_server.py" 2>/dev/null || true
+    pkill -f "vite" 2>/dev/null || true
+
+    echo -e "${GREEN}✅ All services stopped${NC}"
+    exit 0
+}
+
+# Trap SIGINT (Ctrl+C) and SIGTERM
+trap cleanup SIGINT SIGTERM EXIT
+
 echo "════════════════════════════════════════════════════════════════════════════"
 echo "🚀 DUO-TALK GUI + Backend Launcher"
 echo "════════════════════════════════════════════════════════════════════════════"
@@ -110,6 +142,7 @@ echo -e "${GREEN}🔧 Starting Backend API Server...${NC}"
 export FLASK_PORT=5000
 python3 server/api_server.py &
 BACKEND_PID=$!
+echo "   PID: $BACKEND_PID"
 echo -e "${GREEN}   Backend running on http://localhost:5000${NC}"
 echo ""
 
@@ -120,6 +153,7 @@ echo -e "${GREEN}🎨 Starting Frontend (Vite)...${NC}"
 cd duo-gui
 VITE_API_BASE=http://localhost:5000 npm run dev &
 FRONTEND_PID=$!
+echo "   PID: $FRONTEND_PID"
 echo ""
 
 # Wait a moment for Vite to start
@@ -132,13 +166,13 @@ echo "════════════════════════�
 echo ""
 echo "📌 Frontend (React):    http://localhost:5173"
 echo "📌 Backend API:         http://localhost:5000"
-echo "📌 API Endpoints:"
-echo "     - GET  /api/run/list"
-echo "     - GET  /api/run/events?run_id=..."
-echo "     - GET  /api/run/stream?run_id=... (SSE)"
-echo "     - POST /api/narration/start"
-echo "     - GET  /api/feedback/trends"
-echo "     - POST /api/feedback/record"
+echo "📌 v2.1 API Endpoints:"
+echo "     - GET  /api/v2/signals          (DuoSignals状態)"
+echo "     - GET  /api/v2/novelty/status   (NoveltyGuard状態)"
+echo "     - GET  /api/v2/silence/check    (沈黙判定)"
+echo "     - POST /api/v2/jetracer/connect (JetRacer接続)"
+echo "     - GET  /api/v2/jetracer/fetch   (センサー取得)"
+echo "     - POST /api/v2/live/dialogue    (対話生成)"
 echo ""
 echo "💡 Press Ctrl+C to stop all services"
 echo ""

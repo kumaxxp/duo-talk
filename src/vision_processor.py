@@ -3,6 +3,49 @@ Vision processing module with multi-mode support.
 Supports single VLM, VLM + segmentation, and segmentation + LLM pipelines.
 """
 
+# ==============================================================================
+# flash_attn mock for Florence-2 (avoids requiring flash-attn package)
+# This must be done BEFORE any transformers imports
+# ==============================================================================
+import sys
+import types
+import importlib.util
+
+def _create_flash_attn_mock() -> None:
+    """Create mock modules for flash_attn to avoid import errors"""
+    if 'flash_attn' in sys.modules:
+        return  # Already loaded (real or mock)
+
+    def create_mock_module(name: str) -> types.ModuleType:
+        mock = types.ModuleType(name)
+        setattr(mock, '__spec__', importlib.util.spec_from_loader(name, loader=None))
+        setattr(mock, '__file__', f"<mock:{name}>")
+        setattr(mock, '__path__', [])
+        return mock
+
+    # Main flash_attn module
+    flash_attn = create_mock_module('flash_attn')
+    setattr(flash_attn, '__version__', "2.6.3")
+    setattr(flash_attn, 'flash_attn_func', None)
+    setattr(flash_attn, 'flash_attn_varlen_func', None)
+    sys.modules['flash_attn'] = flash_attn
+
+    # Submodules
+    bert_padding = create_mock_module('flash_attn.bert_padding')
+    setattr(bert_padding, 'pad_input', None)
+    setattr(bert_padding, 'unpad_input', None)
+    setattr(bert_padding, 'index_first_axis', None)
+    sys.modules['flash_attn.bert_padding'] = bert_padding
+
+    flash_attn_interface = create_mock_module('flash_attn.flash_attn_interface')
+    setattr(flash_attn_interface, 'flash_attn_func', None)
+    setattr(flash_attn_interface, 'flash_attn_varlen_func', None)
+    sys.modules['flash_attn.flash_attn_interface'] = flash_attn_interface
+
+# Initialize flash_attn mock
+_create_flash_attn_mock()
+# ==============================================================================
+
 import base64
 import json
 import os
@@ -414,12 +457,12 @@ class VisionProcessor:
                 class_id = int(box.cls[0].cpu().numpy())
                 label = result.names[class_id]
 
-                # Normalize bbox
+                # Normalize bbox (convert to Python float for JSON serialization)
                 norm_bbox = [
-                    xyxy[0] / img_width,
-                    xyxy[1] / img_height,
-                    xyxy[2] / img_width,
-                    xyxy[3] / img_height
+                    float(xyxy[0] / img_width),
+                    float(xyxy[1] / img_height),
+                    float(xyxy[2] / img_width),
+                    float(xyxy[3] / img_height)
                 ]
 
                 obj = DetectedObject(
@@ -552,9 +595,9 @@ class VisionProcessor:
         """
         lang = "日本語" if self.config.output_language == "ja" else "English"
 
-        system_prompt = "あなたは観光地ナレーションの専門家です。与えられた情報から簡潔な説明を生成してください。"
+        system_prompt = "あなたはナレーションの専門家です。与えられた情報から簡潔な説明を生成してください。"
 
-        user_prompt = f"""以下の画像解析結果を元に、観光地ナレーション向けの視覚情報を{lang}で生成してください。
+        user_prompt = f"""以下の画像解析結果を元に、ナレーション向けの視覚情報を{lang}で生成してください。
 
 {structured_data}
 

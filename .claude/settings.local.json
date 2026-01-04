@@ -72,7 +72,14 @@
       "Bash(pytest:*)",
       "Bash(timeout 30 python:*)",
       "Bash(timeout 10 python:*)",
-      "Bash(timeout 600 python scripts/test_live_v2.py:*)"
+      "Bash(timeout 600 python scripts/test_live_v2.py:*)",
+      "Bash(timeout 120 /home/owner/miniconda3/envs/duo-talk/bin/python:*)",
+      "Bash(pip install:*)",
+      "Bash(find:*)",
+      "Bash(nvcc:*)",
+      "Bash(# Uninstall the incompatible version /home/owner/miniconda3/envs/duo-talk/bin/pip uninstall flash-attn -y # Check GitHub for more recent releases echo \"\"Checking for PyTorch 2.5+ compatible wheels...\"\" curl -s \"\"https://api.github.com/repos/Dao-AILab/flash-attention/releases\"\" | python3 -c \"\" import sys, json releases = json.load\\(sys.stdin\\) for rel in releases[:5]: print\\(f\\\\\"\"\\\\\\\\n=== {rel[''tag_name'']} ===\\\\\"\"\\) assets = rel.get\\(''assets'', []\\) wheels = [a[''name''] for a in assets if ''cp311'' in a[''name''] and ''cu12'' in a[''name''] and ''torch2'' in a[''name'']] for w in sorted\\(wheels\\)[-5:]: print\\(f'' {w}''\\) \"\")",
+      "Bash(# Check the latest release assets curl -s \"\"https://api.github.com/repos/Dao-AILab/flash-attention/releases/latest\"\" | python3 -c \"\" import sys, json data = json.load\\(sys.stdin\\) print\\(f\\\\\"\"Latest: {data.get\\(''tag_name'', ''unknown''\\)}\\\\\\\\n\\\\\"\"\\) assets = data.get\\(''assets'', []\\) # Filter for Python 3.11, CUDA 12 for a in assets: name = a[''name''] if ''cp311'' in name and ''cu12'' in name: print\\(name\\) \"\")",
+      "Bash(/home/owner/miniconda3/envs/duo-talk/bin/pip list:*)"
     ]
   }
 }
