@@ -1,5 +1,5 @@
 {
-  "backend": "ollama",
-  "model": "gemma3-12b",
+  "backend": "vllm",
+  "model": "gemma3-12b-int8",
   "container_id": null
 }
