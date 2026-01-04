@@ -1,9 +1,11 @@
 """
-LLM API client for OpenAI-compatible endpoints (Ollama, LM Studio, etc.)
+LLM API client for OpenAI-compatible endpoints (Ollama, vLLM, etc.)
+
+Updated to integrate with LLMProvider for backend switching.
 """
 
 import time
-from typing import Optional, List, Tuple
+from typing import Optional, List, Tuple, Dict, Any
 from openai import OpenAI
 
 from src.config import config
@@ -18,17 +20,59 @@ class LLMClient:
         api_key: Optional[str] = None,
         model: Optional[str] = None,
         timeout: Optional[int] = None,
+        use_provider: bool = True,
     ):
-        self.base_url = base_url or config.openai_base_url
-        self.api_key = api_key or config.openai_api_key
-        self.model = model or config.openai_model
-        self.timeout = timeout or config.timeout
+        """
+        Initialize LLM client.
 
-        self.client = OpenAI(
-            base_url=self.base_url,
-            api_key=self.api_key,
-            timeout=self.timeout,
-        )
+        Args:
+            base_url: API base URL (ignored if use_provider=True)
+            api_key: API key (ignored if use_provider=True)
+            model: Model name (ignored if use_provider=True)
+            timeout: Request timeout
+            use_provider: If True, use LLMProvider for backend management
+        """
+        self.timeout = timeout or config.timeout
+        self._use_provider = use_provider
+        self._provider = None
+
+        if use_provider:
+            # LLMProvider経由
+            from src.llm_provider import get_llm_provider
+            self._provider = get_llm_provider()
+            self.client = self._provider.get_client()
+            self.model = self._provider.get_model_name()
+            self.base_url = self._provider.get_backend_config(
+                self._provider._current_backend
+            ).get("base_url", "http://localhost:8000/v1")
+        else:
+            # 従来方式（後方互換）
+            self.base_url = base_url or config.openai_base_url
+            self.api_key = api_key or config.openai_api_key
+            self.model = model or config.openai_model
+            self.client = OpenAI(
+                base_url=self.base_url,
+                api_key=self.api_key,
+                timeout=self.timeout,
+            )
+
+    def refresh_from_provider(self) -> None:
+        """
+        LLMProviderから最新の設定を再取得
+        バックエンド切り替え後に呼び出す
+        """
+        if self._use_provider and self._provider:
+            self.client = self._provider.get_client()
+            self.model = self._provider.get_model_name()
+            self.base_url = self._provider.get_backend_config(
+                self._provider._current_backend
+            ).get("base_url", "http://localhost:8000/v1")
+
+    def get_provider_status(self) -> Optional[Dict[str, Any]]:
+        """LLMProviderの状態を取得"""
+        if self._provider:
+            return self._provider.get_status()
+        return None
 
     def call(
         self,
@@ -149,11 +193,11 @@ class LLMClient:
 _client: Optional[LLMClient] = None
 
 
-def get_llm_client() -> LLMClient:
+def get_llm_client(use_provider: bool = True) -> LLMClient:
     """Get or create global LLM client"""
     global _client
     if _client is None:
-        _client = LLMClient()
+        _client = LLMClient(use_provider=use_provider)
     return _client
 
 
@@ -161,3 +205,9 @@ def set_llm_client(client: LLMClient) -> None:
     """Set global LLM client"""
     global _client
     _client = client
+
+
+def reset_llm_client() -> None:
+    """Reset global LLM client (forces re-initialization)"""
+    global _client
+    _client = None

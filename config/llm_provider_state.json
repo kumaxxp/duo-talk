@@ -1,0 +1,5 @@
+{
+  "backend": "ollama",
+  "model": "gemma3-12b",
+  "container_id": null
+}

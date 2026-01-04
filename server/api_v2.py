@@ -807,3 +807,108 @@ def intervention_instruction_clear():
         "status": "ok",
         "message": "Instruction cleared"
     })
+
+
+# ============================================================
+# Provider Management Endpoints
+# ============================================================
+
+from src.llm_provider import get_llm_provider, BackendType
+
+
+@v2_api.route('/provider/status', methods=['GET'])
+def get_provider_status():
+    """LLMプロバイダの状態を取得"""
+    provider = get_llm_provider()
+    return jsonify(provider.get_status())
+
+
+@v2_api.route('/provider/backends', methods=['GET'])
+def get_available_backends():
+    """利用可能なバックエンド一覧を取得"""
+    provider = get_llm_provider()
+    return jsonify({
+        "backends": provider.get_available_backends(),
+        "defaults": provider.config.get("defaults", {})
+    })
+
+
+@v2_api.route('/provider/switch', methods=['POST'])
+def switch_backend():
+    """
+    バックエンドを切り替え
+
+    Body:
+        backend: "ollama" or "vllm"
+        model_id: モデルID（省略時はデフォルト）
+    """
+    data = request.get_json()
+    backend_str = data.get("backend", "vllm")
+    model_id = data.get("model_id")
+
+    try:
+        backend = BackendType(backend_str)
+    except ValueError:
+        return jsonify({"success": False, "error": f"Invalid backend: {backend_str}"}), 400
+
+    provider = get_llm_provider()
+    result = provider.switch_backend(backend, model_id)
+
+    # 切り替え成功時、LLMClientも更新
+    if result.get("success"):
+        from src.llm_client import get_llm_client
+        client = get_llm_client()
+        client.refresh_from_provider()
+
+    return jsonify(result)
+
+
+@v2_api.route('/provider/docker/command/<model_id>', methods=['GET'])
+def get_docker_command(model_id: str):
+    """vLLM Docker起動コマンドを取得"""
+    provider = get_llm_provider()
+    return jsonify({
+        "model_id": model_id,
+        "command": provider.get_docker_command(model_id)
+    })
+
+
+@v2_api.route('/provider/docker/start', methods=['POST'])
+def start_vllm_docker():
+    """
+    vLLM Dockerコンテナを起動
+
+    Body:
+        model_id: 起動するモデルID
+    """
+    data = request.get_json()
+    model_id = data.get("model_id", "gemma3-12b-int8")
+
+    provider = get_llm_provider()
+    return jsonify(provider.start_vllm_docker(model_id))
+
+
+@v2_api.route('/provider/docker/stop', methods=['POST'])
+def stop_vllm_docker():
+    """vLLM Dockerコンテナを停止"""
+    provider = get_llm_provider()
+    return jsonify(provider.stop_vllm_docker())
+
+
+@v2_api.route('/provider/health/<backend>', methods=['GET'])
+def check_backend_health(backend: str):
+    """指定バックエンドの接続状態を確認"""
+    try:
+        backend_type = BackendType(backend)
+    except ValueError:
+        return jsonify({"error": f"Invalid backend: {backend}"}), 400
+
+    provider = get_llm_provider()
+    status = provider.check_backend_health(backend_type)
+
+    return jsonify({
+        "backend": backend,
+        "available": status.available,
+        "current_model": status.current_model,
+        "error": status.error
+    })
