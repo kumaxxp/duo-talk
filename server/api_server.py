@@ -213,7 +213,12 @@ def stream_run_events():
             time.sleep(0.5)
 
     return Response(event_generator(), mimetype='text/event-stream',
-                   headers={'Cache-Control': 'no-cache'})
+                   headers={
+                       'Cache-Control': 'no-cache',
+                       'X-Accel-Buffering': 'no',
+                       'Connection': 'keep-alive',
+                       'Content-Type': 'text/event-stream; charset=utf-8',
+                   })
 
 
 # ==================== NARRATION CONTROL ====================
@@ -1110,4 +1115,4 @@ if __name__ == '__main__':
     print(f"  GET  /health - Health check")
     print("\n" + "=" * 70)
 
-    app.run(host='0.0.0.0', port=port, debug=True)
+    app.run(host='0.0.0.0', port=port, debug=True, threaded=True)

@@ -8,9 +8,8 @@ import SettingsPanel from './components/SettingsPanel'
 import LivePanel from './components/LivePanel'
 import OwnerControlPanel from './components/OwnerControlPanel'
 import ProviderPanel from './components/ProviderPanel'
-import { useSSE } from './hooks/useSSE'
 import { covRate } from './hooks/useCov'
-import type { DirectorEvent, RAGEvent, SpeakEvent, PromptDbg } from './lib/types'
+import type { DirectorEvent, RAGEvent, SpeakEvent } from './lib/types'
 import PromptModal from './components/PromptModal'
 
 const API = (import.meta as any).env?.VITE_API_BASE || ''
@@ -61,13 +60,45 @@ export default function App(){
   }
   useEffect(()=>{ listRuns(); const id=setInterval(listRuns, 5000); return ()=> clearInterval(id) },[])
 
-  // SSE
-  useSSE(rid? `${API}/api/run/stream?run_id=${encodeURIComponent(rid)}` : '', {
-    director: (j:DirectorEvent)=> setDirectors(prev=> ({...prev, [j.turn]: j})),
-    rag_select: (j:RAGEvent)=> setRag(prev=> ({...prev, [j.turn]: j})),
-    speak: (j:SpeakEvent)=> setSpeaks(prev=> ({...prev, [j.turn]: j})),
-    prompt_debug: (j:PromptDbg)=> setPrompts(prev=> ({...prev, [j.turn]: j.prompt_tail})),
-  })
+  // Polling fallback (SSE has issues over network)
+  useEffect(() => {
+    if (!rid) return
+    let stop = false
+    const poll = async () => {
+      try {
+        const r = await fetch(`${API}/api/run/events?run_id=${encodeURIComponent(rid)}`)
+        const events = await r.json()
+        if (stop || !Array.isArray(events)) return
+
+        const newDirectors: Record<number, DirectorEvent> = {}
+        const newRag: Record<number, RAGEvent> = {}
+        const newSpeaks: Record<number, SpeakEvent> = {}
+        const newPrompts: Record<number, string> = {}
+
+        for (const ev of events) {
+          if (ev.event === 'director' && ev.turn !== undefined) {
+            newDirectors[ev.turn] = ev
+          } else if (ev.event === 'rag_select' && ev.turn !== undefined) {
+            newRag[ev.turn] = ev
+          } else if (ev.event === 'speak' && ev.turn !== undefined) {
+            newSpeaks[ev.turn] = ev
+          } else if (ev.event === 'prompt_debug' && ev.turn !== undefined) {
+            newPrompts[ev.turn] = ev.prompt_tail
+          }
+        }
+
+        setDirectors(newDirectors)
+        setRag(newRag)
+        setSpeaks(newSpeaks)
+        setPrompts(newPrompts)
+      } catch (e) {
+        console.error('Polling error:', e)
+      }
+    }
+    poll()
+    const id = setInterval(poll, 2000)
+    return () => { stop = true; clearInterval(id) }
+  }, [rid])
 
   // Fetch RAG Score (offline eval results) with light polling
   useEffect(()=>{

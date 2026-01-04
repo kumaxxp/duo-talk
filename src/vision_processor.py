@@ -185,10 +185,22 @@ class VisionProcessor:
         # Get prompt (custom or default)
         prompt = self.config.custom_description_prompt or self._get_default_vlm_prompt()
 
-        # Create OpenAI client for vLLM
+        # Determine VLM endpoint and model based on vlm_type
+        # Ollama VLM models (llava, llama3.2-vision, etc.) use Ollama's endpoint
+        vlm_model = self.config.vlm_custom_model or self.config.vlm_type.value
+        is_ollama_vlm = self.config.vlm_type != VLMType.CUSTOM
+
+        if is_ollama_vlm:
+            # Use Ollama endpoint for VLM
+            vlm_base_url = "http://localhost:11434/v1"
+        else:
+            # Use custom/configured endpoint
+            vlm_base_url = config.openai_base_url
+
+        # Create OpenAI client for VLM
         client = OpenAI(
-            base_url=config.openai_base_url,
-            api_key=config.openai_api_key,
+            base_url=vlm_base_url,
+            api_key="not-needed",
             timeout=config.timeout,
         )
 
@@ -221,7 +233,7 @@ class VisionProcessor:
 
         # Call VLM with multimodal message format
         response = client.chat.completions.create(
-            model=config.openai_model,
+            model=vlm_model,
             messages=messages,
             max_tokens=self.config.vlm_max_tokens,
             temperature=self.config.vlm_temperature,

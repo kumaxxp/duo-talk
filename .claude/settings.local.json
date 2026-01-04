@@ -95,7 +95,9 @@
       "Bash(while pgrep -f \"pip.*flash\")",
       "Bash(do sleep 30)",
       "Bash(sudo ufw status:*)",
-      "Bash(grep:*)"
+      "Bash(grep:*)",
+      "Bash(timeout 5 curl:*)",
+      "Bash(timeout 3 curl:*)"
     ]
   }
 }
