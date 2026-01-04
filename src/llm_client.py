@@ -152,21 +152,28 @@ class LLMClient:
         Returns:
             Response text from the LLM
         """
-        # Build messages array with proper role separation
+        # Build messages array with strict role alternation
+        # vLLM requires user/assistant/user/assistant... pattern
         messages = [{"role": "system", "content": system}]
+
+        # Helper to add message with merge for consecutive same roles
+        def add_message(role: str, content: str):
+            if messages and messages[-1]["role"] == role:
+                # Merge consecutive same-role messages
+                messages[-1]["content"] += "\n" + content
+            else:
+                messages.append({"role": role, "content": content})
 
         # Add conversation history with alternating roles
         # user = 相手の発言, assistant = 自分の過去の発言
         for speaker, text in history:
             if speaker == current_speaker:
-                # 自分の過去の発言 → assistant
-                messages.append({"role": "assistant", "content": text})
+                add_message("assistant", text)
             else:
-                # 相手の発言 → user
-                messages.append({"role": "user", "content": text})
+                add_message("user", text)
 
-        # Add current prompt as user message
-        messages.append({"role": "user", "content": current_prompt})
+        # Add current prompt as user message (merge if last was also user)
+        add_message("user", current_prompt)
 
         for attempt in range(retries):
             try:
