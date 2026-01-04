@@ -7,6 +7,7 @@ import CovSpark from './components/CovSpark'
 import SettingsPanel from './components/SettingsPanel'
 import LivePanel from './components/LivePanel'
 import OwnerControlPanel from './components/OwnerControlPanel'
+import ProviderPanel from './components/ProviderPanel'
 import { useSSE } from './hooks/useSSE'
 import { covRate } from './hooks/useCov'
 import type { DirectorEvent, RAGEvent, SpeakEvent, PromptDbg } from './lib/types'
@@ -14,7 +15,7 @@ import PromptModal from './components/PromptModal'
 
 const API = (import.meta as any).env?.VITE_API_BASE || ''
 
-type TabType = 'runs' | 'settings' | 'live'
+type TabType = 'runs' | 'settings' | 'live' | 'provider'
 
 export default function App(){
   const [activeTab, setActiveTab] = useState<TabType>('runs')
@@ -186,6 +187,14 @@ export default function App(){
             >
               Live
             </button>
+            <button
+              onClick={() => setActiveTab('provider')}
+              className={`px-4 py-1.5 rounded-md text-sm font-medium transition-colors ${
+                activeTab === 'provider' ? 'bg-white shadow text-slate-900' : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              Provider
+            </button>
           </nav>
         </div>
         {activeTab === 'runs' && (
@@ -282,6 +291,11 @@ export default function App(){
             />
           </div>
         </div>
+      )}
+
+      {/* Provider Tab Content */}
+      {activeTab === 'provider' && (
+        <ProviderPanel apiBase={API} />
       )}
     </div>
     <PromptModal open={modalTurn!==undefined} onClose={()=> { setModalTurn(undefined); lastFocusRef.current?.focus() }} turn={modalTurnData} />
