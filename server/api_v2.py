@@ -21,6 +21,7 @@ from src.character import Character
 from src.jetracer_client import JetRacerClient
 from src.jetracer_provider import JetRacerProvider, DataMode
 from src.sister_memory import get_sister_memory
+from src.owner_intervention import get_intervention_manager, InterventionState
 
 # Blueprint for v2.1 APIs
 v2_api = Blueprint('v2_api', __name__, url_prefix='/api/v2')
@@ -591,4 +592,185 @@ def memory_buffer_clear():
     return jsonify({
         "status": "ok",
         "message": "Buffer cleared"
+    })
+
+
+# ==================== Owner Intervention API ====================
+
+@v2_api.route('/intervention/status', methods=['GET'])
+def intervention_status():
+    """現在の介入状態を取得"""
+    manager = get_intervention_manager()
+    status = manager.get_status()
+
+    return jsonify({
+        "status": "ok",
+        "intervention": status
+    })
+
+
+@v2_api.route('/intervention/pause', methods=['POST'])
+def intervention_pause():
+    """対話を一時停止"""
+    data = request.get_json() or {}
+    run_id = data.get('run_id', 'default')
+
+    manager = get_intervention_manager()
+
+    if manager.get_state() != InterventionState.RUNNING:
+        return jsonify({
+            "status": "error",
+            "message": "Already paused or processing"
+        }), 400
+
+    session = manager.pause(run_id)
+
+    return jsonify({
+        "status": "ok",
+        "session": {
+            "session_id": session.session_id,
+            "run_id": session.run_id,
+            "state": session.state.value,
+            "created_at": session.created_at
+        }
+    })
+
+
+@v2_api.route('/intervention/resume', methods=['POST'])
+def intervention_resume():
+    """対話を再開"""
+    manager = get_intervention_manager()
+
+    if manager.get_state() == InterventionState.RUNNING:
+        return jsonify({
+            "status": "ok",
+            "message": "Already running"
+        })
+
+    success = manager.resume()
+
+    if success:
+        return jsonify({
+            "status": "ok",
+            "message": "Resumed"
+        })
+    else:
+        return jsonify({
+            "status": "error",
+            "message": "Cannot resume from current state"
+        }), 400
+
+
+@v2_api.route('/intervention/send', methods=['POST'])
+def intervention_send():
+    """オーナーメッセージを送信"""
+    data = request.get_json()
+
+    if not data or 'message' not in data:
+        return jsonify({
+            "status": "error",
+            "message": "Message is required"
+        }), 400
+
+    message = data['message']
+    message_type = data.get('type', 'instruction')
+
+    manager = get_intervention_manager()
+    result = manager.process_owner_message(message, message_type)
+
+    response = {
+        "status": "ok" if result.success else "error",
+        "result": {
+            "success": result.success,
+            "state": result.state.value,
+            "needs_clarification": result.needs_clarification,
+            "next_action": result.next_action,
+            "error": result.error
+        }
+    }
+
+    if result.query_back:
+        response["result"]["query_back"] = {
+            "from_character": result.query_back.from_character,
+            "question": result.query_back.question,
+            "context": result.query_back.context,
+            "options": result.query_back.options
+        }
+
+    if result.interpretation:
+        response["result"]["interpretation"] = {
+            "target_character": result.interpretation.target_character,
+            "instruction_type": result.interpretation.instruction_type,
+            "instruction_content": result.interpretation.instruction_content,
+            "confidence": result.interpretation.confidence
+        }
+
+    return jsonify(response)
+
+
+@v2_api.route('/intervention/answer', methods=['POST'])
+def intervention_answer():
+    """逆質問に回答"""
+    data = request.get_json()
+
+    if not data or 'answer' not in data:
+        return jsonify({
+            "status": "error",
+            "message": "Answer is required"
+        }), 400
+
+    answer = data['answer']
+
+    manager = get_intervention_manager()
+    result = manager.answer_query_back(answer)
+
+    return jsonify({
+        "status": "ok" if result.success else "error",
+        "result": {
+            "success": result.success,
+            "state": result.state.value,
+            "next_action": result.next_action,
+            "error": result.error
+        }
+    })
+
+
+@v2_api.route('/intervention/log', methods=['GET'])
+def intervention_log():
+    """介入ログを取得"""
+    run_id = request.args.get('run_id')
+
+    manager = get_intervention_manager()
+    log = manager.get_log(run_id)
+
+    return jsonify({
+        "status": "ok",
+        "log": log
+    })
+
+
+@v2_api.route('/intervention/instruction', methods=['GET'])
+def intervention_instruction():
+    """適用待ちの指示を取得（対話生成時に使用）"""
+    manager = get_intervention_manager()
+
+    instruction = manager.get_pending_instruction()
+    target = manager.get_target_character()
+
+    return jsonify({
+        "status": "ok",
+        "instruction": instruction,
+        "target_character": target
+    })
+
+
+@v2_api.route('/intervention/instruction/clear', methods=['POST'])
+def intervention_instruction_clear():
+    """適用済みの指示をクリア"""
+    manager = get_intervention_manager()
+    manager.clear_pending_instruction()
+
+    return jsonify({
+        "status": "ok",
+        "message": "Instruction cleared"
     })

@@ -7,6 +7,7 @@ import CovSpark from './components/CovSpark'
 import SettingsPanel from './components/SettingsPanel'
 import LivePanel from './components/LivePanel'
 import SignalsPanel from './components/SignalsPanel'
+import OwnerControlPanel from './components/OwnerControlPanel'
 import { useSSE } from './hooks/useSSE'
 import { covRate } from './hooks/useCov'
 import type { DirectorEvent, RAGEvent, SpeakEvent, PromptDbg } from './lib/types'
@@ -258,10 +259,13 @@ export default function App(){
 
       {/* Live Tab Content */}
       {activeTab === 'live' && (
-        <div className="space-y-4">
-          <div className="p-4 bg-white rounded-lg shadow">
+        <div className="grid grid-cols-1 lg:grid-cols-4 gap-4">
+          <div className="lg:col-span-3 p-4 bg-white rounded-lg shadow">
             <h2 className="text-lg font-medium mb-4">Live Commentary - JetRacer</h2>
             <LivePanel jetracer_url="http://192.168.1.65:8000" />
+          </div>
+          <div className="lg:col-span-1">
+            <OwnerControlPanel apiBase={API} runId={rid} />
           </div>
         </div>
       )}

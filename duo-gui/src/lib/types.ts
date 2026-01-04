@@ -49,3 +49,49 @@ export type LiveDialogue = {
     few_shot_used?: boolean
   }
 }
+
+// Intervention Types
+export type InterventionState = 'running' | 'paused' | 'processing' | 'query_back' | 'resuming'
+
+export type QueryBack = {
+  from_character: 'yana' | 'ayu'
+  question: string
+  context: string
+  options: string[] | null
+}
+
+export type InterventionInterpretation = {
+  target_character: 'yana' | 'ayu' | 'both' | null
+  instruction_type: string
+  instruction_content: string
+  confidence: number
+}
+
+export type InterventionStatus = {
+  state: InterventionState
+  session: {
+    session_id: string
+    run_id: string
+    created_at: string
+    message_count: number
+    has_query_back: boolean
+  } | null
+}
+
+export type InterventionResult = {
+  success: boolean
+  state: InterventionState
+  needs_clarification: boolean
+  next_action: 'wait_input' | 'wait_answer' | 'resume' | 'continue'
+  error: string | null
+  query_back?: QueryBack
+  interpretation?: InterventionInterpretation
+}
+
+export type InterventionLogEntry = {
+  timestamp: string
+  type: 'owner' | 'director' | 'character' | 'system'
+  content: string
+  character?: string | null
+  metadata?: Record<string, unknown> | null
+}
