@@ -367,21 +367,40 @@ Respond ONLY with JSON:
                 max_tokens=300,  # Increased for detailed evaluation
             )
 
-            # Parse JSON response
+            # Parse JSON response (robust extraction)
             import json
             import re
 
-            # Remove markdown code block if present
             json_text = result_text.strip()
-            if json_text.startswith("```"):
-                # Extract content between ```json and ```
-                match = re.search(r"```(?:json)?\s*([\s\S]*?)```", json_text)
-                if match:
-                    json_text = match.group(1).strip()
 
-            try:
-                data = json.loads(json_text)
-            except json.JSONDecodeError:
+            # Try multiple extraction methods
+            data = None
+
+            # Method 1: Extract from markdown code block
+            code_block_match = re.search(r"```(?:json)?\s*([\s\S]*?)```", json_text)
+            if code_block_match:
+                try:
+                    data = json.loads(code_block_match.group(1).strip())
+                except json.JSONDecodeError:
+                    pass
+
+            # Method 2: Find JSON object anywhere in text
+            if data is None:
+                json_match = re.search(r"\{[\s\S]*\}", json_text)
+                if json_match:
+                    try:
+                        data = json.loads(json_match.group(0))
+                    except json.JSONDecodeError:
+                        pass
+
+            # Method 3: Direct parse
+            if data is None:
+                try:
+                    data = json.loads(json_text)
+                except json.JSONDecodeError:
+                    pass
+
+            if data is None:
                 # パース失敗時は安全側に倒してPASS/NOOP
                 return DirectorEvaluation(
                     status=DirectorStatus.PASS,
