@@ -360,7 +360,7 @@ class UnifiedPipeline:
         conversation_history: List[Tuple[str, str]],
         topic_guidance: Optional[Dict[str, Any]],
         turn_number: int,
-        max_retry: int = 1,
+        max_retry: int = 2,
     ) -> Tuple[str, Optional[DirectorEvaluation]]:
         """
         リトライ付き発話生成
@@ -401,18 +401,32 @@ class UnifiedPipeline:
                 frame_num=1,  # 単一フレームの場合
             )
 
-            # PASS または MODIFY なら終了
-            if evaluation.status in [DirectorStatus.PASS, DirectorStatus.MODIFY]:
+            # 評価結果に応じた処理
+            if evaluation.status == DirectorStatus.PASS:
+                # PASS でも INTERVENE アクションならリトライ
+                if evaluation.action == "INTERVENE" and attempt < max_retry:
+                    # next_instruction または suggestion を使用
+                    director_instruction = (
+                        getattr(evaluation, 'next_instruction', None)
+                        or evaluation.suggestion
+                    )
+                    if director_instruction:
+                        preview = director_instruction[:60] if len(director_instruction) > 60 else director_instruction
+                        print(f"    🔁 INTERVENE リトライ ({attempt + 1}/{max_retry}): {preview}...")
+                        continue
                 return speech, evaluation
 
-            # RETRY の場合
-            if evaluation.status == DirectorStatus.RETRY and attempt < max_retry:
-                director_instruction = evaluation.suggestion
-                suggestion_preview = director_instruction[:50] if director_instruction else "N/A"
-                print(f"    🔄 Retry ({attempt + 1}/{max_retry}): {suggestion_preview}...")
-                continue
+            elif evaluation.status == DirectorStatus.MODIFY:
+                return speech, evaluation
 
-            # リトライ上限
+            elif evaluation.status == DirectorStatus.RETRY:
+                if attempt < max_retry:
+                    director_instruction = evaluation.suggestion
+                    preview = director_instruction[:60] if director_instruction else "N/A"
+                    print(f"    🔄 RETRY ({attempt + 1}/{max_retry}): {preview}...")
+                    continue
+
+            # リトライ上限またはその他のステータス
             break
 
         return speech, evaluation
