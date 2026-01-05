@@ -855,3 +855,233 @@ JetRacer自動運転車の走行を実況・解説する姉妹AIの一人です�
     def get_signals_snapshot(self) -> Any:
         """現在のシグナル状態を取得"""
         return self.signals.snapshot()
+
+    # ========================================
+    # Unified Speak Method (v2.2)
+    # ========================================
+
+    def speak_unified(
+        self,
+        frame_description: str,
+        conversation_history: List[Tuple[str, str]],
+        director_instruction: Optional[str] = None,
+        vision_info: Optional[str] = None,
+        topic_guidance: Optional[dict] = None,
+        owner_instruction: Optional[str] = None,
+    ) -> str:
+        """
+        統一されたspeakメソッド
+
+        speak_with_history() と speak_v2() の長所を統合:
+        - stateful履歴管理（speak_with_history由来）
+        - PromptBuilder使用（speak_v2由来）
+        - NoveltyGuardはDirector側で実行（重複排除のため、ここでは呼ばない）
+
+        Args:
+            frame_description: シーン説明（必須）
+            conversation_history: [(speaker, text), ...] 形式の履歴
+            director_instruction: Director からの指示
+            vision_info: 視覚情報テキスト
+            topic_guidance: Topic Manager情報
+                - focus_hook: 現在の話題
+                - hook_depth: 深さ(0-3)
+                - depth_step: DISCOVER/WHY/EXPAND
+                - forbidden_topics: 避ける話題リスト
+                - character_role: キャラクターの役割
+                - partner_last_speech: 直前の相手発言
+            owner_instruction: オーナー介入指示
+
+        Returns:
+            生成された発話テキスト
+        """
+        # 1. PromptBuilder インスタンスを作成
+        builder = PromptBuilder()
+
+        # 2.1 システムプロンプト
+        builder.add(
+            self._get_system_prompt(),
+            Priority.SYSTEM,
+            "system"
+        )
+
+        # 2.2 世界設定ルール
+        builder.add(
+            self._world_rules,
+            Priority.WORLD_RULES,
+            "world_rules"
+        )
+
+        # 2.3 キャラクター設定
+        builder.add(
+            self._character_prompt.to_injection_text(),
+            Priority.DEEP_VALUES,
+            "character"
+        )
+
+        # 2.4 RAG知識
+        partner_speech = conversation_history[-1][1] if conversation_history else None
+        rag_hints = self._get_rag_hints(
+            query=frame_description,
+            partner_speech=partner_speech,
+        )
+        self.last_rag_hints = rag_hints  # GUI表示用に保存
+
+        if rag_hints:
+            builder.add(
+                "【Knowledge from your expertise】\n" + "\n".join(f"- {h}" for h in rag_hints),
+                Priority.RAG,
+                "rag"
+            )
+
+        # 2.5 姉妹視点記憶
+        character_name = "yana" if self.char_id == "A" else "ayu"
+        memories = self.sister_memory.search(
+            query=frame_description or (partner_speech or ""),
+            character=character_name,
+            n_results=2
+        )
+        if memories:
+            memory_text = "\n".join([m.to_prompt_text() for m in memories])
+            builder.add(
+                f"【関連する過去の記憶】\n{memory_text}",
+                Priority.SISTER_MEMORY,
+                "sister_memory"
+            )
+
+        # 2.6 シーン情報
+        builder.add(
+            f"【Current Scene】\n{frame_description}",
+            Priority.SCENE_FACTS,
+            "scene"
+        )
+
+        # 2.7 視覚情報
+        if vision_info:
+            builder.add(
+                vision_info,
+                Priority.SCENE_FACTS + 1,
+                "vision"
+            )
+
+        # 2.8 Topic Guidance（Director指示の直前）
+        if topic_guidance:
+            topic_text = self._format_topic_guidance(topic_guidance)
+            if topic_text:
+                builder.add(
+                    topic_text,
+                    Priority.DIRECTOR - 1,
+                    "topic_guidance"
+                )
+
+        # 2.9 Director指示
+        if director_instruction:
+            builder.add(
+                f"【Director's Guidance】\n{director_instruction}\n※上記の指示を意識して応答してください",
+                Priority.DIRECTOR,
+                "director"
+            )
+
+        # 2.10 オーナー介入指示
+        if owner_instruction:
+            builder.add(
+                f"【オーナーからの指示】\n{owner_instruction}",
+                Priority.OWNER_INSTRUCTION,
+                "owner_instruction"
+            )
+
+        # 2.11 スロット充足チェック
+        current_topic = topic_guidance.get("focus_hook", "対話") if topic_guidance else "対話"
+        topic_depth = topic_guidance.get("hook_depth", 0) if topic_guidance else 0
+        builder.check_and_inject_slots(
+            current_topic=current_topic,
+            topic_depth=topic_depth
+        )
+
+        # 2.12 Few-shot パターン
+        state = self.signals.snapshot()
+        event_type = None
+        if state.recent_events:
+            last_event = state.recent_events[-1]
+            if isinstance(last_event, dict):
+                event_type = last_event.get("type")
+
+        few_shot = self.few_shot_injector.select_pattern(
+            signals_state=state,
+            loop_strategy=None,  # NoveltyGuardはDirector側で実行
+            event_type=event_type
+        )
+        if few_shot:
+            builder.add(
+                f"【参考: このような会話パターンで】\n{few_shot}",
+                Priority.FEW_SHOT,
+                "few_shot"
+            )
+
+        # 3. プロンプトをビルド
+        user_prompt = builder.build()
+
+        # 4. LLM呼び出し（履歴付き）
+        max_attempts = 2
+        result = ""
+
+        for attempt in range(max_attempts):
+            response = self.llm.call_with_history(
+                system=self._get_system_prompt(),
+                history=conversation_history,
+                current_speaker=self.char_id,
+                current_prompt=user_prompt,
+                temperature=config.temperature + (0.2 * attempt),
+                max_tokens=100,
+            )
+            result = response.strip()
+
+            # 繰り返しチェック
+            if not self._has_repetition(result):
+                return result
+
+            print(f"    ⚠️ 繰り返し検出 (試行 {attempt + 1}/{max_attempts}): 再生成中...")
+
+        # 5. 結果を返す
+        return result
+
+    def _format_topic_guidance(self, guidance: dict) -> str:
+        """
+        Topic Guidanceをフォーマット
+
+        Args:
+            guidance: Topic Manager情報
+
+        Returns:
+            フォーマットされた文字列
+        """
+        if not guidance:
+            return ""
+
+        lines = ["【会話の流れ】"]
+
+        # 直前の相手発言（プレビュー）
+        if partner_speech := guidance.get("partner_last_speech"):
+            preview = partner_speech[:50]
+            if len(partner_speech) > 50:
+                preview += "..."
+            lines.append(f"前の発言: 「{preview}」")
+
+        # 話題と深度
+        hook = guidance.get("focus_hook", "")
+        depth = guidance.get("hook_depth", 0)
+        step = guidance.get("depth_step", "DISCOVER")
+        if hook:
+            lines.append(f"話題: {hook}（深さ{depth}/3: {step}）")
+
+        # キャラクター役割
+        if role := guidance.get("character_role"):
+            lines.append(f"役割: {role}")
+
+        lines.append("")
+        lines.append("【重要】前の発言に自然に反応してください。")
+
+        # 禁止話題
+        if forbidden := guidance.get("forbidden_topics"):
+            lines.append(f"※避ける話題: {', '.join(forbidden)}")
+
+        return "\n".join(lines)
