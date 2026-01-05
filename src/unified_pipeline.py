@@ -157,6 +157,14 @@ class UnifiedPipeline:
             )
 
         # 4. イベント通知: 開始
+        topic = initial_input.get_text() or "(画像から生成)"
+        self.logger.log_event({
+            "event": "narration_start",
+            "run_id": run_id,
+            "topic": topic,
+            "maxTurns": max_turns,
+            "timestamp": datetime.now().isoformat(),
+        })
         if event_callback:
             event_callback("narration_start", {
                 "run_id": run_id,
@@ -229,7 +237,57 @@ class UnifiedPipeline:
             dialogue_turns.append(dialogue_turn)
             conversation_history.append((current_speaker, speech))
 
-            # 5e. イベント通知: 発話
+            # 5e. ログ記録 & イベント通知
+            ts = datetime.now().isoformat()
+
+            # speak イベント
+            self.logger.log_event({
+                "event": "speak",
+                "run_id": run_id,
+                "turn": turn,
+                "speaker": current_speaker,
+                "text": speech,
+                "beat": evaluation.beat_stage if evaluation and hasattr(evaluation, 'beat_stage') else None,
+                "ts": ts,
+                "timestamp": ts,
+            })
+
+            # rag_select イベント（RAGヒントがあれば記録）
+            rag_hints = getattr(character, 'last_rag_hints', []) or []
+            self.logger.log_event({
+                "event": "rag_select",
+                "run_id": run_id,
+                "turn": turn,
+                "char_id": current_speaker,
+                "canon": {"preview": rag_hints[0] if len(rag_hints) > 0 else ""},
+                "lore": {"preview": rag_hints[1] if len(rag_hints) > 1 else ""},
+                "pattern": {"preview": rag_hints[2] if len(rag_hints) > 2 else ""},
+                "ts": ts,
+                "timestamp": ts,
+            })
+
+            # director イベント（評価結果）
+            if evaluation:
+                self.logger.log_event({
+                    "event": "director",
+                    "run_id": run_id,
+                    "turn": turn,
+                    "beat": evaluation.beat_stage if hasattr(evaluation, 'beat_stage') else None,
+                    "cut_cue": None,
+                    "status": evaluation.status.name,
+                    "reason": evaluation.reason,
+                    "guidance": evaluation.suggestion,
+                    "action": evaluation.action,
+                    "hook": evaluation.hook if hasattr(evaluation, 'hook') else None,
+                    "evidence": evaluation.evidence if hasattr(evaluation, 'evidence') else None,
+                    "focus_hook": evaluation.focus_hook if hasattr(evaluation, 'focus_hook') else None,
+                    "hook_depth": evaluation.hook_depth if hasattr(evaluation, 'hook_depth') else 0,
+                    "depth_step": evaluation.depth_step if hasattr(evaluation, 'depth_step') else None,
+                    "forbidden_topics": evaluation.forbidden_topics if hasattr(evaluation, 'forbidden_topics') else [],
+                    "ts": ts,
+                    "timestamp": ts,
+                })
+
             if event_callback:
                 event_callback("speak", {
                     "run_id": run_id,
@@ -268,6 +326,14 @@ class UnifiedPipeline:
             current_speaker = "B" if current_speaker == "A" else "A"
 
         # 6. 完了イベント
+        self.logger.log_event({
+            "event": "narration_complete",
+            "run_id": run_id,
+            "topic": topic,
+            "status": "success",
+            "total_turns": len(dialogue_turns),
+            "timestamp": datetime.now().isoformat(),
+        })
         if event_callback:
             event_callback("narration_complete", {
                 "run_id": run_id,
