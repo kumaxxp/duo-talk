@@ -118,6 +118,8 @@ class DirectorEvaluation:
     forbidden_topics: List[str] = field(default_factory=list)  # 禁止トピック
     must_include: List[str] = field(default_factory=list)      # 必須ワード
     character_role: str = ""                   # キャラクターに期待する役割
+    # Director v3 fields for NoveltyGuard
+    novelty_info: Optional[Dict[str, Any]] = None  # NoveltyGuard check result
 
 
 @dataclass

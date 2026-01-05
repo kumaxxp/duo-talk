@@ -13,6 +13,7 @@ from src.types import DirectorEvaluation, DirectorStatus, TopicState
 from src.prompt_manager import get_prompt_manager
 from src.beat_tracker import get_beat_tracker
 from src.fact_checker import get_fact_checker, FactCheckResult
+from src.novelty_guard import NoveltyGuard, LoopCheckResult
 
 
 class Director:
@@ -112,6 +113,8 @@ class Director:
         self.topic_state = TopicState()
         # 前回処理したフレーム番号（フレーム変更検出用）
         self.last_frame_num: int = -1
+        # Director v3: NoveltyGuard for loop detection
+        self.novelty_guard = NoveltyGuard(max_topic_depth=3)
 
     def _default_system_prompt(self) -> str:
         """Default director prompt if file not found (deprecated)"""
@@ -159,8 +162,32 @@ Respond ONLY with JSON:
         # フレームが変わったらTopic Stateをリセット
         if frame_num != self.last_frame_num:
             self.reset_topic_state()
+            self.novelty_guard.reset()  # NoveltyGuardもリセット
             self.last_frame_num = frame_num
             print(f"    🔄 Frame changed to {frame_num}, topic state reset")
+
+        # ========== Step 0: NoveltyGuard Loop Detection ==========
+        novelty_result = self.novelty_guard.check_and_update(response)
+        if novelty_result.loop_detected:
+            print(f"    🔁 NoveltyGuard: ループ検知 stuck_nouns={novelty_result.stuck_nouns}")
+            print(f"       戦略: {novelty_result.strategy.value}")
+            # ループ検知時は早期リターンでINTERVENE
+            return DirectorEvaluation(
+                status=DirectorStatus.PASS,
+                reason=f"NoveltyGuard: 話題「{'、'.join(novelty_result.stuck_nouns[:3])}」がループ中",
+                action="INTERVENE",
+                next_instruction=novelty_result.injection,
+                next_pattern="D",  # 脱線→修正パターン
+                beat_stage=self.beat_tracker.get_current_beat(turn_number),
+                hook="、".join(novelty_result.stuck_nouns[:2]) if novelty_result.stuck_nouns else None,
+                evidence={"dialogue": f"同一名詞が{novelty_result.topic_depth}ターン連続", "frame": None},
+                novelty_info={
+                    "loop_detected": True,
+                    "stuck_nouns": novelty_result.stuck_nouns,
+                    "strategy": novelty_result.strategy.value,
+                    "topic_depth": novelty_result.topic_depth,
+                },
+            )
 
         # Get current beat stage from turn number
         current_beat = self.beat_tracker.get_current_beat(turn_number)
@@ -1265,6 +1292,14 @@ JSON ONLY:
     def reset_topic_state(self):
         """話題状態をリセット（新しいナレーション開始時に呼ぶ）"""
         self.topic_state.reset()
+
+    def reset_for_new_session(self):
+        """新しいセッション開始時に全状態をリセット"""
+        self.topic_state.reset()
+        self.novelty_guard.reset()
+        self.recent_patterns.clear()
+        self.last_frame_num = -1
+        print("    🔄 Director: 新しいセッションのため状態をリセット")
 
     def _validate_director_output(self, data: dict, turn_number: int, frame_description: str = "") -> dict:
         """
