@@ -1099,6 +1099,10 @@ def health():
 from server.api_v2 import v2_api
 app.register_blueprint(v2_api)
 
+# ==================== Unified API (v2.2) ====================
+from server.api_unified import unified_api
+app.register_blueprint(unified_api)
+
 
 # ==================== STARTUP ====================
 
