@@ -99,7 +99,8 @@
       "Bash(timeout 5 curl:*)",
       "Bash(timeout 3 curl:*)",
       "Bash(timeout 30 python3:*)",
-      "Bash(timeout 60 /home/owner/miniconda3/envs/duo-talk/bin/python3:*)"
+      "Bash(timeout 60 /home/owner/miniconda3/envs/duo-talk/bin/python3:*)",
+      "Bash(/home/owner/miniconda3/envs/duo-talk/bin/python3:*)"
     ]
   }
 }
