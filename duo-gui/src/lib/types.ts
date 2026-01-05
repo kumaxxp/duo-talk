@@ -95,3 +95,90 @@ export type InterventionLogEntry = {
   character?: string | null
   metadata?: Record<string, unknown> | null
 }
+
+// ========== Unified Pipeline Types ==========
+
+/**
+ * 対話ターン（UnifiedPipeline）
+ */
+export interface UnifiedDialogueTurn {
+  turn_number: number
+  speaker: 'A' | 'B'
+  speaker_name: string  // "やな" or "あゆ"
+  text: string
+  evaluation_status?: 'PASS' | 'RETRY' | 'MODIFY'
+  evaluation_action?: 'NOOP' | 'INTERVENE'
+  rag_hints?: string[]
+  timestamp?: string
+}
+
+/**
+ * 対話結果（UnifiedPipeline）
+ */
+export interface UnifiedDialogueResult {
+  status: 'success' | 'paused' | 'error'
+  run_id: string
+  dialogue: UnifiedDialogueTurn[]
+  error?: string | null
+}
+
+/**
+ * Unified API リクエスト
+ */
+export interface UnifiedRunRequest {
+  text?: string
+  topic?: string
+  imagePath?: string
+  imageUrl?: string
+  useJetRacerCam?: boolean
+  jetracerCamId?: 0 | 1
+  useJetRacerSensor?: boolean
+  jetracerUrl?: string
+  maxTurns?: number
+}
+
+/**
+ * Unified API ステータスレスポンス
+ */
+export interface UnifiedRunStatus {
+  running: boolean
+  run_id: string | null
+  status: string | null
+}
+
+/**
+ * Unified API SSE イベント
+ */
+export type UnifiedSSEEventType =
+  | 'narration_start'
+  | 'speak'
+  | 'director'
+  | 'interrupt'
+  | 'narration_complete'
+  | 'complete'
+  | 'error'
+
+export interface UnifiedSSEEvent {
+  type: UnifiedSSEEventType
+  data: Record<string, unknown>
+}
+
+/**
+ * 入力ソースタイプ（フロントエンド用）
+ */
+export type InputSourceType =
+  | 'text'
+  | 'image_file'
+  | 'image_url'
+  | 'jetracer_cam0'
+  | 'jetracer_cam1'
+  | 'jetracer_sensor'
+
+/**
+ * 入力ソース設定（UI用）
+ */
+export interface InputSourceConfig {
+  type: InputSourceType
+  enabled: boolean
+  value?: string  // text content or file path
+}
