@@ -86,7 +86,11 @@ export default function App(){
           } else if (ev.event === 'rag_select' && ev.turn !== undefined) {
             newRag[ev.turn] = ev
           } else if (ev.event === 'speak' && ev.turn !== undefined) {
-            newSpeaks[ev.turn] = ev
+            // beatが存在するイベントを優先（二重記録対策）
+            const existing = newSpeaks[ev.turn]
+            if (!existing || (ev.beat && !existing.beat)) {
+              newSpeaks[ev.turn] = ev
+            }
           } else if (ev.event === 'prompt_debug' && ev.turn !== undefined) {
             newPrompts[ev.turn] = ev.prompt_tail
           }

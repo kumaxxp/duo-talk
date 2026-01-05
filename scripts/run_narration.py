@@ -451,23 +451,8 @@ class NarrationPipeline:
                 )
             return None
 
-        # イベントコールバック（GUI用）
-        def event_callback(event_type: str, data: dict):
-            if event_type == "speak":
-                self._emit_speak_event(
-                    run_id,
-                    data.get("turn", 0),
-                    data.get("speaker", "A"),
-                    data.get("text", ""),
-                )
-                # RAGイベント
-                character = self.char_a if data.get("speaker") == "A" else self.char_b
-                self._emit_rag_event(
-                    run_id,
-                    data.get("turn", 0),
-                    data.get("speaker", "A"),
-                    getattr(character, 'last_rag_hints', []) or [],
-                )
+        # NOTE: UnifiedPipeline が内部でログを記録するため、
+        #       event_callback は使用しない（二重記録防止）
 
         # UnifiedPipeline 実行
         pipeline_result = self.unified_pipeline.run(
@@ -475,7 +460,7 @@ class NarrationPipeline:
             max_turns=max_iterations,
             run_id=run_id,
             interrupt_callback=interrupt_callback,
-            event_callback=event_callback,
+            event_callback=None,  # UnifiedPipeline内部でログ記録
         )
 
         # 結果を既存フォーマットに変換
