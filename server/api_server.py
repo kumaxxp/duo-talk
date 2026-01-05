@@ -31,6 +31,7 @@ from src.vision_config import (
     SegmentationModel,
 )
 from scripts.run_narration import NarrationPipeline
+from src.owner_intervention import get_intervention_manager, InterventionState
 
 # Setup logging
 logging.basicConfig(level=logging.INFO)
@@ -126,6 +127,9 @@ def get_run_events():
         events = []
         runs_file = config.log_dir / "commentary_runs.jsonl"
 
+        # Debug: Log the absolute path for troubleshooting
+        logger.info(f"[DEBUG] Reading events: run_id={run_id}, file={runs_file.absolute()}")
+
         if runs_file.exists():
             with open(runs_file, 'r', encoding='utf-8') as f:
                 for line in f:
@@ -135,6 +139,12 @@ def get_run_events():
                             events.append(event)
                     except json.JSONDecodeError:
                         continue
+            # Debug: Log event types found
+            if events:
+                event_types = [e.get('event') for e in events]
+                logger.info(f"[DEBUG] Found {len(events)} events: {event_types}")
+        else:
+            logger.warning(f"[DEBUG] File not found: {runs_file.absolute()}")
 
         return jsonify(events)
     except Exception as e:
@@ -324,6 +334,13 @@ def run_start():
 
         has_image = bool(image_path)
         logger.info(f"Run started: {run_id} - Topic: {topic or '(from image)'} - Image: {has_image}")
+
+        # Reset intervention state to ensure clean start
+        intervention_manager = get_intervention_manager()
+        if intervention_manager.get_state() != InterventionState.RUNNING:
+            logger.info(f"Resetting intervention state from {intervention_manager.get_state().value} to RUNNING")
+            intervention_manager.state = InterventionState.RUNNING
+            intervention_manager.current_session = None
 
         # Start narration pipeline in background thread
         def run_pipeline():

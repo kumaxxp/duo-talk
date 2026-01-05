@@ -48,16 +48,37 @@ class NarrationPipeline:
         self.logger = Logger()
         self.intervention_manager = get_intervention_manager()
 
-    def _wait_for_intervention(self, run_id: str) -> Optional[str]:
+        # Reset intervention state to RUNNING for new pipeline
+        if self.intervention_manager.get_state() != InterventionState.RUNNING:
+            print(f"[NarrationPipeline] Resetting intervention state from {self.intervention_manager.get_state().value} to RUNNING")
+            self.intervention_manager.state = InterventionState.RUNNING
+            self.intervention_manager.current_session = None
+
+    def _wait_for_intervention(self, run_id: str, timeout: int = 60) -> Optional[str]:
         """
         介入状態をチェックし、一時停止中は待機する。
+
+        Args:
+            run_id: 現在のランID
+            timeout: 最大待機時間（秒）。デフォルト60秒
 
         Returns:
             オーナー指示がある場合はその内容、なければNone
         """
         import time
 
+        start_time = time.time()
+
         while True:
+            # タイムアウトチェック
+            elapsed = time.time() - start_time
+            if elapsed > timeout:
+                print(f"    ⚠️  Intervention wait timeout ({timeout}s). Force resuming...")
+                # 強制的にRUNNING状態に戻す
+                self.intervention_manager.state = InterventionState.RUNNING
+                self.intervention_manager.current_session = None
+                return None
+
             state = self.intervention_manager.get_state()
 
             if state == InterventionState.RUNNING:
@@ -71,7 +92,7 @@ class NarrationPipeline:
             elif state in [InterventionState.PAUSED, InterventionState.PROCESSING,
                           InterventionState.QUERY_BACK]:
                 # 一時停止中：待機
-                print(f"    ⏸️  Paused by owner intervention (state: {state.value})")
+                print(f"    ⏸️  Paused by owner intervention (state: {state.value}, elapsed: {elapsed:.1f}s)")
                 time.sleep(1.0)  # 1秒ごとにチェック
 
             elif state == InterventionState.RESUMING:
@@ -329,6 +350,15 @@ class NarrationPipeline:
         if not skip_vision and image_path:
             print(f"🖼️  Image: {image_path}")
         print(f"🆔 Run ID: {run_id}")
+
+        # Debug: Show intervention state at start
+        intervention_state = self.intervention_manager.get_state()
+        print(f"🔧 Intervention State: {intervention_state.value}")
+        if intervention_state != InterventionState.RUNNING:
+            print(f"⚠️  WARNING: Intervention state is not RUNNING, forcing reset...")
+            self.intervention_manager.state = InterventionState.RUNNING
+            self.intervention_manager.current_session = None
+
         print(f"{'='*60}")
 
         # Step 1: Vision 分析（skip_vision=True の場合はスキップ）

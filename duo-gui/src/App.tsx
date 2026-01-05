@@ -68,6 +68,10 @@ export default function App(){
       try {
         const r = await fetch(`${API}/api/run/events?run_id=${encodeURIComponent(rid)}`)
         const events = await r.json()
+
+        // Debug: Log polling results
+        console.log(`[Poll] run_id=${rid}, events=${Array.isArray(events) ? events.length : 'N/A'}`)
+
         if (stop || !Array.isArray(events)) return
 
         const newDirectors: Record<number, DirectorEvent> = {}
@@ -85,6 +89,12 @@ export default function App(){
           } else if (ev.event === 'prompt_debug' && ev.turn !== undefined) {
             newPrompts[ev.turn] = ev.prompt_tail
           }
+        }
+
+        // Debug: Log parsed events
+        const speakCount = Object.keys(newSpeaks).length
+        if (speakCount > 0) {
+          console.log(`[Poll] Parsed: speaks=${speakCount}, directors=${Object.keys(newDirectors).length}`)
         }
 
         setDirectors(newDirectors)
