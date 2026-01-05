@@ -8,13 +8,14 @@ import SettingsPanel from './components/SettingsPanel'
 import LivePanel from './components/LivePanel'
 import OwnerControlPanel from './components/OwnerControlPanel'
 import ProviderPanel from './components/ProviderPanel'
+import UnifiedRunPanel from './components/UnifiedRunPanel'
 import { covRate } from './hooks/useCov'
 import type { DirectorEvent, RAGEvent, SpeakEvent } from './lib/types'
 import PromptModal from './components/PromptModal'
 
 const API = (import.meta as any).env?.VITE_API_BASE || ''
 
-type TabType = 'runs' | 'settings' | 'live' | 'provider'
+type TabType = 'unified' | 'runs' | 'settings' | 'live' | 'provider'
 
 export default function App(){
   const [activeTab, setActiveTab] = useState<TabType>('runs')
@@ -205,6 +206,14 @@ export default function App(){
           {/* Tab Navigation */}
           <nav className="flex gap-1 bg-slate-100 p-1 rounded-lg">
             <button
+              onClick={() => setActiveTab('unified')}
+              className={`px-4 py-1.5 rounded-md text-sm font-medium transition-colors ${
+                activeTab === 'unified' ? 'bg-white shadow text-blue-600' : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              Unified
+            </button>
+            <button
               onClick={() => setActiveTab('runs')}
               className={`px-4 py-1.5 rounded-md text-sm font-medium transition-colors ${
                 activeTab === 'runs' ? 'bg-white shadow text-slate-900' : 'text-slate-600 hover:text-slate-900'
@@ -249,6 +258,15 @@ export default function App(){
           </div>
         )}
       </header>
+
+      {/* Unified Tab Content */}
+      {activeTab === 'unified' && (
+        <UnifiedRunPanel
+          onRunComplete={(result) => {
+            console.log('Run completed:', result.run_id, result.status)
+          }}
+        />
+      )}
 
       {/* Runs Tab Content */}
       {activeTab === 'runs' && (
