@@ -7,8 +7,10 @@ Vision → Character → Director パイプライン統合スクリプト
 import sys
 import json
 import re
+import warnings
 from pathlib import Path
-from typing import Optional
+from typing import Optional, List, Tuple, Dict, Any
+from datetime import datetime
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
@@ -17,6 +19,8 @@ from src.character import Character
 from src.director import Director
 from src.logger import Logger
 from src.owner_intervention import get_intervention_manager, InterventionState
+from src.unified_pipeline import UnifiedPipeline, DialogueResult
+from src.input_source import InputBundle, InputSource, SourceType
 
 
 class NarrationPipeline:
@@ -42,11 +46,19 @@ class NarrationPipeline:
 
     def __init__(self):
         self.vision_processor = VisionProcessor()
-        self.char_a = Character("A")
-        self.char_b = Character("B")
-        self.director = Director()
         self.logger = Logger()
         self.intervention_manager = get_intervention_manager()
+
+        # UnifiedPipeline を内部で使用
+        self.unified_pipeline = UnifiedPipeline(
+            jetracer_client=None,  # NarrationPipelineではJetRacer不使用
+            enable_fact_check=True,
+        )
+
+        # 後方互換性のため Character, Director への参照を維持
+        self.char_a = self.unified_pipeline.char_a
+        self.char_b = self.unified_pipeline.char_b
+        self.director = self.unified_pipeline.director
 
         # Reset intervention state to RUNNING for new pipeline
         if self.intervention_manager.get_state() != InterventionState.RUNNING:
@@ -266,6 +278,9 @@ class NarrationPipeline:
         """
         直近の対話履歴から文脈を構築する。
 
+        @deprecated: UnifiedPipeline が内部で履歴管理するため、直接呼び出し不要。
+                     後方互換性のために残しているが、新しいコードでは使用しないこと。
+
         Args:
             dialogue_history: [(speaker, text), ...] のリスト
             max_turns: 含める最大ターン数
@@ -273,6 +288,13 @@ class NarrationPipeline:
         Returns:
             フォーマットされた文脈文字列、または履歴がない場合はNone
         """
+        warnings.warn(
+            "_build_conversation_context is deprecated. "
+            "UnifiedPipeline handles conversation history internally.",
+            DeprecationWarning,
+            stacklevel=2
+        )
+
         if not dialogue_history:
             return None
 
@@ -296,18 +318,20 @@ class NarrationPipeline:
         max_iterations: int = 2,
         run_id: Optional[str] = None,
         skip_vision: bool = False,
-        use_stateful_history: bool = True,
+        use_stateful_history: bool = True,  # この引数は無視（常にstateful）
     ) -> dict:
         """
         画像またはトピックに対してナレーション・解説を生成する。
 
+        内部で UnifiedPipeline を使用するが、戻り値フォーマットは既存を維持。
+
         Args:
             image_path: 入力画像のパス（skip_vision=True の場合は不要）
             scene_description: シーンの説明（課題テーマ）
-            max_iterations: リトライの最大回数
+            max_iterations: 対話ターン数
             run_id: GUI用のランID
             skip_vision: Trueの場合、Vision分析をスキップしトピックのみで対話生成
-            use_stateful_history: Trueの場合、履歴をメッセージ配列として渡す（推奨）
+            use_stateful_history: 後方互換性のため残すが、常にTrue扱い
 
         Returns:
             {
@@ -316,10 +340,8 @@ class NarrationPipeline:
                 "image_path": str,
                 "vision_analysis": dict,
                 "dialogue": {
-                    "char_a_turn_1": str,
-                    "char_b_turn_1": str,
-                    "char_a_turn_2": str,
-                    "char_b_turn_2": str (optional),
+                    "turn_0": {"speaker": "A", "text": str},
+                    "turn_1": {"speaker": "B", "text": str},
                     ...
                 },
                 "director_verdict": dict,
@@ -328,11 +350,7 @@ class NarrationPipeline:
         """
         # run_id がなければ生成
         if run_id is None:
-            from datetime import datetime
             run_id = f"run_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
-
-        # Director v3: 新しいナレーション開始時にTopicStateをリセット
-        self.director.reset_topic_state()
 
         result = {
             "status": "processing",
@@ -412,252 +430,75 @@ class NarrationPipeline:
                 effective_scene = self._generate_scene_description(base_scene)
                 print(f"📝 Generated scene from image: {base_scene[:50]}...")
 
-        # Step 2: キャラクター対話生成
-        # max_iterations = 対話ターン数（A→B→A→B...）
-        print("\n[Step 2] Generating character dialogue...")
+        # Step 2: UnifiedPipeline で対話生成
+        print("\n[Step 2] Generating character dialogue with UnifiedPipeline...")
 
-        dialogue_history = []
-        turn_counter = 0
+        # InputBundle を構築
+        sources = [InputSource(source_type=SourceType.TEXT, content=effective_scene)]
+        if image_path and not skip_vision:
+            sources.append(InputSource(source_type=SourceType.IMAGE_FILE, content=image_path))
 
-        # A が初手を打つ
-        print(f"\n  Turn {turn_counter + 1}/{max_iterations}")
+        bundle = InputBundle(sources=sources)
 
-        # オーナー介入チェック（一時停止中は待機）
-        owner_instruction = self._wait_for_intervention(run_id)
-        if owner_instruction:
-            print(f"    📢 Owner instruction: {owner_instruction[:50]}...")
+        # 割り込みコールバック（オーナー介入対応）
+        def interrupt_callback() -> Optional[InputBundle]:
+            instruction = self._wait_for_intervention(run_id)
+            if instruction:
+                # オーナー指示をテキスト入力として返す
+                return InputBundle(
+                    sources=[InputSource(source_type=SourceType.TEXT, content=instruction)],
+                    is_interrupt=True,
+                )
+            return None
 
-        print("    > 澄ヶ瀬やな (姉) is speaking...")
-        # 初回は履歴なし
-        if use_stateful_history:
-            char_a_speech = self.char_a.speak_with_history(
-                frame_description=effective_scene,
-                conversation_history=[],  # 初回は履歴なし
-                vision_info=vision_text,
-            )
-        else:
-            char_a_speech = self.char_a.speak(
-                frame_description=effective_scene,
-                vision_info=vision_text,
-            )
-        print(f"      {char_a_speech}")
-        result["dialogue"][f"turn_{turn_counter}"] = {"speaker": "A", "text": char_a_speech}
-        dialogue_history.append(("A", char_a_speech))
-        self._emit_speak_event(run_id, turn_counter, "A", char_a_speech)
-        # RAGイベントを発行
-        self._emit_rag_event(run_id, turn_counter, "A", self.char_a.last_rag_hints)
-        turn_counter += 1
-
-        # Director Guidance を保持
-        director_guidance = None
-        # Director v3: topic_guidance を保持（ターン間で引き継ぐ）
-        topic_guidance_state = None
-
-        # 残りのターンを交互に生成
-        for turn in range(1, max_iterations):
-            print(f"\n  Turn {turn + 1}/{max_iterations}")
-
-            # オーナー介入チェック（一時停止中は待機）
-            owner_instruction = self._wait_for_intervention(run_id)
-            if owner_instruction:
-                print(f"    📢 Owner instruction: {owner_instruction[:50]}...")
-                # オーナー指示をDirector Guidanceとして適用
-                director_guidance = owner_instruction
-
-            # 前のスピーカーを取得
-            last_speaker, last_speech = dialogue_history[-1]
-
-            # 次のスピーカーを決定（交互）
-            if last_speaker == "A":
-                current_speaker = "B"
-                current_char = self.char_b
-                speaker_name = "澄ヶ瀬あゆ (妹)"
-            else:
-                current_speaker = "A"
-                current_char = self.char_a
-                speaker_name = "澄ヶ瀬やな (姉)"
-
-            # 対話履歴から直近の文脈を構築（最大3ターン分）
-            recent_context = self._build_conversation_context(dialogue_history, max_turns=3)
-
-            # 発言生成（RETRYループ対応 + Force Pass）
-            retry_count = 0
-            speech = None
-            director_evaluation = None
-            force_passed = False
-
-            while retry_count <= self.MAX_RETRY_PER_TURN:
-                print(f"    > {speaker_name} is speaking..." + (f" (retry {retry_count})" if retry_count > 0 else ""))
-
-                # Director Guidanceを渡して発言生成（topic_guidance_stateはターン間で引き継ぐ）
-                if use_stateful_history:
-                    speech = current_char.speak_with_history(
-                        frame_description=effective_scene,
-                        conversation_history=dialogue_history,
-                        partner_speech=last_speech,
-                        director_instruction=director_guidance,
-                        vision_info=vision_text,
-                        topic_guidance=topic_guidance_state,
-                    )
-                else:
-                    speech = current_char.speak(
-                        frame_description=effective_scene,
-                        partner_speech=last_speech,
-                        director_instruction=director_guidance,
-                        vision_info=vision_text,
-                        conversation_context=recent_context,
-                        topic_guidance=topic_guidance_state,
-                    )
-                print(f"      {speech}")
-
-                # Director による品質判定
-                print(f"    > Director is judging...")
-                previous_speech = dialogue_history[-1][1] if len(dialogue_history) > 0 else None
-
-                director_evaluation = self.director.evaluate_response(
-                    frame_description=effective_scene,
-                    speaker=current_speaker,
-                    response=speech,
-                    partner_previous_speech=previous_speech,
-                    speaker_domains=current_char.domains,
-                    conversation_history=dialogue_history,
-                    turn_number=turn_counter + 1,
+        # イベントコールバック（GUI用）
+        def event_callback(event_type: str, data: dict):
+            if event_type == "speak":
+                self._emit_speak_event(
+                    run_id,
+                    data.get("turn", 0),
+                    data.get("speaker", "A"),
+                    data.get("text", ""),
+                )
+                # RAGイベント
+                character = self.char_a if data.get("speaker") == "A" else self.char_b
+                self._emit_rag_event(
+                    run_id,
+                    data.get("turn", 0),
+                    data.get("speaker", "A"),
+                    getattr(character, 'last_rag_hints', []) or [],
                 )
 
-                print(f"      [{director_evaluation.status.name}] {director_evaluation.reason}")
+        # UnifiedPipeline 実行
+        pipeline_result = self.unified_pipeline.run(
+            initial_input=bundle,
+            max_turns=max_iterations,
+            run_id=run_id,
+            interrupt_callback=interrupt_callback,
+            event_callback=event_callback,
+        )
 
-                # MODIFY判定: Fatal vs Non-Fatal
-                if director_evaluation.status.name == "MODIFY":
-                    if self.director.is_fatal_modify(director_evaluation.reason):
-                        # Fatal MODIFY: 即座に停止
-                        print(f"    🚨 FATAL MODIFY: {director_evaluation.reason}")
-                        break
-                    else:
-                        # Non-Fatal MODIFY: RETRYとして扱う（降格はDirector側で実施済み）
-                        print(f"    ⚠️ Non-Fatal MODIFY→RETRY扱いで続行")
-                        # ステータスをRETRYに変更
-                        from dataclasses import replace as dc_replace
-                        from src.types import DirectorStatus
-                        director_evaluation = dc_replace(director_evaluation, status=DirectorStatus.RETRY)
+        # 結果を既存フォーマットに変換
+        for turn in pipeline_result.dialogue:
+            result["dialogue"][f"turn_{turn.turn_number}"] = {
+                "speaker": turn.speaker,
+                "text": turn.text,
+            }
 
-                # RETRY判定
-                if director_evaluation.status.name == "RETRY":
-                    retry_count += 1
-                    if retry_count <= self.MAX_RETRY_PER_TURN:
-                        # リトライ時の指示を強化（設定破壊の場合は特別な指示を追加）
-                        retry_instruction = director_evaluation.suggestion
-                        if "設定破壊" in (director_evaluation.reason or ""):
-                            retry_instruction = f"【重要】{director_evaluation.reason}\n{director_evaluation.suggestion}\n※「あゆの家」「姉様のお家」などの表現を使わず、「うち」「私たちの家」を使ってください。"
-                        print(f"    🔄 Retrying with suggestion: {retry_instruction}")
-                        # 次の再生成時にDirectorの指摘を反映
-                        director_guidance = retry_instruction
-                        continue
-                    else:
-                        # リトライ上限到達: Force Pass
-                        print(f"    ⚠️ リトライ上限到達: Force PASSで進行")
-                        force_passed = True
-                        # INTERVENEで次ターンに改善指示を出す + statusをPASSに変更
-                        from dataclasses import replace as dc_replace
-                        from src.types import DirectorStatus
-                        director_evaluation = dc_replace(
-                            director_evaluation,
-                            status=DirectorStatus.PASS,  # statusをPASSに変更
-                            action="INTERVENE",
-                            next_instruction="前のターンの問題を踏まえて、新しい視点を追加してください。",
-                        )
-                break
-
-            # 散漫検出でForce PASSした場合、後処理で強制短縮
-            if force_passed and director_evaluation and "散漫" in (director_evaluation.reason or ""):
-                original_speech = speech
-                speech = self._truncate_response(speech, max_sentences=2, max_chars=100)
-                if speech != original_speech:
-                    print(f"    ✂️ 強制短縮: {len(original_speech)}文字 → {len(speech)}文字")
-                    print(f"      {speech}")
-
-            # 発言を記録
-            result["dialogue"][f"turn_{turn_counter}"] = {"speaker": current_speaker, "text": speech}
-            dialogue_history.append((current_speaker, speech))
-            self._emit_speak_event(run_id, turn_counter, current_speaker, speech)
-            # RAGイベントを発行
-            self._emit_rag_event(run_id, turn_counter, current_speaker, current_char.last_rag_hints)
-
-            # beat を決定
-            beat_map = {"PASS": "PAYOFF", "RETRY": "BANter", "MODIFY": "PIVOT"}
-            beat = beat_map.get(director_evaluation.status.name, "BANter")
-
-            # 次のターンへのDirector Guidanceを生成
-            # v2: action=INTERVENE の場合のみ next_instruction を使用、NOOP の場合は生成しない
-            next_turn_guidance = None
-            if director_evaluation.action == "INTERVENE" and director_evaluation.next_instruction:
-                # v2: 介入時は validate_director_output で精査された指示を使用
-                # 強調した指示を生成（話題転換の効果を高める）
-                base_instruction = director_evaluation.next_instruction
-                next_turn_guidance = f"【重要】{base_instruction}\n※前回と同じ話題・単語は絶対に避けてください。1つの話題に絞って深掘りしてください。"
-                print(f"    🎬 Director INTERVENE: {base_instruction[:50]}...")
-                director_guidance = next_turn_guidance
-            else:
-                # v2: NOOP時はguidanceを生成しない（過剰介入防止）
-                director_guidance = director_evaluation.suggestion
-
-            # Director v3: topic_guidance_stateを更新（次のターンに引き継ぐ）
-            if director_evaluation.focus_hook:
-                topic_guidance_state = {
-                    "focus_hook": director_evaluation.focus_hook,
-                    "hook_depth": director_evaluation.hook_depth,
-                    "depth_step": director_evaluation.depth_step,
-                    "forbidden_topics": director_evaluation.forbidden_topics,
-                    "must_include": director_evaluation.must_include,
-                    "character_role": director_evaluation.character_role,
-                    # 直前の発言を次のターンに渡す（会話の自然な流れを維持）
-                    "partner_last_speech": speech,
-                }
-
-            # GUI用 director イベントを発行（v3フィールドを含む）
-            self._emit_director_event(
-                run_id,
-                turn_counter,
-                beat,
-                director_evaluation.suggestion,
-                status=director_evaluation.status.name,
-                reason=director_evaluation.reason,
-                guidance=next_turn_guidance,
-                action=director_evaluation.action,
-                hook=director_evaluation.hook,
-                evidence=director_evaluation.evidence,
-                # Director v3: Topic Manager fields
-                focus_hook=director_evaluation.focus_hook,
-                hook_depth=director_evaluation.hook_depth,
-                depth_step=director_evaluation.depth_step,
-                forbidden_topics=director_evaluation.forbidden_topics,
-            )
-
-            # 最終ターンの場合のみ verdict を記録
-            if turn == max_iterations - 1:
+        if pipeline_result.dialogue:
+            last_eval = pipeline_result.dialogue[-1].evaluation
+            if last_eval:
                 result["director_verdict"] = {
-                    "status": str(director_evaluation.status.name),
-                    "reason": director_evaluation.reason,
-                    "suggestion": director_evaluation.suggestion,
+                    "status": str(last_eval.status.name),
+                    "reason": last_eval.reason,
+                    "suggestion": last_eval.suggestion,
                 }
 
-            turn_counter += 1
+        result["status"] = pipeline_result.status
+        if pipeline_result.error:
+            result["error"] = pipeline_result.error
 
-            # Fatal MODIFY の場合のみ早期終了（Non-Fatal MODIFYはRETRYとして処理済み）
-            if director_evaluation.status.name == "MODIFY":
-                if self.director.is_fatal_modify(director_evaluation.reason):
-                    print(f"\n🚨 Fatal MODIFY detected. Ending dialogue: {director_evaluation.reason}")
-                    result["status"] = "error"
-                    result["error"] = f"Fatal MODIFY: {director_evaluation.reason}"
-                    break
-                else:
-                    # Non-Fatal MODIFYは続行（既にRETRY扱いされているはず）
-                    print(f"\n⚠️  Non-Fatal MODIFY, continuing dialogue...")
-        else:
-            # ループが正常完了した場合
-            print(f"\n✅ Dialogue completed ({turn_counter} turns)")
-            result["status"] = "success"
-
-        # Step 4: ログに記録
+        # Step 3: ログに記録
         print("\n[Step 3] Logging to file...")
         log_id = self.logger.log_narration(
             scene_description=scene_description,
@@ -668,6 +509,8 @@ class NarrationPipeline:
         )
         result["log_id"] = log_id
         print(f"✅ Logged (ID: {log_id})")
+
+        print(f"\n✅ Dialogue completed ({len(pipeline_result.dialogue)} turns)")
 
         return result
 
