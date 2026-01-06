@@ -55,24 +55,9 @@ class Character:
         # Character metadata
         self.name = "Elder Sister" if char_id == "A" else "Younger Sister"
         self.char_name = "やな" if char_id == "A" else "あゆ"
-        self.domains = (
-            [
-                "sensor_data",      # センサーデータ報告
-                "motor_control",    # モーター制御
-                "realtime_status",  # リアルタイム状態
-                "physical_test",    # 物理テスト実行
-                "device_operation", # デバイス操作
-            ]
-            if char_id == "A"
-            else [
-                "data_analysis",    # データ分析
-                "optimization",     # 最適化計算
-                "prediction",       # 予測モデル
-                "ml_inference",     # 機械学習推論
-                "technical_theory", # 技術理論
-                "risk_assessment",  # リスク評価
-            ]
-        )
+
+        # domains はモード依存（JetRacer vs 一般会話）
+        self.domains = self._get_domains()
 
         # 最後に使用したRAGヒントを保存（外部からアクセス可能）
         self.last_rag_hints: List[str] = []
@@ -90,7 +75,10 @@ class Character:
 
         # v2.1: Initialize prompt loader and few-shot injector
         self.prompt_loader = PromptLoader("persona")
-        self.few_shot_injector = FewShotInjector("persona/few_shots/patterns.yaml")
+
+        # v2.2: FewShotInjector をモードに応じて初期化
+        self.few_shot_injector = FewShotInjector()
+        self.few_shot_injector.set_mode("jetracer" if jetracer_mode else "general")
 
         # v2.1: Sister memory for perspective-based recall
         self.sister_memory = get_sister_memory()
@@ -99,6 +87,9 @@ class Character:
         self._character_prompt: CharacterPrompt = self.prompt_loader.load_character(self.internal_id)
         self._director_prompt: DirectorPrompt = self.prompt_loader.load_director()
         self._world_rules: str = self.prompt_loader.load_world_rules()
+
+        # v2.2: deep_values.yaml を読み込み
+        self._deep_values = self._load_deep_values()
 
     def speak(
         self,
@@ -381,8 +372,101 @@ class Character:
                 lines.append("文末は「です」「ですね」「ですよ」を使い、敬語で話してください。")
                 lines.append("姉を「姉様」または「やな姉様」と呼んでください。")
                 lines.append("")
-        
+
         return lines
+
+    def _get_domains(self) -> List[str]:
+        """
+        モードに応じたドメインリストを返す
+
+        Returns:
+            キャラクターの専門ドメインリスト
+        """
+        if self.jetracer_mode:
+            # JetRacerモード: エッジAI/クラウドAIとしての専門領域
+            if self.char_id == "A":
+                return [
+                    "sensor_data",      # センサーデータ報告
+                    "motor_control",    # モーター制御
+                    "realtime_status",  # リアルタイム状態
+                    "physical_test",    # 物理テスト実行
+                    "device_operation", # デバイス操作
+                ]
+            else:
+                return [
+                    "data_analysis",    # データ分析
+                    "optimization",     # 最適化計算
+                    "prediction",       # 予測モデル
+                    "ml_inference",     # 機械学習推論
+                    "technical_theory", # 技術理論
+                    "risk_assessment",  # リスク評価
+                ]
+        else:
+            # 一般会話モード: 姉妹としての役割ベース
+            if self.char_id == "A":
+                return [
+                    "discovery",        # 発見・気づき
+                    "intuition",        # 直感・感覚
+                    "action",           # 行動・実行
+                    "social",           # 社交・コミュニケーション
+                    "trends",           # トレンド・流行
+                ]
+            else:
+                return [
+                    "analysis",         # 分析・考察
+                    "information",      # 情報・知識
+                    "logic",            # 論理・理論
+                    "research",         # 調査・リサーチ
+                    "planning",         # 計画・段取り
+                ]
+
+    def _load_deep_values(self) -> Dict[str, Any]:
+        """
+        deep_values.yaml を読み込む
+
+        Returns:
+            深層価値観の辞書（存在しない場合は空辞書）
+        """
+        path = config.project_root / f"persona/{self.internal_id}/deep_values.yaml"
+        if not path.exists():
+            return {}
+
+        try:
+            with open(path, 'r', encoding='utf-8') as f:
+                return yaml.safe_load(f) or {}
+        except Exception as e:
+            print(f"Warning: Failed to load deep_values.yaml: {e}")
+            return {}
+
+    def _format_deep_values(self) -> str:
+        """
+        deep_values を注入用テキストにフォーマット
+
+        Returns:
+            フォーマットされた文字列（空の場合は空文字列）
+        """
+        if not self._deep_values:
+            return ""
+
+        lines = [f"【{self.char_name}の価値観】"]
+
+        # core_belief
+        if belief := self._deep_values.get("core_belief"):
+            lines.append(f"信条: {belief}")
+
+        # quick_rules（判断基準）
+        if rules := self._deep_values.get("quick_rules"):
+            lines.append("判断基準:")
+            for rule in rules[:3]:  # 最大3つ
+                lines.append(f"  - {rule}")
+
+        # preferences（ワクワク/イライラ）- 状況に応じて使用
+        # ここでは簡潔に1行だけ
+        if prefs := self._deep_values.get("preferences"):
+            if exciting := prefs.get("exciting"):
+                lines.append(f"ワクワクすること: {exciting[0]}")  # 最初の1つだけ
+
+        return "\n".join(lines)
 
     def _has_repetition(self, text: str, threshold: int = 5) -> bool:
         """
@@ -635,6 +719,15 @@ class Character:
             "character"
         )
 
+        # 4.3.1 深層価値観（v2.2追加）
+        deep_values_text = self._format_deep_values()
+        if deep_values_text:
+            builder.add(
+                deep_values_text,
+                Priority.DEEP_VALUES + 1,  # キャラクター設定の直後
+                "deep_values"
+            )
+
         # 4.4 RAG知識
         rag_hints = self._get_rag_hints(
             query=frame_description,
@@ -784,6 +877,7 @@ class Character:
         self._character_prompt = self.prompt_loader.load_character(self.internal_id)
         self._director_prompt = self.prompt_loader.load_director()
         self._world_rules = self.prompt_loader.load_world_rules()
+        self._deep_values = self._load_deep_values()  # v2.2追加
         self.few_shot_injector.reload_patterns()
         # システムプロンプトも再読み込み
         from src.prompt_manager import get_prompt_repository
@@ -952,6 +1046,15 @@ JetRacer自動運転車の走行を実況・解説する姉妹AIの一人です�
             Priority.DEEP_VALUES,
             "character"
         )
+
+        # 2.3.1 深層価値観（v2.2追加）
+        deep_values_text = self._format_deep_values()
+        if deep_values_text:
+            builder.add(
+                deep_values_text,
+                Priority.DEEP_VALUES + 1,
+                "deep_values"
+            )
 
         # 2.4 RAG知識
         partner_speech = conversation_history[-1][1] if conversation_history else None
