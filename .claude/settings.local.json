@@ -105,7 +105,8 @@
       "Bash(npx tsc:*)",
       "Bash(/home/owner/miniconda3/envs/duo-talk/bin/python -m pytest:*)",
       "Bash(conda info:*)",
-      "Bash(python scripts/test_mode_switching.py:*)"
+      "Bash(python scripts/test_mode_switching.py:*)",
+      "Bash(pip uninstall:*)"
     ]
   }
 }
