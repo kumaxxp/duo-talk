@@ -107,17 +107,29 @@ class PromptLoader:
         """キャッシュをクリア（ホットリロード用）"""
         self._cache.clear()
 
-    def load_character(self, char_id: str) -> CharacterPrompt:
+    def load_character(self, char_id: str, jetracer_mode: bool = False) -> CharacterPrompt:
         """
         キャラクタープロンプトを読み込み
 
         Args:
             char_id: "char_a" (やな) or "char_b" (あゆ)
+            jetracer_mode: True for JetRacer mode, False for general
 
         Returns:
             CharacterPrompt オブジェクト
         """
-        path = self.base_path / char_id / "prompt.yaml"
+        # モードに応じたファイル名
+        if jetracer_mode:
+            filename = "prompt_jetracer.yaml"
+        else:
+            filename = "prompt_general.yaml"
+
+        path = self.base_path / char_id / filename
+
+        # フォールバック: モード別ファイルがなければ prompt.yaml を使用
+        if not path.exists():
+            path = self.base_path / char_id / "prompt.yaml"
+
         data = self._load_yaml(path)
 
         identity = data.get("identity", {})
@@ -146,14 +158,28 @@ class PromptLoader:
             raw_data=data
         )
 
-    def load_world_rules(self) -> str:
+    def load_world_rules(self, jetracer_mode: bool = False) -> str:
         """
         世界設定を読み込み、注入用テキストに変換
+
+        Args:
+            jetracer_mode: True for JetRacer mode, False for general
 
         Returns:
             str: PRIORITY_WORLD_RULES用のテキスト
         """
-        path = self.base_path / "world_rules.yaml"
+        # モードに応じたファイル名
+        if jetracer_mode:
+            filename = "world_rules_jetracer.yaml"
+        else:
+            filename = "world_rules_general.yaml"
+
+        path = self.base_path / filename
+
+        # フォールバック: モード別ファイルがなければ world_rules.yaml を使用
+        if not path.exists():
+            path = self.base_path / "world_rules.yaml"
+
         data = self._load_yaml(path)
 
         world_state = data.get("world_state", {})

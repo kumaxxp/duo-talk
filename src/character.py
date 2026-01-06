@@ -83,10 +83,12 @@ class Character:
         # v2.1: Sister memory for perspective-based recall
         self.sister_memory = get_sister_memory()
 
-        # v2.1: Preload prompts
-        self._character_prompt: CharacterPrompt = self.prompt_loader.load_character(self.internal_id)
+        # v2.1: Preload prompts （v2.2: モード対応）
+        self._character_prompt: CharacterPrompt = self.prompt_loader.load_character(
+            self.internal_id, jetracer_mode=jetracer_mode
+        )
         self._director_prompt: DirectorPrompt = self.prompt_loader.load_director()
-        self._world_rules: str = self.prompt_loader.load_world_rules()
+        self._world_rules: str = self.prompt_loader.load_world_rules(jetracer_mode=jetracer_mode)
 
         # v2.2: deep_values.yaml を読み込み
         self._deep_values = self._load_deep_values()
@@ -874,9 +876,11 @@ class Character:
     def reload_prompts(self) -> None:
         """プロンプトを再読み込み（ホットリロード）"""
         self.prompt_loader.clear_cache()
-        self._character_prompt = self.prompt_loader.load_character(self.internal_id)
+        self._character_prompt = self.prompt_loader.load_character(
+            self.internal_id, jetracer_mode=self.jetracer_mode
+        )
         self._director_prompt = self.prompt_loader.load_director()
-        self._world_rules = self.prompt_loader.load_world_rules()
+        self._world_rules = self.prompt_loader.load_world_rules(jetracer_mode=self.jetracer_mode)
         self._deep_values = self._load_deep_values()  # v2.2追加
         self.few_shot_injector.reload_patterns()
         # システムプロンプトも再読み込み
