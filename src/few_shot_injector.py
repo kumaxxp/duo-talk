@@ -25,6 +25,7 @@ class FewShotPattern:
     description: str
     example: str
     note: Optional[str] = None
+    mode: Optional[str] = None  # "jetracer" or "general"
 
 
 class FewShotInjector:
@@ -32,7 +33,7 @@ class FewShotInjector:
     状況に応じたFew-shotパターンを選択・注入
 
     使用例:
-        injector = FewShotInjector()
+        injector = FewShotInjector(mode="general")
 
         # 状況に応じたパターンを取得
         pattern = injector.select_pattern(
@@ -48,8 +49,31 @@ class FewShotInjector:
             )
     """
 
-    def __init__(self, patterns_path: str = "persona/few_shots/patterns.yaml"):
-        self.patterns_path = config.project_root / patterns_path
+    # モード別パターンファイル
+    MODE_PATTERNS_MAP = {
+        "jetracer": "persona/few_shots/patterns.yaml",
+        "general": "persona/few_shots/patterns_general.yaml",
+    }
+
+    def __init__(
+        self,
+        patterns_path: Optional[str] = None,
+        mode: str = "jetracer"
+    ):
+        """
+        Args:
+            patterns_path: パターンファイルパス（指定時はmodeを無視）
+            mode: "jetracer" or "general"
+        """
+        self.mode = mode
+
+        # パターンファイルパスの決定
+        if patterns_path:
+            self.patterns_path = config.project_root / patterns_path
+        else:
+            default_path = self.MODE_PATTERNS_MAP.get(mode, self.MODE_PATTERNS_MAP["jetracer"])
+            self.patterns_path = config.project_root / default_path
+
         self.patterns: List[FewShotPattern] = []
         self._load_patterns()
 
@@ -68,13 +92,29 @@ class FewShotInjector:
                 triggers=p.get("trigger", []),
                 description=p.get("description", ""),
                 example=p.get("example", ""),
-                note=p.get("note")
+                note=p.get("note"),
+                mode=p.get("mode", self.mode)  # パターン個別のモード、なければインスタンスのモード
             ))
 
     def reload_patterns(self) -> None:
         """パターンを再読み込み（ホットリロード用）"""
         self.patterns.clear()
         self._load_patterns()
+
+    def set_mode(self, mode: str) -> None:
+        """
+        モードを切り替えてパターンを再読み込み
+
+        Args:
+            mode: "jetracer" or "general"
+        """
+        if mode not in self.MODE_PATTERNS_MAP:
+            print(f"Warning: Unknown mode '{mode}', defaulting to 'jetracer'")
+            mode = "jetracer"
+
+        self.mode = mode
+        self.patterns_path = config.project_root / self.MODE_PATTERNS_MAP[mode]
+        self.reload_patterns()
 
     def select_pattern(
         self,
@@ -205,19 +245,44 @@ class FewShotInjector:
         return None
 
 
-# シングルトンインスタンス
-_injector: Optional[FewShotInjector] = None
+# モード別シングルトンインスタンス
+_injectors: Dict[str, FewShotInjector] = {}
 
 
-def get_few_shot_injector(patterns_path: str = "persona/few_shots/patterns.yaml") -> FewShotInjector:
-    """FewShotInjectorを取得（シングルトン）"""
-    global _injector
-    if _injector is None:
-        _injector = FewShotInjector(patterns_path)
-    return _injector
+def get_few_shot_injector(
+    patterns_path: Optional[str] = None,
+    mode: str = "jetracer"
+) -> FewShotInjector:
+    """
+    FewShotInjectorを取得（モード別シングルトン）
+
+    Args:
+        patterns_path: パターンファイルパス（指定時はmodeを無視）
+        mode: "jetracer" or "general"
+
+    Returns:
+        FewShotInjector インスタンス
+    """
+    global _injectors
+
+    # パターンパス指定時は専用キーを使用
+    cache_key = patterns_path if patterns_path else mode
+
+    if cache_key not in _injectors:
+        _injectors[cache_key] = FewShotInjector(patterns_path=patterns_path, mode=mode)
+
+    return _injectors[cache_key]
 
 
-def reset_few_shot_injector() -> None:
-    """FewShotInjectorをリセット"""
-    global _injector
-    _injector = None
+def reset_few_shot_injector(mode: Optional[str] = None) -> None:
+    """
+    FewShotInjectorをリセット
+
+    Args:
+        mode: リセットするモード（Noneなら全モード）
+    """
+    global _injectors
+    if mode is None:
+        _injectors.clear()
+    elif mode in _injectors:
+        del _injectors[mode]
