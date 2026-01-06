@@ -97,15 +97,20 @@ class UnifiedPipeline:
         self,
         jetracer_client: Optional['JetRacerClient'] = None,
         enable_fact_check: bool = True,
+        jetracer_mode: Optional[bool] = None,
     ):
         """
         Args:
             jetracer_client: JetRacerクライアント（Noneなら接続なし）
             enable_fact_check: Director の事実チェックを有効にするか
+            jetracer_mode: JetRacerモード（None=自動判定、True=強制ON、False=強制OFF）
         """
         self.input_collector = InputCollector(jetracer_client=jetracer_client)
-        self.char_a = Character("A")
-        self.char_b = Character("B")
+        self._jetracer_mode_override = jetracer_mode
+        self._jetracer_client = jetracer_client
+        # Characterは初回run()時にモード判定してから初期化
+        self.char_a: Optional[Character] = None
+        self.char_b: Optional[Character] = None
         self.director = Director(enable_fact_check=enable_fact_check)
         self.logger = Logger()
 
@@ -140,7 +145,16 @@ class UnifiedPipeline:
 
         print(f"=== UnifiedPipeline.run() started: {run_id} ===")
 
-        # 2. Director/NoveltyGuard リセット
+        # 2. JetRacerモード判定とCharacter初期化
+        jetracer_mode = self._determine_jetracer_mode(initial_input)
+        print(f"    Mode: {'JetRacer' if jetracer_mode else 'General Conversation'}")
+        
+        # Character初期化（モードが変わったら再初期化）
+        if self.char_a is None or self.char_a.jetracer_mode != jetracer_mode:
+            self.char_a = Character("A", jetracer_mode=jetracer_mode)
+            self.char_b = Character("B", jetracer_mode=jetracer_mode)
+
+        # 3. Director/NoveltyGuard リセット
         self.director.reset_for_new_session()
 
         # 3. 入力収集
@@ -459,7 +473,42 @@ class UnifiedPipeline:
 
         return "\n".join(parts)
 
+    def _determine_jetracer_mode(self, bundle: InputBundle) -> bool:
+        """
+        InputBundleからJetRacerモードを判定
+        
+        判定基準:
+        1. オーバーライドが指定されている場合はそれに従う
+        2. JetRacerクライアントが接続されている場合はJetRacerモード
+        3. InputBundleにJetRacer関連のソースがあればJetRacerモード
+        4. それ以外は一般会話モード
+        
+        Args:
+            bundle: 入力バンドル
+            
+        Returns:
+            True: JetRacerモード、False: 一般会話モード
+        """
+        # 1. オーバーライドが指定されている場合
+        if self._jetracer_mode_override is not None:
+            return self._jetracer_mode_override
+        
+        # 2. JetRacerクライアントが接続されている場合
+        if self._jetracer_client is not None:
+            return True
+        
+        # 3. InputBundleにJetRacer関連のソースがあるかチェック
+        # InputSource.is_jetracer プロパティを使用
+        for source in bundle.sources:
+            if source.is_jetracer:
+                return True
+        
+        # 4. それ以外は一般会話モード
+        return False
+
     def reset(self) -> None:
         """パイプライン状態をリセット"""
         self.director.reset_for_new_session()
+        self.char_a = None
+        self.char_b = None
         print("[UnifiedPipeline] State reset")

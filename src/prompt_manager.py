@@ -17,14 +17,16 @@ class PromptManager:
     variable parts while keeping safety-critical fixed parts unchanged.
     """
 
-    def __init__(self, char_id: str):
+    def __init__(self, char_id: str, jetracer_mode: bool = False):
         """
         Initialize PromptManager for a character or director.
 
         Args:
             char_id: "A", "B", or "director"
+            jetracer_mode: True for JetRacer mode, False for general conversation
         """
         self.char_id = char_id.lower() if char_id in ["A", "B"] else char_id
+        self.jetracer_mode = jetracer_mode
 
         # Special handling for director vs character paths
         if self.char_id == "director":
@@ -32,13 +34,37 @@ class PromptManager:
         else:
             self.base_path = config.project_root / "persona" / f"char_{self.char_id}"
 
-        # Load prompt parts
-        self.fixed = self._load_file("system_fixed.txt")
+        # Load prompt parts (mode-dependent)
+        self.fixed = self._load_system_prompt()
         self.variable = self._load_file("system_variable.txt")
         self.templates = self._load_templates("templates.txt")
 
         # Convenience property
         self.system_prompt = self.get_system_prompt()
+
+    def _load_system_prompt(self) -> str:
+        """
+        Load system prompt based on mode.
+        
+        - jetracer_mode=True: system_jetracer.txt
+        - jetracer_mode=False: system_general.txt
+        - Fallback: system_fixed.txt (for backward compatibility)
+        """
+        if self.jetracer_mode:
+            filename = "system_jetracer.txt"
+        else:
+            filename = "system_general.txt"
+        
+        path = self.base_path / filename
+        if path.exists():
+            return path.read_text(encoding="utf-8").strip()
+        
+        # Fallback to system_fixed.txt for backward compatibility
+        fallback_path = self.base_path / "system_fixed.txt"
+        if fallback_path.exists():
+            return fallback_path.read_text(encoding="utf-8").strip()
+        
+        return ""
 
     def _load_file(self, filename: str) -> str:
         """Load a prompt file, return empty string if not found"""
@@ -125,6 +151,7 @@ class PromptManager:
         """
         return {
             "char_id": self.char_id,
+            "jetracer_mode": self.jetracer_mode,
             "fixed_lines": len(self.fixed.split("\n")) if self.fixed else 0,
             "variable_lines": len(self.variable.split("\n")) if self.variable else 0,
             "template_count": len(self.templates),
@@ -139,11 +166,19 @@ class PromptRepository:
         self.prompts = {}
         self._history_file = config.log_dir / "prompt_history.jsonl"
 
-    def get_manager(self, char_id: str) -> PromptManager:
-        """Get or create PromptManager for a character"""
-        if char_id not in self.prompts:
-            self.prompts[char_id] = PromptManager(char_id)
-        return self.prompts[char_id]
+    def get_manager(self, char_id: str, jetracer_mode: bool = False) -> PromptManager:
+        """
+        Get or create PromptManager for a character.
+        
+        Args:
+            char_id: Character ID ("A", "B", or "director")
+            jetracer_mode: True for JetRacer mode, False for general conversation
+        """
+        # キーにモードを含めてキャッシュを分離
+        cache_key = f"{char_id}_{jetracer_mode}"
+        if cache_key not in self.prompts:
+            self.prompts[cache_key] = PromptManager(char_id, jetracer_mode=jetracer_mode)
+        return self.prompts[cache_key]
 
     def save_version(self, char_id: str, version_name: str) -> None:
         """
@@ -182,18 +217,28 @@ class PromptRepository:
                     })
 
         return versions
+    
+    def clear_cache(self) -> None:
+        """キャッシュをクリア（モード切り替え時に使用）"""
+        self.prompts.clear()
 
 
 # Global repository instance
 _repository: Optional[PromptRepository] = None
 
 
-def get_prompt_manager(char_id: str) -> PromptManager:
-    """Get PromptManager for a character"""
+def get_prompt_manager(char_id: str, jetracer_mode: bool = False) -> PromptManager:
+    """
+    Get PromptManager for a character.
+    
+    Args:
+        char_id: Character ID ("A", "B", or "director")
+        jetracer_mode: True for JetRacer mode, False for general conversation
+    """
     global _repository
     if _repository is None:
         _repository = PromptRepository()
-    return _repository.get_manager(char_id)
+    return _repository.get_manager(char_id, jetracer_mode=jetracer_mode)
 
 
 def get_prompt_repository() -> PromptRepository:

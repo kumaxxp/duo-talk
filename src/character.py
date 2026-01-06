@@ -7,6 +7,9 @@ v2.1 additions:
 - NoveltyGuard: 話題ループ検知
 - SilenceController: 沈黙判定
 - world_rules.yaml: 世界設定の固定注入
+
+v2.2 additions:
+- jetracer_mode: JetRacer/一般会話モード切り替え
 """
 
 from pathlib import Path
@@ -32,19 +35,21 @@ from src.sister_memory import get_sister_memory
 class Character:
     """A character in the commentary dialogue"""
 
-    def __init__(self, char_id: str):
+    def __init__(self, char_id: str, jetracer_mode: bool = False):
         """
         Initialize a character.
 
         Args:
             char_id: "A" (Elder Sister) or "B" (Younger Sister)
+            jetracer_mode: True for JetRacer mode, False for general conversation
         """
         self.char_id = char_id
+        self.jetracer_mode = jetracer_mode
         self.llm = get_llm_client()
         self.rag = get_rag_system()
 
-        # Load system prompt using new PromptManager
-        self.prompt_manager = get_prompt_manager(char_id)
+        # Load system prompt using new PromptManager (mode-dependent)
+        self.prompt_manager = get_prompt_manager(char_id, jetracer_mode=jetracer_mode)
         self.system_prompt = self.prompt_manager.get_system_prompt()
 
         # Character metadata
@@ -320,24 +325,8 @@ class Character:
                 lines.append(f"- {hint}")
             lines.append("")
 
-        # キャラクターごとの口調リマインダー
-        if self.char_id == "A":
-            lines.append("【口調リマインダー】")
-            lines.append("あなたは「やな」（姉/エッジAI）です。")
-            lines.append("センサーやデバイスの状態を報告し、実際に動かす役割です。")
-            lines.append("計算や分析が必要なときは「あゆ」に依頼してください。")
-            lines.append("文末に「〜ね」「〜だね」「〜かな」などを使い、タメ口で話してください。")
-            lines.append("「姉様」は使わないでください（あなたが姉です）。")
-            lines.append("")
-        else:
-            lines.append("【口調リマインダー】")
-            lines.append("あなたは「あゆ」（妹/クラウドAI）です。")
-            lines.append("データを分析し、計算結果を提供する役割です。")
-            lines.append("実機での検証が必要なときは「姉様」に依頼してください。")
-            lines.append("文末は「です」「ですね」「ですよ」を使い、敬語で話してください。")
-            lines.append("姉を「姉様」または「やな姉様」と呼んでください。")
-            lines.append("センサー操作や物理動作は絶対にできません。")
-            lines.append("")
+        # キャラクターごとの口調リマインダー（モード依存）
+        lines.extend(self._get_tone_reminder())
 
         lines.append("【出力形式】")
         lines.append("- 「」（かっこ）で囲まず、直接話してください")
@@ -345,6 +334,55 @@ class Character:
         lines.append("- 2-4文で簡潔に応答してください")
 
         return "\n".join(lines)
+
+    def _get_tone_reminder(self) -> List[str]:
+        """
+        モードに応じた口調リマインダーを返す
+        
+        Returns:
+            口調リマインダーの行リスト
+        """
+        lines = []
+        
+        if self.jetracer_mode:
+            # JetRacerモード: エッジAI/クラウドAIとしての役割
+            if self.char_id == "A":
+                lines.append("【口調リマインダー】")
+                lines.append("あなたは「やな」（姉/エッジAI）です。")
+                lines.append("センサーやデバイスの状態を報告し、実際に動かす役割です。")
+                lines.append("計算や分析が必要なときは「あゆ」に依頼してください。")
+                lines.append("文末に「〜ね」「〜だね」「〜かな」などを使い、タメ口で話してください。")
+                lines.append("「姉様」は使わないでください（あなたが姉です）。")
+                lines.append("")
+            else:
+                lines.append("【口調リマインダー】")
+                lines.append("あなたは「あゆ」（妹/クラウドAI）です。")
+                lines.append("データを分析し、計算結果を提供する役割です。")
+                lines.append("実機での検証が必要なときは「姉様」に依頼してください。")
+                lines.append("文末は「です」「ですね」「ですよ」を使い、敬語で話してください。")
+                lines.append("姉を「姉様」または「やな姉様」と呼んでください。")
+                lines.append("センサー操作や物理動作は絶対にできません。")
+                lines.append("")
+        else:
+            # 一般会話モード: 姉妹としての役割
+            if self.char_id == "A":
+                lines.append("【口調リマインダー】")
+                lines.append("あなたは「やな」（姉）です。明るく活発、直感的に行動するタイプ。")
+                lines.append("話題を見つけて切り出す「発見者」役。")
+                lines.append("難しいことや詳しい分析は「あゆ」に聞いてください。")
+                lines.append("文末に「〜ね」「〜だね」「〜かな」などを使い、タメ口で話してください。")
+                lines.append("「姉様」は使わないでください（あなたが姉です）。")
+                lines.append("")
+            else:
+                lines.append("【口調リマインダー】")
+                lines.append("あなたは「あゆ」（妹）です。落ち着いていて論理的なタイプ。")
+                lines.append("姉の発見に情報や分析を補足する「解説者」役。")
+                lines.append("行動が必要なときは「姉様」に頼んでください。")
+                lines.append("文末は「です」「ですね」「ですよ」を使い、敬語で話してください。")
+                lines.append("姉を「姉様」または「やな姉様」と呼んでください。")
+                lines.append("")
+        
+        return lines
 
     def _has_repetition(self, text: str, threshold: int = 5) -> bool:
         """
@@ -517,24 +555,8 @@ class Character:
                 lines.append(f"- {hint}")
             lines.append("")
 
-        # キャラクターごとの口調リマインダー
-        if self.char_id == "A":
-            lines.append("【口調リマインダー】")
-            lines.append("あなたは「やな」（姉/エッジAI）です。")
-            lines.append("センサーやデバイスの状態を報告し、実際に動かす役割です。")
-            lines.append("計算や分析が必要なときは「あゆ」に依頼してください。")
-            lines.append("文末に「〜ね」「〜だね」「〜かな」などを使い、タメ口で話してください。")
-            lines.append("「姉様」は使わないでください（あなたが姉です）。")
-            lines.append("")
-        else:
-            lines.append("【口調リマインダー】")
-            lines.append("あなたは「あゆ」（妹/クラウドAI）です。")
-            lines.append("データを分析し、計算結果を提供する役割です。")
-            lines.append("実機での検証が必要なときは「姉様」に依頼してください。")
-            lines.append("文末は「です」「ですね」「ですよ」を使い、敬語で話してください。")
-            lines.append("姉を「姉様」または「やな姉様」と呼んでください。")
-            lines.append("センサー操作や物理動作は絶対にできません。")
-            lines.append("")
+        # キャラクターごとの口調リマインダー（モード依存）
+        lines.extend(self._get_tone_reminder())
 
         lines.append("【出力形式】")
         lines.append("- 「」（かっこ）で囲まず、直接話してください")
@@ -664,16 +686,17 @@ class Character:
                 "scene"
             )
 
-        # 4.8 走行状態
-        builder.add(
-            self._format_world_state_v2(state),
-            Priority.WORLD_STATE,
-            "world_state"
-        )
+        # 4.8 走行状態（JetRacerモードのみ）
+        if self.jetracer_mode:
+            builder.add(
+                self._format_world_state_v2(state),
+                Priority.WORLD_STATE,
+                "world_state"
+            )
 
         # 4.9 スロット充足チェック
         unfilled = builder.check_and_inject_slots(
-            state.current_topic or "走行",
+            state.current_topic or ("走行" if self.jetracer_mode else "対話"),
             topic_depth=state.topic_depth
         )
 
@@ -762,11 +785,23 @@ class Character:
         self._director_prompt = self.prompt_loader.load_director()
         self._world_rules = self.prompt_loader.load_world_rules()
         self.few_shot_injector.reload_patterns()
+        # システムプロンプトも再読み込み
+        from src.prompt_manager import get_prompt_repository
+        get_prompt_repository().clear_cache()
+        self.prompt_manager = get_prompt_manager(self.char_id, jetracer_mode=self.jetracer_mode)
+        self.system_prompt = self.prompt_manager.get_system_prompt()
 
     def _get_system_prompt(self) -> str:
-        """システムプロンプトを取得"""
-        return f"""あなたは「{self._character_prompt.name}」として振る舞ってください。
+        """システムプロンプトを取得（モード依存）"""
+        if self.jetracer_mode:
+            return f"""あなたは「{self._character_prompt.name}」として振る舞ってください。
 JetRacer自動運転車の走行を実況・解説する姉妹AIの一人です。
+
+相手の発言に自然に反応し、キャラクターの個性を活かした短い発話を生成してください。
+発話は1〜3文程度で、会話のテンポを維持してください。"""
+        else:
+            return f"""あなたは「{self._character_prompt.name}」として振る舞ってください。
+仲の良い姉妹の一人として、自然な会話をしてください。
 
 相手の発言に自然に反応し、キャラクターの個性を活かした短い発話を生成してください。
 発話は1〜3文程度で、会話のテンポを維持してください。"""
@@ -803,7 +838,7 @@ JetRacer自動運転車の走行を実況・解説する姉妹AIの一人です�
         return "\n".join(parts)
 
     def _format_world_state_v2(self, state: Any) -> str:
-        """v2.1: 走行状態をフォーマット"""
+        """v2.1: 走行状態をフォーマット（JetRacerモード用）"""
         return f"""【現在の走行状態】
 - モード: {state.jetracer_mode}
 - 速度: {state.current_speed:.2f} m/s
@@ -814,7 +849,7 @@ JetRacer自動運転車の走行を実況・解説する姉妹AIの一人です�
         """テキストから主要トピックを抽出（簡易版）"""
         import re
         nouns = re.findall(r'[ァ-ヶー]{2,}|[一-龯]{2,}', text)
-        return nouns[0] if nouns else "走行"
+        return nouns[0] if nouns else ("走行" if self.jetracer_mode else "対話")
 
     def _call_llm(self, prompt: str, char_id: str) -> str:
         """
