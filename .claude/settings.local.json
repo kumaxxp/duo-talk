@@ -102,7 +102,10 @@
       "Bash(timeout 60 /home/owner/miniconda3/envs/duo-talk/bin/python3:*)",
       "Bash(/home/owner/miniconda3/envs/duo-talk/bin/python3:*)",
       "Bash(npx tsc --noEmit)",
-      "Bash(npx tsc:*)"
+      "Bash(npx tsc:*)",
+      "Bash(/home/owner/miniconda3/envs/duo-talk/bin/python -m pytest:*)",
+      "Bash(conda info:*)",
+      "Bash(python scripts/test_mode_switching.py:*)"
     ]
   }
 }
