@@ -119,7 +119,17 @@ class Character:
 
         Returns:
             Character's response text
+
+        .. deprecated::
+            Use speak_unified() instead.
         """
+        import warnings
+        warnings.warn(
+            "speak() is deprecated, use speak_unified() instead",
+            DeprecationWarning,
+            stacklevel=2
+        )
+
         # Retrieve relevant knowledge from RAG
         rag_hints = self._get_rag_hints(
             query=frame_description,
@@ -679,7 +689,17 @@ class Character:
                 "content": str (speech) | dict (silence),
                 "debug": dict
             }
+
+        .. deprecated::
+            Use speak_unified() instead.
         """
+        import warnings
+        warnings.warn(
+            "speak_v2() is deprecated, use speak_unified() instead",
+            DeprecationWarning,
+            stacklevel=2
+        )
+
         context = context or {}
 
         # 1. 状態のスナップショットを取得

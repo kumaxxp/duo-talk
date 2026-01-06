@@ -506,6 +506,129 @@ class UnifiedPipeline:
         # 4. それ以外は一般会話モード
         return False
 
+    def run_continuous(
+        self,
+        input_generator: Callable[[], Optional[InputBundle]],
+        max_frames: Optional[int] = None,
+        frame_interval: float = 3.0,
+        turns_per_frame: int = 4,
+        run_id: Optional[str] = None,
+        event_callback: Optional[Callable[[str, Dict[str, Any]], None]] = None,
+        stop_callback: Optional[Callable[[], bool]] = None,
+    ) -> DialogueResult:
+        """
+        連続実行モード（LIVE用）
+
+        Args:
+            input_generator: 入力を生成するコールバック
+                - 呼び出し毎にInputBundleを返す
+                - Noneを返すと終了
+            max_frames: 最大フレーム数（None=無制限）
+            frame_interval: フレーム間隔（秒）
+            turns_per_frame: 1フレームあたりのターン数
+            run_id: ランID
+            event_callback: イベント通知コールバック
+            stop_callback: 停止判定コールバック（Trueで停止）
+
+        Returns:
+            DialogueResult（全フレームの対話を含む）
+        """
+        import time
+
+        if run_id is None:
+            run_id = f"live_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+
+        print(f"=== UnifiedPipeline.run_continuous() started: {run_id} ===")
+
+        all_turns: List[DialogueTurn] = []
+        frame_count = 0
+        last_frame_context: Optional[FrameContext] = None
+
+        # イベント: セッション開始
+        if event_callback:
+            event_callback("session_start", {
+                "run_id": run_id,
+                "mode": "continuous",
+                "frame_interval": frame_interval,
+                "turns_per_frame": turns_per_frame,
+            })
+
+        try:
+            while True:
+                # 停止チェック
+                if stop_callback and stop_callback():
+                    print(f"    ⏹️ Stop requested")
+                    break
+
+                # フレーム数チェック
+                if max_frames and frame_count >= max_frames:
+                    print(f"    ✅ Max frames reached: {max_frames}")
+                    break
+
+                # 入力取得
+                bundle = input_generator()
+                if bundle is None:
+                    print(f"    ⏹️ Input generator returned None")
+                    break
+
+                print(f"\n--- Frame {frame_count + 1} ---")
+
+                # 1フレーム分の対話生成
+                result = self.run(
+                    initial_input=bundle,
+                    max_turns=turns_per_frame,
+                    run_id=f"{run_id}_f{frame_count}",
+                    event_callback=event_callback,
+                )
+
+                # 結果を蓄積
+                all_turns.extend(result.dialogue)
+                last_frame_context = result.frame_context
+                frame_count += 1
+
+                # フレーム完了イベント
+                if event_callback:
+                    event_callback("frame_complete", {
+                        "run_id": run_id,
+                        "frame": frame_count,
+                        "turns": len(result.dialogue),
+                        "status": result.status,
+                    })
+
+                # エラー時は中断
+                if result.status == "error":
+                    print(f"    ❌ Frame error: {result.error}")
+                    break
+
+                # 次のフレームまで待機
+                time.sleep(frame_interval)
+
+        except KeyboardInterrupt:
+            print(f"\n    ⏹️ Interrupted by user")
+
+        # セッション終了イベント
+        if event_callback:
+            event_callback("session_end", {
+                "run_id": run_id,
+                "total_frames": frame_count,
+                "total_turns": len(all_turns),
+            })
+
+        print(f"=== UnifiedPipeline.run_continuous() completed: {run_id} ===")
+        print(f"    Frames: {frame_count}, Turns: {len(all_turns)}")
+
+        return DialogueResult(
+            run_id=run_id,
+            dialogue=all_turns,
+            status="success",
+            frame_context=last_frame_context,
+            metadata={
+                "mode": "continuous",
+                "total_frames": frame_count,
+                "total_turns": len(all_turns),
+            },
+        )
+
     def reset(self) -> None:
         """パイプライン状態をリセット"""
         self.director.reset_for_new_session()
