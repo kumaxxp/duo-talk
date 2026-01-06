@@ -1,11 +1,16 @@
 """
-duo-talk v2.1 - Input Collector
+duo-talk v2.2 - Input Collector
 InputBundleから入力を収集し、FrameContextに変換する
 
 設計方針：
 - Graceful Degradation: JetRacer接続失敗時はエラーではなくNoneを返す
-- 遅延初期化: VisionProcessorは必要になるまでインスタンス化しない
+- 遅延初期化: VisionPipelineは必要になるまでインスタンス化しない
 - 統一インターフェース: 異なる入力ソースを統一的に処理
+
+v2.2変更:
+- VisionPipeline統合（LLMProvider経由のVLM + Florence-2）
+- JetRacerカメラ解析の実装
+- 旧VisionProcessorはフォールバックとして維持
 """
 
 from dataclasses import dataclass, field
@@ -18,6 +23,7 @@ from src.input_source import InputBundle, InputSource, SourceType
 if TYPE_CHECKING:
     from src.jetracer_client import JetRacerClient, JetRacerState
     from src.vision_processor import VisionProcessor
+    from src.vision_pipeline import VisionPipeline, VisionMode
 
 
 @dataclass
@@ -30,16 +36,76 @@ class VisionAnalysis:
         objects: 検出されたオブジェクトのリスト
         scene_type: シーンタイプ（観光地、室内など）
         raw_result: VisionProcessorからの生の解析結果
+        processing_time_ms: 処理時間（ミリ秒）
     """
     description: str = ""
     objects: List[str] = field(default_factory=list)
     scene_type: str = ""
     raw_result: Dict[str, Any] = field(default_factory=dict)
+    processing_time_ms: float = 0.0
 
     @property
     def is_valid(self) -> bool:
         """有効な解析結果かどうか"""
         return bool(self.description)
+
+    @classmethod
+    def from_vision_pipeline_result(cls, result: Dict[str, Any]) -> 'VisionAnalysis':
+        """
+        VisionPipeline結果からVisionAnalysisを生成
+
+        Args:
+            result: VisionPipelineからの結果辞書
+
+        Returns:
+            VisionAnalysis インスタンス
+        """
+        # 説明文の構築
+        description_parts = []
+
+        # 道路情報
+        road_info = result.get("road_info", {})
+        if road_info.get("condition"):
+            description_parts.append(f"路面: {road_info['condition']}")
+        if road_info.get("drivable_area"):
+            description_parts.append(f"走行可能: {road_info['drivable_area']}")
+
+        # 障害物
+        obstacles = result.get("obstacles", [])
+        if obstacles:
+            obs_desc = ", ".join([
+                f"{o.get('type', '物体')}({o.get('position', '不明')})"
+                for o in obstacles[:3]
+            ])
+            description_parts.append(f"障害物: {obs_desc}")
+
+        # 警告
+        warnings = result.get("warnings", [])
+        if warnings:
+            description_parts.append(f"注意: {', '.join(warnings[:2])}")
+
+        # VLMの生の説明があれば使用
+        if result.get("description") and not description_parts:
+            description_parts.append(result["description"][:200])
+
+        # オブジェクトリスト
+        objects = []
+        for obj in result.get("objects", []):
+            if isinstance(obj, dict):
+                objects.append(obj.get("label", str(obj)))
+            else:
+                objects.append(str(obj))
+        for obs in obstacles:
+            if isinstance(obs, dict):
+                objects.append(obs.get("type", str(obs)))
+
+        return cls(
+            description=" / ".join(description_parts) if description_parts else "解析結果なし",
+            objects=objects,
+            scene_type=road_info.get("condition", ""),
+            raw_result=result,
+            processing_time_ms=result.get("processing_time_ms", 0.0),
+        )
 
 
 @dataclass
@@ -148,7 +214,8 @@ class InputCollector:
 
     Attributes:
         jetracer: JetRacerClient インスタンス（オプション）
-        vision_processor: VisionProcessor インスタンス（遅延初期化）
+        vision_pipeline: VisionPipeline インスタンス（遅延初期化、推奨）
+        vision_processor: VisionProcessor インスタンス（フォールバック用）
 
     Examples:
         collector = InputCollector()
@@ -162,20 +229,48 @@ class InputCollector:
     def __init__(
         self,
         jetracer_client: Optional['JetRacerClient'] = None,
-        vision_processor: Optional['VisionProcessor'] = None
+        use_vision_pipeline: bool = True,
+        vision_mode: Optional['VisionMode'] = None,
     ):
         """
         Args:
             jetracer_client: JetRacerClient インスタンス（Noneなら未接続扱い）
-            vision_processor: VisionProcessor インスタンス（Noneなら遅延初期化）
+            use_vision_pipeline: 新VisionPipelineを使用するか（推奨: True）
+            vision_mode: VisionPipelineのモード（Noneなら設定依存）
         """
         self.jetracer = jetracer_client
-        self._vision_processor = vision_processor
-        self._vision_processor_initialized = vision_processor is not None
+        self._use_vision_pipeline = use_vision_pipeline
+        self._vision_mode = vision_mode
+        self._vision_pipeline = None
+        self._vision_pipeline_initialized = False
+        # 旧VisionProcessor（フォールバック用）
+        self._vision_processor = None
+        self._vision_processor_initialized = False
+
+    @property
+    def vision_pipeline(self) -> Optional['VisionPipeline']:
+        """VisionPipelineの遅延初期化"""
+        if not self._vision_pipeline_initialized:
+            try:
+                from src.vision_pipeline import get_vision_pipeline, VisionPipelineConfig, VisionMode
+
+                config = VisionPipelineConfig(
+                    mode=self._vision_mode or VisionMode.VLM_ONLY,
+                    florence_enabled=True,
+                    florence_auto_unload=True,
+                )
+                self._vision_pipeline = get_vision_pipeline(config)
+                self._vision_pipeline_initialized = True
+                print("[InputCollector] VisionPipeline initialized")
+            except Exception as e:
+                print(f"[InputCollector] VisionPipeline init failed: {e}")
+                self._vision_pipeline = None
+                self._vision_pipeline_initialized = True
+        return self._vision_pipeline
 
     @property
     def vision_processor(self) -> Optional['VisionProcessor']:
-        """VisionProcessorの遅延初期化"""
+        """VisionProcessorの遅延初期化（フォールバック用）"""
         if not self._vision_processor_initialized:
             try:
                 from src.vision_processor import VisionProcessor
@@ -248,6 +343,28 @@ class InputCollector:
         if not source.content:
             return None
 
+        # 新VisionPipeline使用
+        if self._use_vision_pipeline and self.vision_pipeline:
+            try:
+                from src.vision_pipeline import VisionMode
+                mode = self._vision_mode or VisionMode.VLM_ONLY
+                result = self.vision_pipeline.process(source.content, mode=mode)
+
+                if result.get("error"):
+                    print(f"[InputCollector] VisionPipeline error: {result['error']}")
+                    # フォールバックを試みる
+                    return self._analyze_with_legacy_processor(source)
+
+                return VisionAnalysis.from_vision_pipeline_result(result)
+            except Exception as e:
+                print(f"[InputCollector] VisionPipeline failed: {e}, trying legacy")
+                return self._analyze_with_legacy_processor(source)
+
+        # 旧VisionProcessor使用（フォールバック）
+        return self._analyze_with_legacy_processor(source)
+
+    def _analyze_with_legacy_processor(self, source: InputSource) -> Optional[VisionAnalysis]:
+        """旧VisionProcessorで解析（フォールバック）"""
         vp = self.vision_processor
         if not vp:
             print("[InputCollector] VisionProcessor not available")
@@ -271,7 +388,7 @@ class InputCollector:
                 raw_result=result
             )
         except Exception as e:
-            print(f"[InputCollector] Image file analysis error: {e}")
+            print(f"[InputCollector] Legacy analysis error: {e}")
             return None
 
     def _analyze_image_url(self, source: InputSource) -> Optional[VisionAnalysis]:
@@ -283,13 +400,44 @@ class InputCollector:
         )
 
     def _analyze_jetracer_camera(self, source: InputSource) -> Optional[VisionAnalysis]:
-        """JetRacerカメラ映像を解析（現時点ではスタブ）"""
+        """JetRacerカメラ映像を解析"""
         camera_id = "0" if source.source_type == SourceType.JETRACER_CAM0 else "1"
-        # TODO: JetRacerカメラからの映像取得と解析を実装
-        return VisionAnalysis(
-            description=f"JetRacerカメラ{camera_id}映像",
-            raw_result={"source": "jetracer_camera", "camera_id": camera_id}
-        )
+
+        # JetRacerクライアントから画像を取得
+        if not self.jetracer:
+            return VisionAnalysis(
+                description=f"JetRacerカメラ{camera_id}（未接続）",
+                raw_result={"source": "jetracer_camera", "camera_id": camera_id, "connected": False},
+            )
+
+        try:
+            # JetRacerから画像を取得（base64またはバイト列）
+            image_data = self.jetracer.get_camera_image(camera_id=int(camera_id))
+
+            if not image_data:
+                return VisionAnalysis(
+                    description=f"JetRacerカメラ{camera_id}（画像取得失敗）",
+                    raw_result={"source": "jetracer_camera", "error": "No image data"},
+                )
+
+            # VisionPipelineで解析
+            if self._use_vision_pipeline and self.vision_pipeline:
+                from src.vision_pipeline import VisionMode
+                # JetRacerモードではFlorence-2も使用
+                mode = VisionMode.VLM_WITH_FLORENCE
+                result = self.vision_pipeline.process(image_data, mode=mode)
+                return VisionAnalysis.from_vision_pipeline_result(result)
+
+            return VisionAnalysis(
+                description=f"JetRacerカメラ{camera_id}映像",
+                raw_result={"source": "jetracer_camera", "camera_id": camera_id},
+            )
+        except Exception as e:
+            print(f"[InputCollector] JetRacer camera analysis error: {e}")
+            return VisionAnalysis(
+                description=f"JetRacerカメラ{camera_id}（解析エラー）",
+                raw_result={"source": "jetracer_camera", "error": str(e)},
+            )
 
     def _fetch_jetracer_sensor(self) -> Optional['JetRacerState']:
         """
