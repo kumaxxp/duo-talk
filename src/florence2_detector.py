@@ -11,15 +11,61 @@ Microsoft Florence-2を使った物体検出・セグメンテーション。
     detector.unload()  # VRAM解放
 """
 import os
+import sys
 import logging
 from pathlib import Path
 from typing import Optional, Dict, Any, List, Union
 from dataclasses import dataclass, field
 from datetime import datetime
 import threading
+from types import ModuleType
 
 import torch
 from PIL import Image
+
+
+def _setup_flash_attn_dummy() -> bool:
+    """
+    flash_attn ダミーモジュールを作成してインポートエラーを回避
+
+    Florence-2のモデルコードは flash_attn をインポートしようとするが、
+    attn_implementation が eager/sdpa の場合は実際には使用しない
+
+    Returns:
+        ダミーが設定されたかどうか
+    """
+    from importlib.machinery import ModuleSpec
+
+    if "flash_attn" not in sys.modules:
+        # ダミーモジュール作成
+        flash_attn = ModuleType("flash_attn")
+        flash_attn.__version__ = "0.0.0"
+        flash_attn.__spec__ = ModuleSpec("flash_attn", None)
+        flash_attn.__file__ = "<dummy>"
+        flash_attn.__path__ = []
+
+        # flash_attn.flash_attn_func のダミー
+        flash_attn_func = ModuleType("flash_attn.flash_attn_func")
+        flash_attn_func.flash_attn_func = lambda *args, **kwargs: None
+        flash_attn_func.__spec__ = ModuleSpec("flash_attn.flash_attn_func", None)
+
+        # flash_attn.bert_padding のダミー
+        bert_padding = ModuleType("flash_attn.bert_padding")
+        bert_padding.index_first_axis = lambda *args, **kwargs: None
+        bert_padding.pad_input = lambda *args, **kwargs: None
+        bert_padding.unpad_input = lambda *args, **kwargs: None
+        bert_padding.__spec__ = ModuleSpec("flash_attn.bert_padding", None)
+
+        sys.modules["flash_attn"] = flash_attn
+        sys.modules["flash_attn.flash_attn_func"] = flash_attn_func
+        sys.modules["flash_attn.bert_padding"] = bert_padding
+
+        return True
+    return False
+
+
+# モジュール読み込み時にダミーを設定
+_setup_flash_attn_dummy()
 
 logger = logging.getLogger(__name__)
 
@@ -42,7 +88,7 @@ class Florence2Config:
     device: str = "cuda"
     torch_dtype: torch.dtype = torch.float16
     trust_remote_code: bool = True
-    attn_implementation: str = "eager"  # "flash_attention_2" or "eager"
+    attn_implementation: str = "sdpa"  # "sdpa", "eager", or "flash_attention_2"
     max_objects: int = 20
     confidence_threshold: float = 0.3
     cache_dir: Optional[str] = None
@@ -77,6 +123,7 @@ class Florence2Detector:
         self.processor = None
         self._loaded = False
         self._load_lock = threading.Lock()
+        self._active_backend: str = ""  # 実際に使用中のバックエンド
         self._initialized = True
 
         logger.info(f"Florence2Detector initialized (model: {self.config.model_name})")
@@ -85,6 +132,11 @@ class Florence2Detector:
     def is_loaded(self) -> bool:
         """モデルがロード済みかどうか"""
         return self._loaded and self.model is not None
+
+    @property
+    def active_backend(self) -> str:
+        """現在使用中のattentionバックエンド"""
+        return self._active_backend
 
     def load(self, force: bool = False) -> bool:
         """
@@ -114,48 +166,85 @@ class Florence2Detector:
                     cache_dir=self.config.cache_dir
                 )
 
-                # モデルのロード
+                # attn_implementation の優先順を取得
+                attn_backends = self._get_attn_backends()
+
                 model_kwargs: Dict[str, Any] = {
                     "trust_remote_code": self.config.trust_remote_code,
                     "torch_dtype": self.config.torch_dtype,
                     "cache_dir": self.config.cache_dir,
                 }
 
-                # Flash Attention対応チェック
-                if self.config.attn_implementation == "flash_attention_2":
+                # 優先順でバックエンドを試行
+                last_error = None
+                for backend in attn_backends:
                     try:
-                        import flash_attn  # noqa: F401
-                        model_kwargs["attn_implementation"] = "flash_attention_2"
-                    except ImportError:
-                        logger.warning("flash-attn not available, using eager attention")
-                        model_kwargs["attn_implementation"] = "eager"
-                else:
-                    model_kwargs["attn_implementation"] = "eager"
+                        logger.info(f"Trying attn_implementation: {backend}")
+                        model_kwargs["attn_implementation"] = backend
 
-                self.model = AutoModelForCausalLM.from_pretrained(
-                    self.config.model_name,
-                    **model_kwargs
-                ).to(self.config.device)
+                        self.model = AutoModelForCausalLM.from_pretrained(
+                            self.config.model_name,
+                            **model_kwargs
+                        ).to(self.config.device)
 
-                self.model.eval()
-                self._loaded = True
+                        self.model.eval()
+                        self._loaded = True
+                        self._active_backend = backend
 
-                elapsed = (datetime.now() - start_time).total_seconds()
-                logger.info(f"Florence-2 loaded in {elapsed:.1f}s")
+                        elapsed = (datetime.now() - start_time).total_seconds()
+                        logger.info(f"Florence-2 loaded with '{backend}' in {elapsed:.1f}s")
 
-                # VRAM使用量ログ
-                if torch.cuda.is_available():
-                    vram_gb = torch.cuda.memory_allocated() / 1024**3
-                    logger.info(f"VRAM usage: {vram_gb:.1f} GB")
+                        # VRAM使用量ログ
+                        if torch.cuda.is_available():
+                            vram_gb = torch.cuda.memory_allocated() / 1024**3
+                            logger.info(f"VRAM usage: {vram_gb:.2f} GB")
 
-                return True
+                        return True
+
+                    except Exception as e:
+                        last_error = e
+                        logger.warning(f"Failed with '{backend}': {e}")
+                        # モデルが部分的にロードされていたらクリーンアップ
+                        if self.model is not None:
+                            del self.model
+                            self.model = None
+                            if torch.cuda.is_available():
+                                torch.cuda.empty_cache()
+                        continue
+
+                # 全バックエンド失敗
+                raise RuntimeError(f"All attention backends failed. Last error: {last_error}")
 
             except Exception as e:
                 logger.error(f"Failed to load Florence-2: {e}")
                 self.model = None
                 self.processor = None
                 self._loaded = False
+                self._active_backend = ""
                 return False
+
+    def _get_attn_backends(self) -> List[str]:
+        """
+        使用するattentionバックエンドの優先順リストを返す
+
+        Florence-2 がサポートするバックエンド: sdpa, eager, flash_attention_2
+        ※ flash_attention_2 は実際のflash_attnパッケージが必要（ダミーでは不可）
+
+        Returns:
+            バックエンド名のリスト（優先順）
+        """
+        # 設定で指定されたバックエンドを最優先
+        backends = [self.config.attn_implementation]
+
+        # フォールバック順序を追加（重複除去）
+        # flash_attention_2 はダミーモジュールでは動作しないので含めない
+        fallback_order = ["sdpa", "eager"]
+        for backend in fallback_order:
+            if backend not in backends:
+                backends.append(backend)
+
+        logger.debug(f"Attention backends priority: {backends}")
+        return backends
 
     def unload(self) -> bool:
         """
@@ -176,6 +265,7 @@ class Florence2Detector:
                 self.model = None
                 self.processor = None
                 self._loaded = False
+                self._active_backend = ""
 
                 # VRAM解放
                 if torch.cuda.is_available():
