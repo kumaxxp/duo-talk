@@ -343,6 +343,93 @@ class JetRacerClient:
         
         return risks
     
+    def get_camera_image(self, camera_id: int = 0, as_base64: bool = True) -> Optional[str]:
+        """カメラ画像を取得
+
+        Args:
+            camera_id: カメラID（0または1）
+            as_base64: base64エンコードで返すか（Trueならbase64文字列、Falseならバイト列）
+
+        Returns:
+            as_base64=True: base64エンコードされた画像文字列
+            as_base64=False: 画像のバイト列
+            取得失敗時はNone
+
+        Note:
+            JetRacer-Agentの以下のエンドポイントを順番に試行:
+            1. /distance-grid/{camera_id}/snapshot (推奨)
+            2. /camera/{camera_id}/image
+        """
+        import base64
+
+        # 方法1: distance-grid API（セグメンテーションなしのスナップショット）
+        try:
+            resp = self._client.get(
+                f"{self.base_url}/distance-grid/{camera_id}/snapshot",
+                params={"undistort": True}
+            )
+            if resp.status_code == 200:
+                data = resp.json()
+                # レスポンスがJSONでbase64画像を含む場合
+                if "image_base64" in data:
+                    img_b64 = data["image_base64"]
+                    if as_base64:
+                        return img_b64
+                    else:
+                        return base64.b64decode(img_b64)
+                # レスポンスがJSONでsnapshot_base64を含む場合
+                if "snapshot_base64" in data:
+                    img_b64 = data["snapshot_base64"]
+                    if as_base64:
+                        return img_b64
+                    else:
+                        return base64.b64decode(img_b64)
+        except Exception as e:
+            print(f"[JetRacerClient] Snapshot API error: {e}")
+
+        # 方法2: カメラ直接API
+        try:
+            resp = self._client.get(f"{self.base_url}/camera/{camera_id}/image")
+            if resp.status_code == 200:
+                content_type = resp.headers.get("content-type", "")
+                if "image" in content_type:
+                    # バイナリ画像が返ってきた場合
+                    if as_base64:
+                        return base64.b64encode(resp.content).decode("utf-8")
+                    else:
+                        return resp.content
+                elif "json" in content_type:
+                    # JSONで返ってきた場合
+                    data = resp.json()
+                    if "image_base64" in data:
+                        img_b64 = data["image_base64"]
+                        if as_base64:
+                            return img_b64
+                        else:
+                            return base64.b64decode(img_b64)
+        except Exception as e:
+            print(f"[JetRacerClient] Camera API error: {e}")
+
+        # 方法3: セグメンテーションAPIのoverlay（フォールバック）
+        try:
+            resp = self._client.get(
+                f"{self.base_url}/distance-grid/{camera_id}/analyze-segmentation-lightweight",
+                params={"undistort": True, "show_grid": False}
+            )
+            if resp.status_code == 200:
+                data = resp.json()
+                if "overlay_base64" in data:
+                    img_b64 = data["overlay_base64"]
+                    if as_base64:
+                        return img_b64
+                    else:
+                        return base64.b64decode(img_b64)
+        except Exception as e:
+            print(f"[JetRacerClient] Segmentation API error: {e}")
+
+        print(f"[JetRacerClient] Failed to get camera image (camera_id={camera_id})")
+        return None
+
     @property
     def last_state(self) -> Optional[JetRacerState]:
         """最後に取得した状態"""

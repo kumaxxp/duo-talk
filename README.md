@@ -10,7 +10,7 @@ conda activate duo-talk
 pip install -r requirements.txt
 
 # サーバー起動
-python server/api_server.py
+python server/api_unified.py
 
 # ブラウザで開く
 open http://localhost:5000
@@ -21,14 +21,47 @@ open http://localhost:5000
 ```
 JetRacer (192.168.1.65:8000)
     ↓ センサー + カメラ
-duo-talk Server (Flask)
-    ↓ DuoSignals + NoveltyGuard
-LLM (Ollama/vLLM)
+duo-talk Server (FastAPI)
+    ↓ UnifiedPipeline
+LLM (vLLM/Ollama)
     ↓ 対話生成
 GUI (React) / TTS
 ```
 
-## v2.1 新機能
+## v3.0 アーキテクチャ統一（NEW）
+
+v3.0ではConsole/RUNS/LIVEの3実行パスを`UnifiedPipeline`に統一しました。
+
+```
+Entry Points
+├── scripts/run_commentary.py     → UnifiedPipeline.run()
+├── scripts/run_jetracer_live.py  → UnifiedPipeline.run_continuous()
+└── server/api_unified.py         → UnifiedPipeline.run()
+         ↓
+UnifiedPipeline v3.0
+├── run()           - バッチ実行
+├── run_continuous() - 連続実行（LIVE用）
+└── 内部でDirector/NoveltyGuard統合
+         ↓
+Character.speak_unified()  ← 唯一の推奨メソッド
+```
+
+### コマンドライン実行
+
+```bash
+# 一般会話モード
+python scripts/run_commentary.py "今日の天気について" --turns 4
+
+# JetRacerモード
+python scripts/run_commentary.py "コーナーに進入中" --turns 4 --jetracer
+
+# JetRacer LIVE実況
+python scripts/run_jetracer_live.py --interval 3 --turns 4
+```
+
+詳細: [docs/design/architecture_unified_v3.md](docs/design/architecture_unified_v3.md)
+
+## v2.1 機能
 
 - **DuoSignals**: スレッドセーフな状態共有
 - **NoveltyGuard**: 話題ループ検知・戦略ローテーション
@@ -42,14 +75,14 @@ GUI (React) / TTS
 # ユニットテスト
 pytest tests/ -v
 
+# アーキテクチャ統一テスト
+pytest tests/test_architecture_unification.py -v
+
 # ライブ対話テスト（JetRacer接続時）
-python scripts/test_live_v2.py --turns 10
+python scripts/run_jetracer_live.py --frames 5
 
-# センサーシミュレーション
-python scripts/test_sensor_simulation.py
-
-# ループ検知テスト
-python scripts/test_loop_detection.py --turns 15
+# コンソール対話テスト
+python scripts/run_commentary.py "テスト話題" --turns 4
 ```
 
 ## キャラクター設定
@@ -64,16 +97,18 @@ python scripts/test_loop_detection.py --turns 15
 - **口調**: 敬語、「姉様」呼び
 - **特性**: データ重視、分析的、正確性優先
 
-## v2.1 機能一覧
+## 主要コンポーネント
 
-| 機能 | 説明 |
-|------|------|
-| DuoSignals | スレッドセーフな状態共有、イベント履歴 |
-| PromptBuilder | 優先度ベースのプロンプト構築 |
-| NoveltyGuard | 話題ループ検知、戦略ローテーション |
-| SilenceController | 状況に応じた自然な沈黙 |
-| speak_v2 | 統合された発話生成メソッド |
-| LivePanel | リアルタイムGUI監視 |
+| コンポーネント | 説明 |
+|---------------|------|
+| **UnifiedPipeline** | 統一対話パイプライン（v3.0） |
+| **Character** | キャラクター発話生成 |
+| **Director** | 対話品質評価・ループ検知 |
+| **DuoSignals** | スレッドセーフな状態共有 |
+| **PromptBuilder** | 優先度ベースのプロンプト構築 |
+| **NoveltyGuard** | 話題ループ検知 |
+| **SilenceController** | 状況に応じた沈黙制御 |
+| **VisionPipeline** | 画像解析（VLM + Florence-2） |
 
 ## GUIサーバー
 
@@ -81,7 +116,7 @@ python scripts/test_loop_detection.py --turns 15
 
 ```bash
 conda activate duo-talk
-python server/api_server.py
+python server/api_unified.py
 # ブラウザで http://localhost:5000 を開く
 ```
 
@@ -89,72 +124,70 @@ python server/api_server.py
 
 | タブ | 機能 |
 |------|------|
+| Console | コンソール実行 |
 | Runs | 過去の実行ログ閲覧 |
-| Settings | 設定確認 |
 | Live | JetRacerリアルタイム実況 |
+| Settings | 設定確認 |
 
-### v2.1 API エンドポイント
+### 主要APIエンドポイント
 
 | エンドポイント | メソッド | 説明 |
 |---------------|---------|------|
+| `/api/unified/narrate` | POST | 対話生成（UnifiedPipeline） |
 | `/api/v2/signals` | GET | DuoSignals状態取得 |
 | `/api/v2/novelty/status` | GET | NoveltyGuard状態 |
-| `/api/v2/silence/check` | GET | 沈黙判定 |
-| `/api/v2/speak` | POST | speak_v2発話生成 |
 | `/api/v2/jetracer/connect` | POST | JetRacer接続 |
 | `/api/v2/jetracer/fetch` | GET | センサーデータ取得 |
-| `/api/v2/live/dialogue` | POST | ライブ対話生成 |
-
-### API呼び出し例
-
-```bash
-# JetRacer接続
-curl -X POST http://localhost:5000/api/v2/jetracer/connect \
-  -H "Content-Type: application/json" \
-  -d '{"url": "http://192.168.1.65:8000", "mode": "vision"}'
-
-# センサーデータ取得
-curl http://localhost:5000/api/v2/jetracer/fetch
-
-# 対話生成
-curl -X POST http://localhost:5000/api/v2/live/dialogue \
-  -H "Content-Type: application/json" \
-  -d '{"frame_description": "走行可能領域80%", "turns": 2}'
-
-# シグナル状態確認
-curl http://localhost:5000/api/v2/signals
-```
 
 ## ディレクトリ構成
 
 ```
 duo-talk/
-├── src/                    # コアモジュール
-│   ├── signals.py          # DuoSignals
-│   ├── injection.py        # PromptBuilder
-│   ├── novelty_guard.py    # NoveltyGuard
-│   ├── silence_controller.py
-│   ├── character.py        # キャラクター
-│   ├── vlm_analyzer.py     # VLM解析
-│   └── vision_to_signals.py
-├── server/                 # APIサーバー
-│   ├── api_server.py
-│   └── api_v2.py           # v2.1 API
-├── duo-gui/                # Reactフロントエンド
+├── src/                        # コアモジュール
+│   ├── unified_pipeline.py     # UnifiedPipeline（v3.0）
+│   ├── character.py            # キャラクター
+│   ├── director.py             # Director + NoveltyGuard
+│   ├── signals.py              # DuoSignals
+│   ├── injection.py            # PromptBuilder
+│   ├── novelty_guard.py        # NoveltyGuard
+│   ├── silence_controller.py   # SilenceController
+│   ├── input_source.py         # InputBundle/InputSource
+│   ├── input_collector.py      # InputCollector
+│   ├── vision_pipeline.py      # VisionPipeline
+│   ├── jetracer_client.py      # JetRacer HTTP API
+│   └── jetracer_provider.py    # モード別データ取得
+├── server/                     # APIサーバー
+│   ├── api_unified.py          # 統一API（推奨）
+│   ├── api_server.py           # 旧API
+│   └── api_v2.py               # v2.1 API
+├── scripts/                    # 実行スクリプト
+│   ├── run_commentary.py       # コンソール実行（v3.0）
+│   └── run_jetracer_live.py    # LIVE実況（v3.0）
+├── duo-gui/                    # Reactフロントエンド
 │   └── src/components/
-│       ├── LivePanel.tsx
-│       └── SignalsPanel.tsx
-├── persona/                # キャラクター設定
-│   ├── char_a/prompt.yaml
-│   ├── char_b/prompt.yaml
-│   └── world_rules.yaml
-├── scripts/                # テストスクリプト
-│   ├── test_live_v2.py
-│   ├── test_sensor_simulation.py
-│   └── test_loop_detection.py
-└── docs/                   # ドキュメント
-    └── v2_1_guide.md
+├── persona/                    # キャラクター設定
+│   ├── char_a/
+│   │   ├── prompt.yaml
+│   │   ├── prompt_general.yaml
+│   │   ├── prompt_jetracer.yaml
+│   │   └── deep_values.yaml
+│   ├── char_b/
+│   └── few_shots/patterns.yaml
+├── tests/                      # テスト
+│   └── test_architecture_unification.py
+└── docs/                       # ドキュメント
+    └── design/
+        └── architecture_unified_v3.md
 ```
+
+## バージョン履歴
+
+| バージョン | 日付 | 主な変更 |
+|-----------|------|----------|
+| v3.0 | 2026-01-07 | UnifiedPipeline統一、speak_unified() |
+| v2.2 | 2026-01-06 | VLM統合、モード別prompt.yaml |
+| v2.1 | 2026-01-04 | DuoSignals、NoveltyGuard、speak_v2() |
+| v1.0 | 2025-12 | 初期リリース |
 
 ## ライセンス
 
@@ -163,5 +196,6 @@ MIT License
 ## 謝辞
 
 - JetRacer by NVIDIA
-- Qwen 2.5 by Alibaba
+- Gemma 3 by Google
+- Florence-2 by Microsoft
 - LivePortrait for avatar animation
