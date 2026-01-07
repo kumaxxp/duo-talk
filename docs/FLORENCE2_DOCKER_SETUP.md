@@ -1,5 +1,27 @@
 # Florence-2 Docker Service セットアップガイド
 
+## クイックスタート（推奨）
+
+```bash
+# 一括起動（vLLM + Florence-2）
+./scripts/docker_services.sh start
+
+# 状態確認
+./scripts/docker_services.sh status
+
+# 一括停止
+./scripts/docker_services.sh stop
+```
+
+またはPythonから：
+
+```bash
+python -m src.docker_manager start
+python -m src.docker_manager status
+```
+
+---
+
 ## 概要
 
 Florence-2をDockerコンテナで実行し、duo-talkから利用するためのガイドです。
@@ -251,10 +273,58 @@ docker/
 └── docker-compose.yml      # vLLMのみ（既存）
 
 src/
-└── florence2_client.py     # Pythonクライアント
+├── florence2_client.py     # Florence-2 Pythonクライアント
+└── docker_manager.py       # Docker管理クラス
 
 scripts/
+├── docker_services.sh      # Docker一括管理シェルスクリプト
+├── start_duo_talk.py       # duo-talk起動スクリプト
 └── test_florence2_service.py  # テストスクリプト
+```
+
+## 管理スクリプト使用法
+
+### シェルスクリプト（推奨）
+
+```bash
+# 実行権限を付与（初回のみ）
+chmod +x scripts/docker_services.sh
+
+# コマンド一覧
+./scripts/docker_services.sh start    # 全サービス起動
+./scripts/docker_services.sh stop     # 全サービス停止
+./scripts/docker_services.sh restart  # 再起動
+./scripts/docker_services.sh status   # 状態確認
+./scripts/docker_services.sh health   # ヘルスチェック
+./scripts/docker_services.sh logs     # ログ表示
+./scripts/docker_services.sh clean    # コンテナ削除
+```
+
+### Pythonモジュール
+
+```bash
+python -m src.docker_manager start    # 全サービス起動
+python -m src.docker_manager stop     # 全サービス停止
+python -m src.docker_manager status   # 状態確認
+python -m src.docker_manager ensure   # 動いていなければ起動
+```
+
+### Pythonコードから
+
+```python
+from src.docker_manager import DockerServiceManager
+
+manager = DockerServiceManager()
+
+# 状態確認
+status = manager.status()
+print(status)
+
+# サービス起動（動いていなければ起動）
+manager.ensure_running()
+
+# 状態表示
+manager.print_status()
 ```
 
 ## 参考リンク
