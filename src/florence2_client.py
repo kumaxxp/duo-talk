@@ -124,17 +124,29 @@ class Florence2Client:
     
     def _encode_image(self, image: Union[str, bytes, Path]) -> str:
         """Encode image to base64"""
-        if isinstance(image, (str, Path)):
-            path = Path(image)
-            if path.exists():
-                with open(path, "rb") as f:
-                    return base64.b64encode(f.read()).decode("utf-8")
-            # Assume it's already base64
-            return str(image)
-        elif isinstance(image, bytes):
+        if isinstance(image, bytes):
             return base64.b64encode(image).decode("utf-8")
-        else:
-            raise ValueError(f"Unsupported image type: {type(image)}")
+        
+        if isinstance(image, Path):
+            with open(image, "rb") as f:
+                return base64.b64encode(f.read()).decode("utf-8")
+        
+        if isinstance(image, str):
+            # Check if it's a short string that could be a file path
+            # Base64 strings are typically much longer than file paths
+            if len(image) < 500:
+                path = Path(image)
+                if path.exists():
+                    with open(path, "rb") as f:
+                        return base64.b64encode(f.read()).decode("utf-8")
+            
+            # Assume it's already base64
+            # Remove data URL prefix if present
+            if image.startswith("data:"):
+                image = image.split(",", 1)[-1]
+            return image
+        
+        raise ValueError(f"Unsupported image type: {type(image)}")
     
     def infer(
         self, 
