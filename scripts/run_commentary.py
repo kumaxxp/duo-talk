@@ -1,248 +1,159 @@
 #!/usr/bin/env python3
 """
-Main script to generate commentary for frames.
+Commentary Script v3.0 - UnifiedPipeline統合版
+
+UnifiedPipeline.run() を使用したバッチ対話生成。
+
+v3.0 変更点:
+- UnifiedPipeline.run() を使用
+- Character.speak() の直接呼び出しを廃止
+- 重複コンポーネント（Director評価等）をUnifiedPipelineに委譲
+
+使用方法:
+    python scripts/run_commentary.py "テーマ1" "テーマ2" ...
+    python scripts/run_commentary.py --turns 8 "今日の天気について"
+    python scripts/run_commentary.py --jetracer "コーナーに進入中"
 """
 
 import sys
 import argparse
-import uuid
 from pathlib import Path
 
-# Add parent directory to path
+# プロジェクトルートをパスに追加
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
+from src.unified_pipeline import UnifiedPipeline, DialogueResult
+from src.input_source import InputBundle, InputSource, SourceType
 from src.config import config
-from src.character import Character
-from src.director import Director
-from src.validator import Validator
-from src.logger import get_logger
-from src.types import Frame, Turn
 
 
 def run_commentary(
-    frame_descriptions: list,
-    max_turns_per_frame: int = 2,
-    output_format: str = "text",
-):
+    topics: list,
+    max_turns: int = 8,
+    jetracer_mode: bool = False,
+) -> list:
     """
-    Run commentary generation for a sequence of frames.
+    複数のトピックに対して対話を生成
 
     Args:
-        frame_descriptions: List of frame descriptions
-        max_turns_per_frame: Max dialogue turns per frame
-        output_format: "text" or "json"
+        topics: トピック（フレーム説明）のリスト
+        max_turns: トピックあたりの最大ターン数
+        jetracer_mode: JetRacerモードを強制するか
+
+    Returns:
+        DialogueResultのリスト
     """
-    run_id = str(uuid.uuid4())[:8]
-    logger = get_logger()
+    # UnifiedPipeline初期化
+    pipeline = UnifiedPipeline(jetracer_mode=jetracer_mode)
 
-    # Initialize characters and director
-    char_a = Character("A")
-    char_b = Character("B")
-    director = Director()
+    results = []
 
-    # Log run start
-    logger.log_run_start(
-        run_id=run_id,
-        frame_count=len(frame_descriptions),
-        metadata={"max_turns_per_frame": max_turns_per_frame},
-    )
+    print(f"\n🎬 Starting commentary (UnifiedPipeline v3.0)")
+    print(f"📹 Topics: {len(topics)}")
+    print(f"🔄 Max turns per topic: {max_turns}")
+    print(f"🎮 Mode: {'JetRacer' if jetracer_mode else 'General Conversation'}\n")
 
-    print(f"\n🎬 Starting commentary run: {run_id}")
-    print(f"📹 Processing {len(frame_descriptions)} frames\n")
-
-    all_turns = []
-    global_turn_num = 0
-
-    # Process each frame
-    for frame_num, frame_desc in enumerate(frame_descriptions, start=1):
+    for i, topic in enumerate(topics, 1):
         print(f"\n{'='*60}")
-        print(f"Frame {frame_num}: {frame_desc[:50]}...")
+        topic_preview = topic[:50] + "..." if len(topic) > 50 else topic
+        print(f"Topic {i}/{len(topics)}: {topic_preview}")
         print(f"{'='*60}")
 
-        frame = Frame(frame_num=frame_num, description=frame_desc)
-        frame_turns = []
-        conversation = []  # (speaker, text) tuples for this frame
+        # 入力バンドル作成
+        bundle = InputBundle(sources=[
+            InputSource(source_type=SourceType.TEXT, content=topic)
+        ])
 
-        # Generate dialogue for this frame
-        for turn_in_frame in range(max_turns_per_frame):
-            global_turn_num += 1
+        # 対話生成
+        result = pipeline.run(
+            initial_input=bundle,
+            max_turns=max_turns,
+        )
 
-            # Determine who speaks (alternating: A, B, A, B, ...)
-            speaker = "A" if turn_in_frame % 2 == 0 else "B"
-            character = char_a if speaker == "A" else char_b
+        results.append(result)
 
-            print(f"\n[Turn {global_turn_num}] Waiting for {speaker}...")
+        # 結果表示
+        print(f"\n💬 Dialogue ({len(result.dialogue)} turns):")
+        for turn in result.dialogue:
+            text = turn.text[:60] + "..." if len(turn.text) > 60 else turn.text
+            status = ""
+            if turn.evaluation and turn.evaluation.status.name != "PASS":
+                status = f" [{turn.evaluation.status.name}]"
+            print(f"   [{turn.speaker_name}] {text}{status}")
 
-            # Get partner's last speech (if any)
-            partner_speech = None
-            if conversation:
-                partner_speech = conversation[-1][1]
+        if result.error:
+            print(f"\n⚠️ Error: {result.error}")
 
-            # Get director instruction
-            director_instruction = director.get_instruction_for_next_turn(
-                frame_description=frame_desc,
-                conversation_so_far=conversation,
-                turn_number=turn_in_frame + 1,
-            )
-
-            # Character generates response
-            try:
-                response = character.speak(
-                    frame_description=frame_desc,
-                    partner_speech=partner_speech,
-                    director_instruction=director_instruction or None,
-                )
-            except Exception as e:
-                print(f"❌ Error generating response: {e}")
-                logger.log_error(run_id, global_turn_num, str(e))
-                continue
-
-            print(f"✅ {speaker}: {response}")
-
-            # Director evaluates response
-            evaluation = director.evaluate_response(
-                frame_description=frame_desc,
-                speaker=speaker,
-                response=response,
-                partner_previous_speech=partner_speech,
-                speaker_domains=character.domains,
-                frame_num=frame_num,
-            )
-
-            print(f"   [Director] {evaluation.status}: {evaluation.reason}")
-
-            # If director says retry, try once more
-            if evaluation.status.value == "RETRY":
-                print(f"   [Director] Retrying...")
-                try:
-                    response = character.speak(
-                        frame_description=frame_desc,
-                        partner_speech=partner_speech,
-                        director_instruction="Try a different angle.",
-                    )
-                    print(f"✅ {speaker}: {response}")
-                    evaluation = director.evaluate_response(
-                        frame_description=frame_desc,
-                        speaker=speaker,
-                        response=response,
-                        partner_previous_speech=partner_speech,
-                        speaker_domains=character.domains,
-                        frame_num=frame_num,
-                    )
-                    print(f"   [Director] {evaluation.status}: {evaluation.reason}")
-                except Exception as e:
-                    print(f"❌ Retry failed: {e}")
-                    logger.log_error(run_id, global_turn_num, f"Retry failed: {str(e)}")
-
-            # Validate response
-            val_result = Validator.validate(response, speaker)
-            if not val_result.is_valid:
-                print(f"   ⚠️  Validation issues: {', '.join(val_result.issues)}")
-                for sugg in val_result.suggestions:
-                    print(f"      → {sugg}")
-
-            # Log turn
-            logger.log_turn(
-                run_id=run_id,
-                turn_num=global_turn_num,
-                frame_num=frame_num,
-                speaker=speaker,
-                text=response,
-                director_instruction=director_instruction,
-                rag_hints=[],  # Could be enhanced
-            )
-
-            logger.log_director_check(
-                run_id=run_id,
-                turn_num=global_turn_num,
-                speaker=speaker,
-                status=evaluation.status.value,
-                reason=evaluation.reason,
-                suggestion=evaluation.suggestion,
-            )
-
-            logger.log_validation(
-                run_id=run_id,
-                turn_num=global_turn_num,
-                speaker=speaker,
-                is_valid=val_result.is_valid,
-                issues=val_result.issues,
-            )
-
-            # Add to conversation history
-            turn_obj = Turn(
-                turn_num=global_turn_num,
-                frame_num=frame_num,
-                speaker=speaker,
-                text=response,
-                director_instruction=director_instruction,
-                evaluation=evaluation,
-            )
-            frame_turns.append(turn_obj)
-            all_turns.append(turn_obj)
-            conversation.append((speaker, response))
-
-            # Stop if director says we should modify (implying something's wrong)
-            if evaluation.status.value == "MODIFY" and evaluation.suggestion:
-                print(f"   [Director] Stopping this frame: {evaluation.suggestion}")
-                break
-
-        print(f"\nFrame {frame_num} completed with {len(frame_turns)} turns")
-
-    # Log run end
-    logger.log_run_end(run_id=run_id, total_turns=global_turn_num)
-
-    # Print summary
+    # サマリー
     print(f"\n{'='*60}")
-    print(f"✅ Commentary run completed: {run_id}")
-    print(f"📊 Total turns: {global_turn_num}")
-    print(f"📁 Logged to: {config.log_dir / 'commentary_runs.jsonl'}")
+    print(f"✅ Commentary completed")
+    print(f"📊 Topics processed: {len(results)}")
+    total_turns = sum(len(r.dialogue) for r in results)
+    print(f"📊 Total turns: {total_turns}")
+
+    # 成功/失敗カウント
+    success_count = sum(1 for r in results if r.status == "success")
+    error_count = sum(1 for r in results if r.status == "error")
+    if error_count > 0:
+        print(f"📊 Success: {success_count}, Errors: {error_count}")
+
     print(f"{'='*60}\n")
 
-    return {
-        "run_id": run_id,
-        "frame_count": len(frame_descriptions),
-        "total_turns": global_turn_num,
-        "turns": all_turns,
-    }
+    return results
 
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Generate AI commentary for tourism/drone footage"
+        description="Commentary Script v3.0 (UnifiedPipeline)",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+    # 基本実行
+    python scripts/run_commentary.py "今日の天気について話して"
+
+    # 複数トピック
+    python scripts/run_commentary.py "朝食の話" "昼食の話" "夕食の話"
+
+    # ターン数指定
+    python scripts/run_commentary.py --turns 4 "短い会話をして"
+
+    # JetRacerモード
+    python scripts/run_commentary.py --jetracer "コーナーに進入中"
+        """
     )
     parser.add_argument(
-        "frames",
+        "topics",
         nargs="+",
-        help="Frame descriptions (quote each if it contains spaces)",
+        help="Topics or frame descriptions",
     )
     parser.add_argument(
-        "--max-turns-per-frame",
+        "--turns", "-t",
         type=int,
-        default=2,
-        help="Maximum dialogue turns per frame (default: 2)",
+        default=8,
+        help="Max turns per topic (default: 8)",
     )
     parser.add_argument(
-        "--output-format",
-        default="text",
-        choices=["text", "json"],
-        help="Output format",
+        "--jetracer", "-j",
+        action="store_true",
+        help="Force JetRacer mode",
     )
 
     args = parser.parse_args()
 
-    # Validate config
+    # 設定検証
     if not config.validate():
         print("⚠️  Warning: Some persona files are missing. Using defaults.")
 
-    # Run commentary
-    result = run_commentary(
-        frame_descriptions=args.frames,
-        max_turns_per_frame=args.max_turns_per_frame,
-        output_format=args.output_format,
+    # 実行
+    results = run_commentary(
+        topics=args.topics,
+        max_turns=args.turns,
+        jetracer_mode=args.jetracer,
     )
 
-    return 0
+    # エラーがあれば終了コード1
+    has_error = any(r.status == "error" for r in results)
+    return 1 if has_error else 0
 
 
 if __name__ == "__main__":
