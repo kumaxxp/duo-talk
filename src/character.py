@@ -955,6 +955,65 @@ JetRacer自動運転車の走行を実況・解説する姉妹AIの一人です�
             parts.append(f"- {key}: {value}")
         return "\n".join(parts)
 
+    def _format_scene_facts(self, scene_facts: Dict[str, str]) -> str:
+        """
+        v2.2: DuoSignals.scene_factsをプロンプト用テキストにフォーマット
+        
+        Florence-2等からの視覚解析結果をキャラクターが理解しやすい形式に変換
+        
+        Args:
+            scene_facts: DuoSignals.scene_factsの辞書
+        
+        Returns:
+            フォーマットされたテキスト
+        """
+        if not scene_facts:
+            return ""
+        
+        lines = ["【視覚情報（Florence-2解析）】"]
+        
+        # キャプション（シーン説明）
+        if caption := scene_facts.get("caption"):
+            lines.append(f"シーン: {caption}")
+        
+        # 検出物体
+        if objects := scene_facts.get("objects"):
+            lines.append(f"検出物体: {objects}")
+        
+        # シーンタイプ
+        if scene_type := scene_facts.get("scene_type"):
+            type_map = {
+                "racing": "レーシング/走行",
+                "indoor": "室内",
+                "outdoor": "屋外",
+                "unknown": "不明"
+            }
+            lines.append(f"シーンタイプ: {type_map.get(scene_type, scene_type)}")
+        
+        # 走行関連情報（JetRacerモード用）
+        if self.jetracer_mode:
+            if road_pct := scene_facts.get("road_percentage"):
+                lines.append(f"走行可能領域: {road_pct}")
+            if upcoming := scene_facts.get("upcoming"):
+                upcoming_map = {
+                    "straight": "直線",
+                    "curve_left": "左カーブ",
+                    "curve_right": "右カーブ",
+                    "corner": "コーナー",
+                }
+                lines.append(f"前方: {upcoming_map.get(upcoming, upcoming)}")
+            if obstacle := scene_facts.get("obstacle"):
+                lines.append(f"障害物: {obstacle}")
+        
+        # その他の情報（上記以外）
+        shown_keys = {"caption", "objects", "scene_type", "road_percentage", 
+                      "upcoming", "obstacle", "object_count", "vision_time_ms"}
+        for key, value in scene_facts.items():
+            if key not in shown_keys and value:
+                lines.append(f"{key}: {value}")
+        
+        return "\n".join(lines)
+
     def _format_world_state_v2(self, state: Any) -> str:
         """v2.1: 走行状態をフォーマット（JetRacerモード用）"""
         return f"""【現在の走行状態】
@@ -1117,11 +1176,21 @@ JetRacer自動運転車の走行を実況・解説する姉妹AIの一人です�
             "scene"
         )
 
-        # 2.7 視覚情報
+        # 2.6.1 DuoSignals.scene_facts（Florence-2等からの視覚情報）
+        state = self.signals.snapshot()
+        if state.scene_facts:
+            scene_facts_text = self._format_scene_facts(state.scene_facts)
+            builder.add(
+                scene_facts_text,
+                Priority.SCENE_FACTS + 1,
+                "scene_facts"
+            )
+
+        # 2.7 視覚情報（引数で渡された追加情報）
         if vision_info:
             builder.add(
                 vision_info,
-                Priority.SCENE_FACTS + 1,
+                Priority.SCENE_FACTS + 2,
                 "vision"
             )
 

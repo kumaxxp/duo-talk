@@ -19,9 +19,11 @@ from src.character import Character
 from src.director import Director
 from src.types import DirectorEvaluation, DirectorStatus
 from src.logger import Logger
+from src.signals import DuoSignals
 
 if TYPE_CHECKING:
     from src.jetracer_client import JetRacerClient
+    from src.florence2_to_signals import Florence2ToSignals
 
 
 @dataclass
@@ -98,21 +100,107 @@ class UnifiedPipeline:
         jetracer_client: Optional['JetRacerClient'] = None,
         enable_fact_check: bool = True,
         jetracer_mode: Optional[bool] = None,
+        enable_florence2: bool = True,
     ):
         """
         Args:
             jetracer_client: JetRacerクライアント（Noneなら接続なし）
             enable_fact_check: Director の事実チェックを有効にするか
             jetracer_mode: JetRacerモード（None=自動判定、True=強制ON、False=強制OFF）
+            enable_florence2: Florence-2画像解析を有効にするか
         """
         self.input_collector = InputCollector(jetracer_client=jetracer_client)
         self._jetracer_mode_override = jetracer_mode
         self._jetracer_client = jetracer_client
+        self._enable_florence2 = enable_florence2
         # Characterは初回run()時にモード判定してから初期化
         self.char_a: Optional[Character] = None
         self.char_b: Optional[Character] = None
         self.director = Director(enable_fact_check=enable_fact_check)
         self.logger = Logger()
+        self.signals = DuoSignals()
+        
+        # Florence-2ブリッジ（遅延初期化）
+        self._florence2_bridge: Optional['Florence2ToSignals'] = None
+        self._florence2_initialized = False
+
+    @property
+    def florence2_bridge(self) -> Optional['Florence2ToSignals']:
+        """Florence-2ブリッジを取得（遅延初期化）"""
+        if not self._enable_florence2:
+            return None
+        
+        if not self._florence2_initialized:
+            try:
+                from src.florence2_to_signals import Florence2ToSignals
+                self._florence2_bridge = Florence2ToSignals(
+                    signals=self.signals,
+                    auto_inject=True,
+                )
+                # サービス確認
+                if self._florence2_bridge.is_service_ready():
+                    print("[UnifiedPipeline] Florence-2 service ready")
+                else:
+                    print("[UnifiedPipeline] Florence-2 service not available")
+                    self._florence2_bridge = None
+            except Exception as e:
+                print(f"[UnifiedPipeline] Florence-2 init failed: {e}")
+                self._florence2_bridge = None
+            self._florence2_initialized = True
+        
+        return self._florence2_bridge
+
+    def _analyze_image_with_florence2(
+        self,
+        image_data: bytes,
+    ) -> Optional[Dict[str, str]]:
+        """
+        Florence-2で画像を解析し、scene_factsを返す
+        
+        Args:
+            image_data: 画像バイト列
+        
+        Returns:
+            scene_facts辞書、失敗時はNone
+        """
+        bridge = self.florence2_bridge
+        if not bridge:
+            return None
+        
+        try:
+            result = bridge.process_image(image_data, inject=True)
+            if result.success:
+                caption_preview = result.caption[:50] if result.caption else "(no caption)"
+                print(f"    👁️ Florence-2: {caption_preview}... ({result.processing_time_ms:.0f}ms)")
+                return result.to_scene_facts()
+            else:
+                print(f"    ⚠️ Florence-2 error: {result.error}")
+                return None
+        except Exception as e:
+            print(f"    ⚠️ Florence-2 exception: {e}")
+            return None
+
+    def _run_florence2_analysis(self) -> None:
+        """
+        JetRacerから画像を取得してFlorence-2で解析
+        
+        結果はDuoSignals.scene_factsに自動注入される
+        """
+        if not self._jetracer_client:
+            return
+        
+        try:
+            # JetRacerから画像取得
+            image_data = self._jetracer_client.get_camera_image(camera_id=0)
+            if not image_data:
+                print("    ⚠️ JetRacer: No image available")
+                return
+            
+            # Florence-2で解析（結果はDuoSignalsに自動注入）
+            self._analyze_image_with_florence2(image_data)
+            
+        except Exception as e:
+            print(f"    ⚠️ Florence-2 analysis failed: {e}")
 
     def run(
         self,
@@ -169,6 +257,10 @@ class UnifiedPipeline:
                 status="error",
                 error=f"Input collection failed: {e}",
             )
+
+        # 3.5 Florence-2画像解析（JetRacerモード時）
+        if jetracer_mode and self._jetracer_client and self._enable_florence2:
+            self._run_florence2_analysis()
 
         # 4. イベント通知: 開始
         topic = initial_input.get_text() or "(画像から生成)"
