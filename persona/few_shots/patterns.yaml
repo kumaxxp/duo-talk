@@ -1,5 +1,8 @@
-# Few-shot パターン v2.1
+# Few-shot パターン v2.2
 # FewShotInjector が状況に応じて選択・注入
+#
+# v2.2変更点:
+# - depth_why, depth_expand パターン追加（NoveltyGuard新戦略対応）
 
 patterns:
   # === 走行イベント系 ===
@@ -91,6 +94,41 @@ patterns:
       あゆ: センサーの清掃で改善しました。今回も確認してみましょうか
       やな: そうだった！じゃあ一回止めて見てみよう
 
+  # === 話題深掘り系（v2.2追加） ===
+  - id: "depth_why"
+    trigger:
+      - loop_detected
+      - strategy_force_why
+      - topic_depth_1
+    description: "なぜ？を掘り下げる（JetRacer版）"
+    example: |
+      やな: でもさ、なんでそこで膨らむの？
+      あゆ: 進入角度が浅いのが原因です。データを見ると...
+      やな: へー、角度の問題だったんだ
+      あゆ: はい、5度深く入れば改善するはずです
+
+  - id: "depth_expand"
+    trigger:
+      - loop_detected
+      - strategy_force_expand
+      - topic_depth_2
+    description: "話題を広げる（JetRacer版）"
+    example: |
+      やな: これってさ、他のコーナーでも同じ？
+      あゆ: 良い着眼点ですね。実は第3コーナーでも似た傾向があります
+      やな: やっぱり！繋がってると思った
+      あゆ: 全体的なライン取りの見直しが効果的かもしれません
+
+  - id: "depth_personal"
+    trigger:
+      - topic_depth_3
+    description: "過去の経験に落とし込む（JetRacer版）"
+    example: |
+      やな: 前にもこういうことあったよね
+      あゆ: はい、先週の走行で似たパターンがありました
+      やな: あの時はどうやって直したっけ？
+      あゆ: ゲインを下げて安定性を優先しました
+
   # === 緊張系（SilenceController連携） ===
   - id: "pre_tension"
     trigger:
@@ -112,4 +150,3 @@ patterns:
       あゆ: お見事です、姉様
       やな: 今のめっちゃ良くなかった？
       あゆ: ライン取り、ほぼ理想通りでした
-
