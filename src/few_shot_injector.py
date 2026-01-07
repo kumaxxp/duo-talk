@@ -1,11 +1,17 @@
 """
-duo-talk v2.1 - FewShotInjector
+duo-talk v2.2 - FewShotInjector
 状況に応じたFew-shotパターンを選択・注入
 
 機能:
 - patterns.yaml からパターンを読み込み
 - NoveltyGuardの戦略と連携
 - SilenceControllerとの連携
+- JetRacer/一般会話モード対応
+
+v2.2変更点:
+- NoveltyGuard新戦略（FORCE_WHY, FORCE_EXPAND）対応
+- トピック深度に応じたパターン選択
+- 具体性不足時のパターン選択強化
 """
 
 import yaml
@@ -55,6 +61,27 @@ class FewShotInjector:
         "general": "persona/few_shots/patterns_general.yaml",
     }
 
+    # 戦略→パターンIDマッピング（モード共通）
+    STRATEGY_PATTERN_MAP = {
+        LoopBreakStrategy.FORCE_SPECIFIC_SLOT: "specific_slot_example",
+        LoopBreakStrategy.FORCE_CONFLICT_WITHIN: "conflict_within_example",
+        LoopBreakStrategy.FORCE_ACTION_NEXT: "action_next_example",
+        LoopBreakStrategy.FORCE_PAST_REFERENCE: "past_reference_example",
+        LoopBreakStrategy.FORCE_WHY: "depth_why",
+        LoopBreakStrategy.FORCE_EXPAND: "depth_expand",
+    }
+
+    # イベント→パターンIDマッピング
+    EVENT_PATTERN_MAP = {
+        "success": "success_credit",
+        "failure": "failure_support",
+        "collision": "failure_support",
+        "sensor_anomaly": "discovery_supplement",
+        "topic_depth_1": "depth_why",
+        "topic_depth_2": "depth_expand",
+        "topic_depth_3": "depth_personal",
+    }
+
     def __init__(
         self,
         patterns_path: Optional[str] = None,
@@ -83,18 +110,23 @@ class FewShotInjector:
             print(f"Warning: Few-shot patterns file not found: {self.patterns_path}")
             return
 
-        with open(self.patterns_path, 'r', encoding='utf-8') as f:
-            data = yaml.safe_load(f)
+        try:
+            with open(self.patterns_path, 'r', encoding='utf-8') as f:
+                data = yaml.safe_load(f)
 
-        for p in data.get("patterns", []):
-            self.patterns.append(FewShotPattern(
-                id=p.get("id", ""),
-                triggers=p.get("trigger", []),
-                description=p.get("description", ""),
-                example=p.get("example", ""),
-                note=p.get("note"),
-                mode=p.get("mode", self.mode)  # パターン個別のモード、なければインスタンスのモード
-            ))
+            for p in data.get("patterns", []):
+                self.patterns.append(FewShotPattern(
+                    id=p.get("id", ""),
+                    triggers=p.get("trigger", []),
+                    description=p.get("description", ""),
+                    example=p.get("example", ""),
+                    note=p.get("note"),
+                    mode=p.get("mode", self.mode)
+                ))
+            
+            print(f"[FewShotInjector] Loaded {len(self.patterns)} patterns for mode '{self.mode}'")
+        except Exception as e:
+            print(f"Warning: Failed to load patterns: {e}")
 
     def reload_patterns(self) -> None:
         """パターンを再読み込み（ホットリロード用）"""
@@ -112,15 +144,18 @@ class FewShotInjector:
             print(f"Warning: Unknown mode '{mode}', defaulting to 'jetracer'")
             mode = "jetracer"
 
-        self.mode = mode
-        self.patterns_path = config.project_root / self.MODE_PATTERNS_MAP[mode]
-        self.reload_patterns()
+        if self.mode != mode:
+            self.mode = mode
+            self.patterns_path = config.project_root / self.MODE_PATTERNS_MAP[mode]
+            self.reload_patterns()
 
     def select_pattern(
         self,
         signals_state: Any,
         loop_strategy: Optional[LoopBreakStrategy] = None,
-        event_type: Optional[str] = None
+        event_type: Optional[str] = None,
+        topic_depth: Optional[int] = None,
+        lacks_specificity: bool = False,
     ) -> Optional[str]:
         """
         現在の状況に最適なパターンを選択
@@ -129,23 +164,37 @@ class FewShotInjector:
             signals_state: DuoSignalsのスナップショット
             loop_strategy: NoveltyGuardが選択した戦略（ループ検知時）
             event_type: 発生したイベントタイプ（success, failure等）
+            topic_depth: トピック深度（NoveltyGuardから）
+            lacks_specificity: 具体性不足フラグ（NoveltyGuardから）
 
         Returns:
             選択されたパターンのexample文字列、または None
         """
-        # 1. NoveltyGuard戦略に対応するパターン
+        # 1. 具体性不足の場合は具体化パターンを優先
+        if lacks_specificity:
+            pattern = self._get_pattern_for_strategy(LoopBreakStrategy.FORCE_SPECIFIC_SLOT)
+            if pattern:
+                return pattern
+
+        # 2. NoveltyGuard戦略に対応するパターン
         if loop_strategy and loop_strategy != LoopBreakStrategy.NOOP:
             strategy_pattern = self._get_pattern_for_strategy(loop_strategy)
             if strategy_pattern:
                 return strategy_pattern
 
-        # 2. イベントタイプに対応するパターン
+        # 3. トピック深度に応じたパターン
+        if topic_depth is not None and topic_depth > 0:
+            depth_pattern = self._get_pattern_for_depth(topic_depth)
+            if depth_pattern:
+                return depth_pattern
+
+        # 4. イベントタイプに対応するパターン
         if event_type:
             event_pattern = self._get_pattern_for_event(event_type)
             if event_pattern:
                 return event_pattern
 
-        # 3. センサー状態からの自動選択
+        # 5. センサー状態からの自動選択
         auto_pattern = self._auto_select_from_state(signals_state)
         if auto_pattern:
             return auto_pattern
@@ -154,30 +203,29 @@ class FewShotInjector:
 
     def _get_pattern_for_strategy(self, strategy: LoopBreakStrategy) -> Optional[str]:
         """戦略に対応するパターンを取得"""
-        strategy_pattern_map = {
-            LoopBreakStrategy.FORCE_SPECIFIC_SLOT: "specific_slot_example",
-            LoopBreakStrategy.FORCE_CONFLICT_WITHIN: "conflict_within_example",
-            LoopBreakStrategy.FORCE_ACTION_NEXT: "action_next_example",
-            LoopBreakStrategy.FORCE_PAST_REFERENCE: "past_reference_example",
-        }
-
-        pattern_id = strategy_pattern_map.get(strategy)
+        pattern_id = self.STRATEGY_PATTERN_MAP.get(strategy)
         return self._get_pattern_by_id(pattern_id)
 
     def _get_pattern_for_event(self, event_type: str) -> Optional[str]:
         """イベントタイプに対応するパターンを取得"""
-        event_pattern_map = {
-            "success": "success_credit",
-            "failure": "failure_support",
-            "collision": "failure_support",
-            "sensor_anomaly": "discovery_supplement",
-        }
+        pattern_id = self.EVENT_PATTERN_MAP.get(event_type)
+        return self._get_pattern_by_id(pattern_id)
 
-        pattern_id = event_pattern_map.get(event_type)
+    def _get_pattern_for_depth(self, depth: int) -> Optional[str]:
+        """トピック深度に応じたパターンを取得"""
+        depth_pattern_map = {
+            1: "depth_why",
+            2: "depth_expand",
+            3: "depth_personal",
+        }
+        pattern_id = depth_pattern_map.get(min(depth, 3))
         return self._get_pattern_by_id(pattern_id)
 
     def _auto_select_from_state(self, state: Any) -> Optional[str]:
         """状態から自動的にパターンを選択"""
+        if state is None:
+            return None
+            
         # センサー異常検知
         if self._has_sensor_anomaly(state):
             return self._get_pattern_by_id("discovery_supplement")
@@ -193,8 +241,12 @@ class FewShotInjector:
         # 難コーナー接近（pre_tension）
         if hasattr(state, 'scene_facts') and state.scene_facts:
             upcoming = state.scene_facts.get("upcoming")
-            if upcoming in ["difficult_corner", "sharp_turn"]:
+            if upcoming in ["difficult_corner", "sharp_turn", "curve"]:
                 return self._get_pattern_by_id("pre_tension")
+
+        # トピック深度
+        if hasattr(state, 'topic_depth') and state.topic_depth > 0:
+            return self._get_pattern_for_depth(state.topic_depth)
 
         return None
 
@@ -206,6 +258,9 @@ class FewShotInjector:
         for p in self.patterns:
             if p.id == pattern_id:
                 return p.example
+        
+        # パターンが見つからない場合、フォールバック
+        # print(f"[FewShotInjector] Pattern '{pattern_id}' not found")
         return None
 
     def _has_sensor_anomaly(self, state: Any) -> bool:
@@ -243,6 +298,14 @@ class FewShotInjector:
                     "note": p.note
                 }
         return None
+
+    def get_stats(self) -> Dict[str, Any]:
+        """統計情報を取得"""
+        return {
+            "mode": self.mode,
+            "patterns_count": len(self.patterns),
+            "pattern_ids": self.get_all_pattern_ids(),
+        }
 
 
 # モード別シングルトンインスタンス
