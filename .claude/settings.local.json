@@ -108,7 +108,8 @@
       "Bash(python scripts/test_mode_switching.py:*)",
       "Bash(pip uninstall:*)",
       "Bash(docker ps:*)",
-      "Bash(/home/owner/miniconda3/envs/duo-talk/bin/python -m py_compile:*)"
+      "Bash(/home/owner/miniconda3/envs/duo-talk/bin/python -m py_compile:*)",
+      "Bash(./scripts/docker_services.sh:*)"
     ]
   }
 }

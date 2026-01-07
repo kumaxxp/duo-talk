@@ -176,8 +176,8 @@ def test_unified_pipeline():
         # JetRacerモード
         pipeline_jetracer = UnifiedPipeline(jetracer_mode=True)
         print(f"  ✅ UnifiedPipeline (JetRacer)")
-        print(f"    char_a: {pipeline_jetracer.char_a.char_name}")
-        print(f"    char_b: {pipeline_jetracer.char_b.char_name}")
+        # キャラクターは遅延初期化されるため、初期化時点ではNone
+        print(f"    mode_override: {pipeline_jetracer._jetracer_mode_override}")
     except Exception as e:
         print(f"  ❌ UnifiedPipeline (JetRacer): {e}")
         return False
