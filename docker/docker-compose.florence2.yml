@@ -1,0 +1,88 @@
+# Florence-2 + vLLM Docker Compose Configuration
+# duo-talk Vision + LLM Backend
+#
+# Usage:
+#   docker compose -f docker/docker-compose.florence2.yml up -d
+#
+# Services:
+#   - florence2: Image analysis API (port 5001)
+#   - vllm: LLM inference API (port 8000)
+
+services:
+  # ============================================================
+  # Florence-2 Vision Service
+  # ============================================================
+  florence2:
+    build:
+      context: ./florence2
+      dockerfile: Dockerfile
+    container_name: duo-talk-florence2
+    runtime: nvidia
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=0
+      - PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
+      # GPU memory fraction (25% for Florence-2)
+      - CUDA_MEMORY_FRACTION=0.25
+    volumes:
+      # HuggingFace cache for model weights
+      - ${HF_CACHE:-~/.cache/huggingface}:/root/.cache/huggingface
+    ports:
+      - "${FLORENCE2_PORT:-5001}:5001"
+    ipc: host
+    shm_size: '4gb'
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5001/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 180s
+
+  # ============================================================
+  # vLLM Service (with reduced memory for coexistence)
+  # ============================================================
+  vllm:
+    image: vllm/vllm-openai:latest
+    container_name: duo-talk-vllm
+    runtime: nvidia
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=0
+      - HUGGING_FACE_HUB_TOKEN=${HF_TOKEN:-}
+    volumes:
+      - ${HF_CACHE:-~/.cache/huggingface}:/root/.cache/huggingface
+    ports:
+      - "${VLLM_PORT:-8000}:8000"
+    ipc: host
+    # Reduced GPU memory utilization for coexistence with Florence-2
+    # A5000 24GB: 55% = ~13.2GB for vLLM, leaving ~6GB for Florence-2
+    command: >
+      --model ${VLLM_MODEL:-RedHatAI/gemma-3-12b-it-quantized.w8a8}
+      --gpu-memory-utilization ${GPU_MEMORY_UTIL:-0.55}
+      --max-model-len ${MAX_MODEL_LEN:-8192}
+      --trust-remote-code
+      ${VLLM_EXTRA_ARGS:-}
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/v1/models"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 120s
+
+networks:
+  default:
+    name: duo-talk-network
