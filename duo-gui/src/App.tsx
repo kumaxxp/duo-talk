@@ -9,6 +9,7 @@ import LivePanel from './components/LivePanel'
 import OwnerControlPanel from './components/OwnerControlPanel'
 import ProviderPanel from './components/ProviderPanel'
 import UnifiedRunPanel from './components/UnifiedRunPanel'
+import ChatInputPanel from './components/ChatInputPanel'
 import { covRate } from './hooks/useCov'
 import type { DirectorEvent, RAGEvent, SpeakEvent } from './lib/types'
 import PromptModal from './components/PromptModal'
@@ -279,6 +280,10 @@ export default function App(){
             <div className="p-4 bg-white rounded-lg shadow">
               <h2 className="font-medium mb-2">New Run</h2>
               <ControlPanel apiBase={API} onStarted={(r)=> { if(r){ autoPicked.current = true; setRid(r) } }} />
+            </div>
+            {/* Chat Input Panel */}
+            <div className="p-4 bg-white rounded-lg shadow">
+              <ChatInputPanel apiBase={API} onSendComplete={() => { console.log('Chat sent') }} />
             </div>
             {/* Owner Intervention Control */}
             <OwnerControlPanel
