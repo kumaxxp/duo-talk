@@ -5,10 +5,8 @@ import TurnCard from './components/TurnCard'
 import RagPanel from './components/RagPanel'
 import CovSpark from './components/CovSpark'
 import SettingsPanel from './components/SettingsPanel'
-import LivePanel from './components/LivePanel'
 import OwnerControlPanel from './components/OwnerControlPanel'
 import ProviderPanel from './components/ProviderPanel'
-import UnifiedRunPanel from './components/UnifiedRunPanel'
 import ChatInputPanel from './components/ChatInputPanel'
 import { covRate } from './hooks/useCov'
 import type { DirectorEvent, RAGEvent, SpeakEvent } from './lib/types'
@@ -16,7 +14,7 @@ import PromptModal from './components/PromptModal'
 
 const API = (import.meta as any).env?.VITE_API_BASE || ''
 
-type TabType = 'unified' | 'runs' | 'settings' | 'live' | 'provider'
+type TabType = 'runs' | 'settings' | 'provider'
 
 export default function App(){
   const [activeTab, setActiveTab] = useState<TabType>('runs')
@@ -211,14 +209,6 @@ export default function App(){
           {/* Tab Navigation */}
           <nav className="flex gap-1 bg-slate-100 p-1 rounded-lg">
             <button
-              onClick={() => setActiveTab('unified')}
-              className={`px-4 py-1.5 rounded-md text-sm font-medium transition-colors ${
-                activeTab === 'unified' ? 'bg-white shadow text-blue-600' : 'text-slate-600 hover:text-slate-900'
-              }`}
-            >
-              Unified
-            </button>
-            <button
               onClick={() => setActiveTab('runs')}
               className={`px-4 py-1.5 rounded-md text-sm font-medium transition-colors ${
                 activeTab === 'runs' ? 'bg-white shadow text-slate-900' : 'text-slate-600 hover:text-slate-900'
@@ -233,14 +223,6 @@ export default function App(){
               }`}
             >
               Vision Settings
-            </button>
-            <button
-              onClick={() => setActiveTab('live')}
-              className={`px-4 py-1.5 rounded-md text-sm font-medium transition-colors ${
-                activeTab === 'live' ? 'bg-white shadow text-slate-900' : 'text-slate-600 hover:text-slate-900'
-              }`}
-            >
-              Live
             </button>
             <button
               onClick={() => setActiveTab('provider')}
@@ -263,15 +245,6 @@ export default function App(){
           </div>
         )}
       </header>
-
-      {/* Unified Tab Content */}
-      {activeTab === 'unified' && (
-        <UnifiedRunPanel
-          onRunComplete={(result) => {
-            console.log('Run completed:', result.run_id, result.status)
-          }}
-        />
-      )}
 
       {/* Runs Tab Content */}
       {activeTab === 'runs' && (
@@ -338,26 +311,6 @@ export default function App(){
       {activeTab === 'settings' && (
         <div className="p-4 bg-white rounded-lg shadow">
           <SettingsPanel apiBase={API} />
-        </div>
-      )}
-
-      {/* Live Tab Content */}
-      {activeTab === 'live' && (
-        <div className="grid grid-cols-1 lg:grid-cols-4 gap-4">
-          <div className="lg:col-span-3 p-4 bg-white rounded-lg shadow">
-            <h2 className="text-lg font-medium mb-4">Live Commentary - JetRacer</h2>
-            <LivePanel
-              jetracer_url="http://192.168.1.65:8000"
-              externalPaused={interventionPaused}
-            />
-          </div>
-          <div className="lg:col-span-1">
-            <OwnerControlPanel
-              apiBase={API}
-              runId={rid}
-              onPauseChange={setInterventionPaused}
-            />
-          </div>
         </div>
       )}
 
