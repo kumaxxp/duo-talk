@@ -116,7 +116,8 @@
       "Bash(docker rm:*)",
       "Bash(timeout 60 docker logs:*)",
       "Bash(docker exec:*)",
-      "Bash(./start_gui.sh:*)"
+      "Bash(./start_gui.sh:*)",
+      "Bash(wc:*)"
     ]
   }
 }
