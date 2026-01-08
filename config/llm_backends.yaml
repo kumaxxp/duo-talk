@@ -34,13 +34,27 @@ backends:
       ipc_host: true
       cache_mount: "~/.cache/huggingface:/root/.cache/huggingface"
     models:
+      gemma3-27b-int4:
+        name: "RedHatAI/gemma-3-27b-it-quantized.w4a16"
+        supports_vlm: true
+        quantization: "w4a16"
+        vram_estimate_gb: 22
+        context_length: 4096
+        description: "推奨構成（27B INT4量子化）"
+        docker_args:
+          - "--trust-remote-code"
+          - "--max-model-len"
+          - "4096"
+          - "--dtype"
+          - "bfloat16"
+          - "--enforce-eager"
       gemma3-12b-int8:
         name: "RedHatAI/gemma-3-12b-it-quantized.w8a8"
         supports_vlm: true
         quantization: "w8a8"
         vram_estimate_gb: 14
         context_length: 8192
-        description: "推奨構成（INT8量子化）"
+        description: "軽量構成（INT8量子化）"
         docker_args:
           - "--trust-remote-code"
           - "--max-model-len"
@@ -70,7 +84,7 @@ backends:
 # デフォルト設定
 defaults:
   backend: "vllm"
-  model: "gemma3-12b-int8"
+  model: "gemma3-27b-int4"
   fallback_backend: "ollama"
   fallback_model: "gemma3-12b"
 

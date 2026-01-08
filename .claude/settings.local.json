@@ -109,7 +109,14 @@
       "Bash(pip uninstall:*)",
       "Bash(docker ps:*)",
       "Bash(/home/owner/miniconda3/envs/duo-talk/bin/python -m py_compile:*)",
-      "Bash(./scripts/docker_services.sh:*)"
+      "Bash(./scripts/docker_services.sh:*)",
+      "Bash(docker inspect:*)",
+      "Bash(docker compose:*)",
+      "Bash(./start-vllm.sh:*)",
+      "Bash(docker rm:*)",
+      "Bash(timeout 60 docker logs:*)",
+      "Bash(docker exec:*)",
+      "Bash(./start_gui.sh:*)"
     ]
   }
 }

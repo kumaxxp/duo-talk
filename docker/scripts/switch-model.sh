@@ -8,6 +8,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # Model presets
 declare -A MODELS=(
+    ["gemma3-27b-int4"]="RedHatAI/gemma-3-27b-it-quantized.w4a16"
     ["gemma3-12b-int8"]="RedHatAI/gemma-3-12b-it-quantized.w8a8"
     ["gemma3-12b-gptq"]="ISTA-DASLab/gemma-3-12b-it-GPTQ-4b-128g"
     ["qwen25-14b-awq"]="Qwen/Qwen2.5-14B-Instruct-AWQ"
