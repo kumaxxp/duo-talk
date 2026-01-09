@@ -117,7 +117,9 @@
       "Bash(timeout 60 docker logs:*)",
       "Bash(docker exec:*)",
       "Bash(./start_gui.sh:*)",
-      "Bash(wc:*)"
+      "Bash(wc:*)",
+      "Bash(timeout 45 python:*)",
+      "Bash(tee:*)"
     ]
   }
 }
