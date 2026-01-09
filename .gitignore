@@ -26,3 +26,4 @@ duo-gui/*.log
 duo-gui/.env*
 runs/uploads/
 memories/
+server.log

@@ -10,7 +10,7 @@ class TestApiConcurrency(unittest.TestCase):
     def setUp(self):
         # Check if server is reachable
         try:
-            requests.get(f"{self.BASE_URL}/health", timeout=1)
+            requests.get(f"{self.BASE_URL}/api/unified/health", timeout=1)
         except requests.exceptions.ConnectionError:
             print("Skipping tests: Server not running at localhost:5000")
             self.skipTest("Server not running")

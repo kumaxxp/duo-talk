@@ -64,7 +64,7 @@ def _get_pipeline(jetracer_url: Optional[str] = None) -> UnifiedPipeline:
 
             _pipeline = UnifiedPipeline(
                 jetracer_client=jetracer_client,
-                enable_fact_check=False,  # Disabled to avoid timeout from DuckDuckGo search
+                enable_fact_check=True,
             )
             print("[unified_api] UnifiedPipeline initialized")
 

@@ -4783,3 +4783,9 @@
 {"event": "narration_complete", "run_id": "run_20260109_013345", "topic": "【シーン】おは\n【状況】姉妹は同じ家で、リビングで一緒に話している\n【前提】やなとあゆは姉妹で同居。一緒に過ごす前提で会話する。\n【重要】同じ話題（おせち、お年玉等）を3回以上繰り返さない。新しい視点や話題を追加する。", "status": "success", "total_turns": 8, "timestamp": "2026-01-09T01:37:58.470640"}
 {"event": "narration", "log_id": "b05a0535_20260109_013758", "scene_description": "おは", "image_path": null, "vision_status": "skipped", "vision_main_subjects": "", "dialogue_turns": 8, "director_status": "PASS", "director_reason": "NoveltyGuard: 話題「日照時間」がループ中", "timestamp": "2026-01-09T01:37:58.550123"}
 {"event": "narration_complete", "run_id": "run_20260109_013345", "topic": "おは", "status": "success", "timestamp": "2026-01-09T01:37:58.632578"}
+{"event": "narration_start", "run_id": "run_20260109_211311", "topic": "Concurrency Test Primary", "maxTurns": 2, "timestamp": "2026-01-09T21:13:12.021835"}
+{"event": "narration_start", "run_id": "run_20260109_211312", "topic": "Concurrency Test Secondary", "maxTurns": 1, "timestamp": "2026-01-09T21:13:12.814394"}
+{"event": "narration_start", "run_id": "run_20260109_211405", "topic": "Concurrency Test Primary", "maxTurns": 2, "timestamp": "2026-01-09T21:14:05.591736"}
+{"event": "narration_start", "run_id": "run_20260109_211406", "topic": "Concurrency Test Secondary", "maxTurns": 1, "timestamp": "2026-01-09T21:14:06.422506"}
+{"event": "narration_start", "run_id": "run_20260109_211453", "topic": "Concurrency Test Primary", "maxTurns": 2, "timestamp": "2026-01-09T21:14:53.595982"}
+{"event": "narration_start", "run_id": "run_20260109_211454", "topic": "Concurrency Test Secondary", "maxTurns": 1, "timestamp": "2026-01-09T21:14:54.425116"}
