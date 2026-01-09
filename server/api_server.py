@@ -41,8 +41,35 @@ app = Flask(__name__)
 CORS(app)  # Enable CORS for React frontend
 
 # Global state
+import threading
 pipeline = None
+pipeline_lock = threading.Lock()
+is_processing = False
+processing_lock = threading.Lock()
 current_run_id = None
+
+def get_pipeline():
+    """Get or create singleton pipeline instance"""
+    global pipeline
+    with pipeline_lock:
+        if pipeline is None:
+            pipeline = NarrationPipeline()
+        return pipeline
+
+def acquire_processing_lock():
+    """Try to acquire processing lock. Returns True if successful."""
+    global is_processing
+    with processing_lock:
+        if is_processing:
+            return False
+        is_processing = True
+        return True
+
+def release_processing_lock():
+    """Release processing lock."""
+    global is_processing
+    with processing_lock:
+        is_processing = False
 
 
 # ==================== RUN MANAGEMENT ====================
@@ -233,182 +260,15 @@ def stream_run_events():
 
 # ==================== NARRATION CONTROL ====================
 
+# LEGACY RUN ENDPOINTS REMOVED
+# Use /api/unified/run/start instead
 @app.route('/api/narration/start', methods=['POST'])
-def start_narration():
-    """
-    Start a new narration run.
-
-    Body (JSON):
-        - image_path: Path to image to analyze
-        - scene_description: Description of the scene
-
-    Returns:
-        JSON: {"run_id": "...", "status": "running"}
-    """
-    global current_run_id, pipeline
-
-    try:
-        data = request.get_json()
-        image_path = data.get('image_path')
-        scene_description = data.get('scene_description')
-
-        if not image_path:
-            return jsonify({"error": "image_path required"}), 400
-
-        # Generate run ID
-        from datetime import datetime
-        current_run_id = f"run_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
-
-        # Initialize pipeline if needed
-        if pipeline is None:
-            pipeline = NarrationPipeline()
-
-        # Process image in background (in production, use task queue)
-        logger.info(f"Starting narration run: {current_run_id}")
-        result = pipeline.process_image(image_path, scene_description)
-
-        return jsonify({
-            "run_id": current_run_id,
-            "status": "completed",
-            "result": result
-        })
-
-    except Exception as e:
-        logger.error(f"Error starting narration: {e}")
-        return jsonify({"error": str(e)}), 500
-
+def start_narration_gone():
+    return jsonify({"error": "Endpoint removed. Use /api/unified/run/start"}), 410
 
 @app.route('/api/run/start', methods=['POST'])
-def run_start():
-    """
-    Start a new narration run with optional image analysis.
-
-    Body (JSON):
-        - topic: Narration topic/scene description (optional if imagePath provided)
-        - imagePath: Path to uploaded image for vision analysis (optional)
-        - model: LLM model to use (e.g., "gemma3:12b")
-        - maxTurns: Maximum number of turns (default: 8)
-        - seed: Random seed for reproducibility
-        - noRag: Boolean, whether to disable RAG (default: false)
-
-    Returns:
-        JSON: {"run_id": "...", "topic": "...", "hasImage": bool}
-    """
-    from datetime import datetime
-    import json as json_module
-    import threading
-
-    try:
-        data = request.get_json()
-        topic = data.get('topic', '')
-        image_path = data.get('imagePath')
-        model = data.get('model', 'qwen2.5:7b-instruct-q4_K_M')
-        max_turns = data.get('maxTurns', 8)
-        seed = data.get('seed')
-        no_rag = data.get('noRag', False)
-
-        # Either topic or image is required
-        if not topic and not image_path:
-            return jsonify({"error": "topic or imagePath required"}), 400
-
-        # Generate run ID
-        run_id = f"run_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
-
-        # Create run metadata event
-        run_event = {
-            "event": "narration_start",
-            "run_id": run_id,
-            "topic": topic or "(画像から生成)",
-            "imagePath": image_path,
-            "model": model,
-            "maxTurns": max_turns,
-            "seed": seed,
-            "noRag": no_rag,
-            "timestamp": datetime.now().isoformat()
-        }
-
-        # Write run start event to log
-        runs_file = config.log_dir / "commentary_runs.jsonl"
-        with open(runs_file, 'a', encoding='utf-8') as f:
-            f.write(json_module.dumps(run_event, ensure_ascii=False) + '\n')
-
-        has_image = bool(image_path)
-        logger.info(f"Run started: {run_id} - Topic: {topic or '(from image)'} - Image: {has_image}")
-
-        # Reset intervention state to ensure clean start
-        intervention_manager = get_intervention_manager()
-        if intervention_manager.get_state() != InterventionState.RUNNING:
-            logger.info(f"Resetting intervention state from {intervention_manager.get_state().value} to RUNNING")
-            intervention_manager.state = InterventionState.RUNNING
-            intervention_manager.current_session = None
-
-        # Start narration pipeline in background thread
-        def run_pipeline():
-            try:
-                logger.info(f"Starting pipeline for {run_id}")
-
-                # Initialize pipeline
-                pipeline = NarrationPipeline()
-
-                # Determine if we should use vision analysis
-                skip_vision = not has_image
-
-                if has_image:
-                    logger.info(f"Processing with image: {image_path}")
-                    # Process with image - vision analysis will extract scene description
-                    result = pipeline.process_image(
-                        image_path=image_path,
-                        scene_description=topic if topic else None,
-                        max_iterations=max_turns,
-                        run_id=run_id,
-                        skip_vision=False,
-                    )
-                else:
-                    logger.info(f"Processing with topic only: {topic}")
-                    # Process with topic only (no vision analysis)
-                    result = pipeline.process_image(
-                        image_path=None,
-                        scene_description=topic,
-                        max_iterations=max_turns,
-                        run_id=run_id,
-                        skip_vision=True,
-                    )
-
-                # Log completion
-                if result.get('status') == 'success':
-                    completion_event = {
-                        "event": "narration_complete",
-                        "run_id": run_id,
-                        "topic": topic or "(画像から生成)",
-                        "status": "success",
-                        "timestamp": datetime.now().isoformat()
-                    }
-                    with open(runs_file, 'a', encoding='utf-8') as f:
-                        f.write(json_module.dumps(completion_event, ensure_ascii=False) + '\n')
-                    logger.info(f"Pipeline completed for {run_id}")
-                else:
-                    logger.warning(f"Pipeline did not succeed for {run_id}: {result.get('status')}")
-
-            except Exception as e:
-                logger.error(f"Error in pipeline for {run_id}: {e}")
-                import traceback
-                traceback.print_exc()
-
-        # Start pipeline in background thread
-        thread = threading.Thread(target=run_pipeline, daemon=True)
-        thread.start()
-
-        # Return success immediately
-        return jsonify({
-            "run_id": run_id,
-            "topic": topic or "(画像から生成)",
-            "hasImage": has_image,
-            "status": "queued"
-        })
-
-    except Exception as e:
-        logger.error(f"Error in /api/run/start: {e}")
-        return jsonify({"error": str(e)}), 500
+def run_start_gone():
+    return jsonify({"error": "Endpoint removed. Use /api/unified/run/start"}), 410
 
 
 @app.route('/api/run/style', methods=['GET'])
