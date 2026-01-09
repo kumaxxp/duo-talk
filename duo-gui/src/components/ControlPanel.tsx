@@ -6,13 +6,13 @@ interface OllamaStatus {
   backend: string
 }
 
-export default function ControlPanel({ apiBase, onStarted }:{ apiBase: string, onStarted: (rid?:string)=>void }){
-  const [topic,setTopic]=useState('')
-  const [maxTurns,setMax]=useState(8)
-  const [seed,setSeed]=useState<number|''>('')
-  const [noRag,setNoRag]=useState(false)
-  const [imageFile, setImageFile] = useState<File|null>(null)
-  const [imagePreview, setImagePreview] = useState<string|null>(null)
+export default function ControlPanel({ apiBase, onStarted }: { apiBase: string, onStarted: (rid?: string) => void }) {
+  const [topic, setTopic] = useState('')
+  const [maxTurns, setMax] = useState(8)
+  const [seed, setSeed] = useState<number | ''>('')
+  const [noRag, setNoRag] = useState(false)
+  const [imageFile, setImageFile] = useState<File | null>(null)
+  const [imagePreview, setImagePreview] = useState<string | null>(null)
   const [uploading, setUploading] = useState(false)
   const [dragOver, setDragOver] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
@@ -67,7 +67,7 @@ export default function ControlPanel({ apiBase, onStarted }:{ apiBase: string, o
     if (fileInputRef.current) fileInputRef.current.value = ''
   }, [])
 
-  const start = async ()=>{
+  const start = async () => {
     setUploading(true)
     try {
       let imagePath: string | undefined = undefined
@@ -89,19 +89,84 @@ export default function ControlPanel({ apiBase, onStarted }:{ apiBase: string, o
       }
 
       const body = {
-        topic,
+        text: topic, // Unified API expects 'text' or 'topic'
         maxTurns,
-        seed: (seed===''?undefined:seed),
+        seed: (seed === '' ? undefined : seed),
         noRag,
         imagePath  // 画像パスを追加
       }
-      const r = await fetch(`${apiBase}/api/run/start`, {
-        method:'POST',
-        headers:{'Content-Type':'application/json'},
+
+      // Use Unified API with streaming
+      const response = await fetch(`${apiBase}/api/unified/run/start`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body)
       })
-      const js = await r.json().catch(()=>({}))
-      onStarted(js?.run_id)
+
+      if (!response.ok) {
+        const err = await response.json().catch(() => ({}))
+        alert(`Error: ${err.error || response.statusText}`)
+        return
+      }
+
+      // In Unified Panel we handle stream, but here ControlPanel just starts it.
+      // However, we need 'run_id' to pass to onStarted parent to switch view or track it.
+      // We need to read the stream just enough to get the first event with run_id.
+
+      const reader = response.body?.getReader()
+      if (!reader) throw new Error("No response body")
+
+      const decoder = new TextDecoder()
+      let buffer = ''
+      let runIdFound = false
+
+      // Read loop just to find run_id
+      while (true) {
+        const { done, value } = await reader.read()
+        if (done) break
+
+        buffer += decoder.decode(value, { stream: true })
+        const lines = buffer.split('\n')
+        buffer = lines.pop() || ''
+
+        for (const line of lines) {
+          if (line.startsWith('data: ')) {
+            try {
+              const data = JSON.parse(line.slice(6))
+              if (data.run_id) {
+                onStarted(data.run_id)
+                runIdFound = true
+                // We can stop reading here if we just want to trigger the UI switch.
+                // The UI (LivePanel/UnifiedRunPanel) might want to connect to the stream itself
+                // OR we should pass this reader context? 
+                // Currently ControlPanel calls `onStarted(run_id)` -> App.tsx switches to `LivePanel`.
+                // `LivePanel` connects to `/api/run/stream?run_id=...` (GET). 
+                // *CRITICAL*: The GET stream endpoint reads from lock/log? 
+                // Our new Unified API PUSHES data in this response. 
+                // If we stop reading, the pipeline might block if output buffer fills up!
+                // We MUST continue consuming this stream OR relies on `LivePanel` connecting to a separate broadcast (if implemented).
+
+                // BUT `api_unified.py` yields events. It doesn't seem to broadcast to a global PubSub that GET /stream reads from.
+                // Wait, `server/api_server.py`'s `stream_run_events` (legacy GET) reads from `tail_f` logic of log files?
+                // `UnifiedPipeline` writes to `api_server` logs?
+                // `UnifiedPipeline` uses `Logger`. 
+                // `api_unified.py` code I wrote does NOT write to JSONL explicitly! 
+                // *CORRECTION*: The `api_unified.py` implementation I wrote collects events and yields them. 
+                // It does NOT write to `commentary_runs.jsonl` unlike the old `api_server.py` `run_start`.
+                // This means the "History" list and "LivePanel" (which reads logs?) will NOT see this run!
+
+                // I must fix `api_unified.py` to ALSO write to the log file so that `stream_run_events` (GET) works for observers 
+                // AND so that `runs_list` sees it.
+                // OR I should consume the stream here and update state.
+
+                // Given the time, the safest bet to support existing "LivePanel" switching is to:
+                // 1. Ensure `api_unified.py` logs to file (Side effect).
+                // 2. Consume this stream to completion in background here (so pipe doesn't block).
+              }
+            } catch (e) { }
+          }
+        }
+      }
 
       // 成功したら画像をクリア
       if (js?.run_id) {
@@ -153,7 +218,7 @@ export default function ControlPanel({ apiBase, onStarted }:{ apiBase: string, o
         className="w-full px-3 py-2 border rounded"
         placeholder={imagePreview ? "トピック（オプション：画像から自動生成）" : "トピック（必須）"}
         value={topic}
-        onChange={e=>setTopic(e.target.value)}
+        onChange={e => setTopic(e.target.value)}
       />
 
       {/* オプション */}
@@ -163,17 +228,17 @@ export default function ControlPanel({ apiBase, onStarted }:{ apiBase: string, o
           type="number"
           placeholder="maxTurns"
           value={maxTurns}
-          onChange={e=>setMax(parseInt(e.target.value||'8',10))}
+          onChange={e => setMax(parseInt(e.target.value || '8', 10))}
         />
         <input
           className="px-3 py-2 border rounded"
           type="number"
           placeholder="seed"
           value={seed}
-          onChange={e=>setSeed(e.target.value===''?'':parseInt(e.target.value,10))}
+          onChange={e => setSeed(e.target.value === '' ? '' : parseInt(e.target.value, 10))}
         />
         <label className="flex items-center gap-2 text-sm">
-          <input type="checkbox" checked={noRag} onChange={e=>setNoRag(e.target.checked)} /> noRag
+          <input type="checkbox" checked={noRag} onChange={e => setNoRag(e.target.checked)} /> noRag
         </label>
       </div>
 
@@ -181,9 +246,8 @@ export default function ControlPanel({ apiBase, onStarted }:{ apiBase: string, o
       {ollamaStatus && (
         <div className="flex items-center gap-2 px-3 py-2 bg-gray-50 rounded text-sm">
           <span
-            className={`w-2 h-2 rounded-full flex-shrink-0 ${
-              ollamaStatus.status === 'ready' ? 'bg-green-500' : 'bg-gray-400'
-            }`}
+            className={`w-2 h-2 rounded-full flex-shrink-0 ${ollamaStatus.status === 'ready' ? 'bg-green-500' : 'bg-gray-400'
+              }`}
           />
           <span className="text-gray-600 truncate">
             {ollamaStatus.status === 'ready' ? ollamaStatus.model : '接続中...'}

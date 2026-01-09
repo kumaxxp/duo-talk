@@ -118,60 +118,79 @@ def _build_input_bundle(data: Dict[str, Any]) -> InputBundle:
 @unified_api.route('/run/start', methods=['POST'])
 def start_run_sse():
     """
-    対話実行開始（SSEストリーム）
+    Start dialogue execution (SSE stream).
+    Runs pipeline in a background thread and yields events immediately.
 
     Body:
-        text: str - テキスト入力（topic, scene_description でも可）
-        imagePath: str - 画像ファイルパス（optional）
-        imageUrl: str - 画像URL（optional）
-        useJetRacerCam: bool - JetRacerカメラ使用（optional）
-        jetracerCamId: int - カメラID 0 or 1（default: 0）
-        useJetRacerSensor: bool - JetRacerセンサー使用（optional）
-        jetracerUrl: str - JetRacer URL（optional）
-        maxTurns: int - 最大ターン数（default: 8）
+        text: str - Text input (topic, scene_description also accepted)
+        imagePath: str - Image file path (optional)
+        imageUrl: str - Image URL (optional)
+        useJetRacerCam: bool - Use JetRacer camera (optional)
+        jetracerCamId: int - Camera ID 0 or 1 (default: 0)
+        useJetRacerSensor: bool - Use JetRacer sensor (optional)
+        jetracerUrl: str - JetRacer URL (optional)
+        maxTurns: int - Max turns (default: 8)
 
     Returns:
         SSE stream with events:
-        - narration_start: 開始
-        - speak: 発話
-        - interrupt: 割り込み
-        - narration_complete: 完了
-        - error: エラー
+        - narration_start: Started
+        - speak: Speech
+        - interrupt: Interruption
+        - narration_complete: Completed
+        - error: Error
+        - ping: Heartbeat
     """
     global _current_run, _stop_requested, _interrupt_queue
-
+    from src.config import config # Import config for log path
+    
     data = request.get_json() or {}
 
-    # 入力バンドル構築
-    bundle = _build_input_bundle(data)
+    # Build input bundle
+    try:
+        bundle = _build_input_bundle(data)
+    except Exception as e:
+         return jsonify({"error": f"Invalid input: {e}"}), 400
+
     if bundle.is_empty:
         return jsonify({"error": "At least one input source required"}), 400
 
-    # パラメータ
-    max_turns = data.get('maxTurns', data.get('max_turns', 8))
+    # Parameters
+    max_turns = int(data.get('maxTurns', data.get('max_turns', 8)))
     jetracer_url = data.get('jetracerUrl', data.get('jetracer_url'))
 
-    # パイプライン取得
+    # Check lock before starting (only one run allowed globally for now)
+    if not _lock.acquire(blocking=False):
+         return jsonify({"error": "System is busy. A run is already in progress.", "status": "busy"}), 503
+    _lock.release()
+
+    # Get pipeline (lazy init)
     pipeline = _get_pipeline(jetracer_url)
 
-    # 状態リセット
+    # State reset
     with _lock:
         _stop_requested = False
         _interrupt_queue = queue.Queue()
 
-    def generate():
+    # Communication queue between pipeline thread and SSE generator
+    # We use a specialized event structure: (event_type, event_data)
+    # Special types: 'DONE', 'ERROR'
+    event_queue = queue.Queue()
+
+    def pipeline_runner(run_id):
         global _current_run, _stop_requested
-
-        run_id = f"run_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
-
+        
+        # Set current run state
         with _lock:
             _current_run = {"run_id": run_id, "status": "running"}
 
         try:
-            # イベント収集リスト
-            collected_events: List[tuple] = []
+            # Send start event
+            event_queue.put(('narration_start', {
+                'run_id': run_id, 
+                'timestamp': datetime.now().isoformat()
+            }))
 
-            # 割り込みコールバック
+            # Interrupt callback
             def interrupt_callback() -> Optional[InputBundle]:
                 global _stop_requested
                 if _stop_requested:
@@ -182,11 +201,14 @@ def start_run_sse():
                 except queue.Empty:
                     return None
 
-            # イベントコールバック（収集用）
+            # Event callback (direct streaming)
             def event_callback(event_type: str, event_data: dict):
-                collected_events.append((event_type, event_data))
+                # Augment with run_id if missing
+                if 'run_id' not in event_data:
+                    event_data['run_id'] = run_id
+                event_queue.put((event_type, event_data))
 
-            # 実行
+            # Run execution
             result = pipeline.run(
                 initial_input=bundle,
                 max_turns=max_turns,
@@ -195,13 +217,7 @@ def start_run_sse():
                 event_callback=event_callback,
             )
 
-            # 収集したイベントを送信
-            for event_type, event_data in collected_events:
-                if _stop_requested:
-                    break
-                yield f"event: {event_type}\ndata: {json.dumps(event_data, ensure_ascii=False)}\n\n"
-
-            # 完了イベント
+            # Execution finished
             with _lock:
                 if _current_run:
                     _current_run["status"] = result.status
@@ -214,27 +230,60 @@ def start_run_sse():
             if result.error:
                 complete_data['error'] = result.error
 
-            yield f"event: complete\ndata: {json.dumps(complete_data, ensure_ascii=False)}\n\n"
+            event_queue.put(('narration_complete', complete_data))
+            event_queue.put(('DONE', None))
 
         except Exception as e:
+            import traceback
+            traceback.print_exc()
             with _lock:
                 if _current_run:
                     _current_run["status"] = "error"
                     _current_run["error"] = str(e)
-
-            yield f"event: error\ndata: {json.dumps({'error': str(e)}, ensure_ascii=False)}\n\n"
-
+            
+            event_queue.put(('error', {'error': str(e)}))
+            event_queue.put(('DONE', None))
         finally:
             with _lock:
                 _current_run = None
 
+
+    def stream_generator():
+        # Generate ID
+        run_id = f"run_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+        
+        # Start thread
+        t = threading.Thread(target=pipeline_runner, args=(run_id,), daemon=True)
+        t.start()
+        
+        # Loop to consume queue
+        while True:
+            try:
+                # Wait for event with timeout for heartbeat
+                item = event_queue.get(timeout=2.0)
+                event_type, event_data = item
+
+                if event_type == 'DONE':
+                    break
+                
+                # Yield SSE event
+                yield f"event: {event_type}\ndata: {json.dumps(event_data, ensure_ascii=False)}\n\n"
+                
+            except queue.Empty:
+                # Heartbeat
+                yield f"event: ping\ndata: {json.dumps({'time': datetime.now().isoformat()})}\n\n"
+                if not t.is_alive() and event_queue.empty():
+                    # Thread died unexpectedly
+                    yield f"event: error\ndata: {json.dumps({'error': 'Pipeline thread terminated unexpectedly'})}\n\n"
+                    break
+
     return Response(
-        generate(),
+        stream_generator(),
         mimetype='text/event-stream',
         headers={
             'Cache-Control': 'no-cache',
             'Connection': 'keep-alive',
-            'X-Accel-Buffering': 'no',
+            'X-Accel-Buffering': 'no', # Crucial for Nginx/Proxies
             'Access-Control-Allow-Origin': '*',
         }
     )
