@@ -10,6 +10,7 @@ import type { DirectorEvent, RAGEvent, SpeakEvent, ThoughtEvent, UnifiedSSEEvent
 import PromptModal from './components/PromptModal'
 import LogTerminal from './components/LogTerminal'
 import UnifiedInputPanel from './components/UnifiedInputPanel'
+import ThoughtLogItem from './components/ThoughtLogItem'
 
 const API = (import.meta as any).env?.VITE_API_BASE || ''
 
@@ -285,28 +286,7 @@ export default function App() {
                           {turnThoughts.length > 0 && (
                             <div className="ml-2 space-y-2 mb-2">
                               {turnThoughts.map((log, i) => (
-                                <div key={`${t}-thought-${i}`} className="text-xs bg-slate-50 p-2 rounded border border-slate-200 text-slate-600 font-mono">
-                                  <div className="flex items-center gap-2 mb-1">
-                                    <span className={`w-2 h-2 rounded-full ${log.status === 'retrying' ? 'bg-orange-400' :
-                                      log.status === 'reviewing' ? 'bg-purple-400' :
-                                        log.status === 'reviewed' ? 'bg-green-400' : 'bg-blue-400'
-                                      }`}></span>
-                                    <span className="font-bold uppercase opacity-75">{log.status}</span>
-                                    <span className="ml-auto opacity-50">{log.ts?.split('T')[1]?.split('.')[0]}</span>
-                                  </div>
-                                  {log.status === 'generating' && <span>Generating response (Attempt {log.attempt})...</span>}
-                                  {log.status === 'reviewed' && (
-                                    <div className="pl-4 border-l-2 border-green-200">
-                                      Result: <b>{log.result}</b> {log.reason && <span className="text-slate-400"> — {log.reason}</span>}
-                                    </div>
-                                  )}
-                                  {log.status === 'retrying' && (
-                                    <div className="pl-4 border-l-2 border-orange-200 bg-orange-50/50">
-                                      <div className="font-semibold text-orange-700">{log.reason}</div>
-                                      {log.suggestion && <div className="mt-1 text-slate-500 italic">Expected: {log.suggestion}</div>}
-                                    </div>
-                                  )}
-                                </div>
+                                <ThoughtLogItem key={`${t}-thought-${i}`} log={log} />
                               ))}
                             </div>
                           )}

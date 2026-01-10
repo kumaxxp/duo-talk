@@ -23,6 +23,7 @@ export type ThoughtEvent = {
   reason?: string;
   suggestion?: string;
   turn?: number;
+  text?: string;
 }
 
 export type EventRow = DirectorEvent | SpeakEvent | RAGEvent | PromptDbg | RunStartEnd | ThoughtEvent

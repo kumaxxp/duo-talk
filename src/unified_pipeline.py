@@ -558,6 +558,7 @@ class UnifiedPipeline:
                 "speaker": speaker,
                 "result": evaluation.status.name,
                 "reason": evaluation.reason,
+                "text": speech,
                 "attempt": attempt + 1,
                 "turn": turn_number,
                 "timestamp": datetime.now().isoformat()
@@ -588,6 +589,7 @@ class UnifiedPipeline:
                             "speaker": speaker,
                             "reason": f"介入: {evaluation.reason}",
                             "suggestion": director_instruction,
+                            "text": speech,
                             "attempt": attempt + 1,
                             "turn": turn_number,
                             "timestamp": datetime.now().isoformat()
@@ -616,6 +618,7 @@ class UnifiedPipeline:
                         "speaker": speaker,
                         "reason": evaluation.reason,
                         "suggestion": director_instruction,
+                        "text": speech,
                         "attempt": attempt + 1,
                         "turn": turn_number,
                         "timestamp": datetime.now().isoformat()
