@@ -105,6 +105,12 @@ def get_provider_status():
             "error": docker_status["vllm"].error,
             "container_id": docker_status["vllm"].container_id
         },
+        "florence2": {
+            "available": docker_status["florence"].state == ServiceState.RUNNING,
+            "error": docker_status["florence"].error,
+            "container_id": docker_status["florence"].container_id,
+            "gpu_memory_gb": docker_status["florence"].gpu_memory_gb
+        },
         "defaults": {
             "backend": "vllm", # Default preference
             "model": "qwen2.5-vl-7b",
@@ -137,7 +143,7 @@ def get_backends():
                 ollama_models.append({
                     "id": name,
                     "name": name,
-                    "supports_vlm": "llava" in name or "vision" in name, # Rough heuristic
+                    "supports_vlm": "llava" in name or "vision" in name or "gemma3" in name, # Rough heuristic
                     "vram_gb": round(m.get('size', 0) / (1024**3), 1),
                     "description": f"{details.get('parameter_size', '?')} params"
                 })
@@ -269,7 +275,7 @@ def get_ollama_models():
                     "size": f"{round(m.get('size', 0)/1024**3, 1)}GB",
                     "family": m.get('details', {}).get('family', 'unknown'),
                     "params": m.get('details', {}).get('parameter_size', '?'),
-                    "vision": "vision" in m.get('details', {}).get('families', []) or "llava" in m.get('name', '')
+                    "vision": "vision" in m.get('details', {}).get('families', []) or "llava" in m.get('name', '') or "gemma3" in m.get('name', '')
                 })
     except:
         pass

@@ -34,7 +34,7 @@ from scripts.run_narration import NarrationPipeline
 from src.owner_intervention import get_intervention_manager, InterventionState
 
 # Import Blueprints
-# from server.api_provider import provider_api  <-- REMOVED
+from server.api_provider import provider_api
 
 # Setup logging
 logging.basicConfig(level=logging.INFO)
@@ -44,7 +44,7 @@ app = Flask(__name__)
 CORS(app)  # Enable CORS for React frontend
 
 # Register Blueprints
-# provider_api removed
+app.register_blueprint(provider_api)
 
 # Global state
 import threading
@@ -820,144 +820,10 @@ def restart_vllm():
     )
 
 
-# ==================== OLLAMA MANAGEMENT ====================
+# Routes moved to api_provider.py
 
-@app.route('/api/ollama/models', methods=['GET'])
-def get_ollama_models():
-    """
-    Get list of available Ollama models.
+# Remaining Ollama routes moved to api_provider.py
 
-    Returns:
-        JSON: {"models": [...], "current": "model_name"}
-    """
-    import requests as req
-    try:
-        # Get models from Ollama API
-        resp = req.get('http://localhost:11434/api/tags', timeout=5)
-        if resp.status_code != 200:
-            return jsonify({"error": "Failed to connect to Ollama"}), 500
-
-        data = resp.json()
-        models = []
-        for m in data.get('models', []):
-            name = m.get('name', '')
-            size_bytes = m.get('size', 0)
-            size_gb = size_bytes / (1024**3)
-
-            # Detect vision capability
-            family = m.get('details', {}).get('family', '').lower()
-            is_vision = 'llava' in name.lower() or 'vision' in name.lower() or family in ['mllama']
-
-            models.append({
-                "name": name,
-                "size": f"{size_gb:.1f}GB",
-                "family": m.get('details', {}).get('family', ''),
-                "params": m.get('details', {}).get('parameter_size', ''),
-                "vision": is_vision,
-            })
-
-        # Get current model from .env
-        current_model = config.openai_model
-
-        return jsonify({
-            "models": models,
-            "current": current_model,
-            "backend": "ollama",
-            "base_url": config.openai_base_url,
-        })
-    except req.exceptions.ConnectionError:
-        return jsonify({"error": "Ollama is not running"}), 503
-    except Exception as e:
-        logger.error(f"Error getting Ollama models: {e}")
-        return jsonify({"error": str(e)}), 500
-
-
-@app.route('/api/ollama/select', methods=['POST'])
-def select_ollama_model():
-    """
-    Select an Ollama model by updating .env file.
-
-    Body (JSON):
-        - model: Model name to select
-
-    Returns:
-        JSON: {"status": "ok", "model": "..."}
-    """
-    try:
-        data = request.get_json()
-        model_name = data.get('model')
-
-        if not model_name:
-            return jsonify({"error": "model is required"}), 400
-
-        # Update .env file
-        env_path = Path(__file__).parent.parent / '.env'
-        if env_path.exists():
-            with open(env_path, 'r') as f:
-                lines = f.readlines()
-
-            new_lines = []
-            model_updated = False
-            for line in lines:
-                if line.startswith('OPENAI_MODEL='):
-                    new_lines.append(f'OPENAI_MODEL={model_name}\n')
-                    model_updated = True
-                else:
-                    new_lines.append(line)
-
-            if not model_updated:
-                new_lines.append(f'OPENAI_MODEL={model_name}\n')
-
-            with open(env_path, 'w') as f:
-                f.writelines(new_lines)
-
-            # Update runtime config
-            config.openai_model = model_name
-
-            logger.info(f"Ollama model selected: {model_name}")
-            return jsonify({
-                "status": "ok",
-                "model": model_name,
-                "message": f"モデルを {model_name} に変更しました",
-            })
-        else:
-            return jsonify({"error": ".env file not found"}), 500
-
-    except Exception as e:
-        logger.error(f"Error selecting Ollama model: {e}")
-        return jsonify({"error": str(e)}), 500
-
-
-@app.route('/api/ollama/status', methods=['GET'])
-def get_ollama_status():
-    """
-    Get Ollama backend status.
-
-    Returns:
-        JSON: {"status": "ready|stopped", "model": "...", "backend": "ollama"}
-    """
-    import requests as req
-    try:
-        # Check if Ollama is running
-        resp = req.get('http://localhost:11434/api/tags', timeout=3)
-        is_running = resp.status_code == 200
-
-        return jsonify({
-            "status": "ready" if is_running else "stopped",
-            "model": config.openai_model,
-            "backend": "ollama",
-            "base_url": config.openai_base_url,
-        })
-    except req.exceptions.ConnectionError:
-        return jsonify({
-            "status": "stopped",
-            "model": config.openai_model,
-            "backend": "ollama",
-            "base_url": config.openai_base_url,
-        })
-    except Exception as e:
-        logger.error(f"Error getting Ollama status: {e}")
-        return jsonify({"error": str(e)}), 500
 
 
 # ==================== HEALTH CHECK ====================
@@ -1003,12 +869,8 @@ try:
 except ValueError:
     logger.warning("Blueprint 'v2_api' already registered")
 
-# ==================== Ollama API ====================
-from server.api_ollama import ollama_api
-try:
-    app.register_blueprint(ollama_api)
-except ValueError:
-    logger.warning("Blueprint 'ollama_api' already registered")
+# ollama_api replaced by provider_api
+
 
 # ==================== Unified API (v2.2) ====================
 from server.api_unified import unified_api

@@ -1,10 +1,10 @@
 {
-  "mode": "single_vlm",
+  "mode": "vlm_segmentation",
   "vlm_type": "llava:latest",
   "vlm_custom_model": "",
   "text_llm_type": "gemma3:12b",
   "text_llm_custom_model": "",
-  "segmentation_model": "none",
+  "segmentation_model": "florence2-large",
   "segmentation_confidence_threshold": 0.5,
   "enable_ocr": false,
   "enable_depth_estimation": false,
