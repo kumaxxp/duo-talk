@@ -71,7 +71,9 @@ class TopicState:
 
     def can_switch_topic(self) -> bool:
         """話題転換が許可されるか"""
-        return self.hook_depth >= 2 or self.turns_on_hook >= 3
+        # Relaxed condition: Allow switch if depth is at least 1 or we've spent 2 turns
+        # Original was depth >= 2 or turns >= 3
+        return self.hook_depth >= 1 or self.turns_on_hook >= 2
 
     def switch_topic(self, new_hook: str):
         """話題を転換"""

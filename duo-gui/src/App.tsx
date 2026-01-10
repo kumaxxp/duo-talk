@@ -1,17 +1,15 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import ControlPanel from './components/ControlPanel'
 import RunList from './components/RunList'
 import TurnCard from './components/TurnCard'
 import RagPanel from './components/RagPanel'
 import CovSpark from './components/CovSpark'
 import SettingsPanel from './components/SettingsPanel'
-import OwnerControlPanel from './components/OwnerControlPanel'
 import ProviderPanel from './components/ProviderPanel'
-import ChatInputPanel from './components/ChatInputPanel'
 import { covRate } from './hooks/useCov'
 import type { DirectorEvent, RAGEvent, SpeakEvent, ThoughtEvent, UnifiedSSEEvent } from './lib/types'
 import PromptModal from './components/PromptModal'
 import LogTerminal from './components/LogTerminal'
+import UnifiedInputPanel from './components/UnifiedInputPanel'
 
 const API = (import.meta as any).env?.VITE_API_BASE || ''
 
@@ -250,32 +248,13 @@ export default function App() {
         <div className="flex-1 min-h-0 overflow-hidden">
           {activeTab === 'runs' && (
             <div className="h-full flex flex-col lg:flex-row overflow-hidden">
-              {/* Left Column: Controls & Run List */}
+              {/* Left Column: Run List (History) */}
               <section className="flex-none w-full lg:w-80 h-full bg-slate-50 flex flex-col border-r border-gray-200 overflow-hidden">
-                <div className="flex-1 overflow-y-auto min-h-0 p-4 space-y-4">
-                  <div className="p-4 bg-white rounded-lg shadow-sm border">
-                    <h2 className="text-xs font-bold text-slate-400 uppercase mb-2">Operation</h2>
-                    <ControlPanel apiBase={API} onStarted={(r) => { if (r) { autoPicked.current = true; setRid(r) } }} />
-                  </div>
-
-                  {/* Chat Input Panel */}
-                  <div className="p-4 bg-white rounded-lg shadow-sm border">
-                    <ChatInputPanel apiBase={API} onSendComplete={() => { console.log('Chat sent') }} />
-                  </div>
-
-                  {/* Owner Intervention Control */}
-                  <OwnerControlPanel
-                    apiBase={API}
-                    runId={rid}
-                    onPauseChange={setInterventionPaused}
-                  />
-
-                  <div className="p-4 bg-white rounded-lg shadow-sm border flex-1 min-h-[200px]">
-                    <h2 className="text-xs font-bold text-slate-400 uppercase mb-2">History</h2>
-                    <div className="h-64 overflow-y-auto pr-1">
-                      <RunList rows={runs} onPick={(r) => { autoPicked.current = true; setRid(r) }} />
-                    </div>
-                  </div>
+                <div className="p-4 bg-white shadow-sm border-b z-10">
+                  <h2 className="text-xs font-bold text-slate-400 uppercase">Run History</h2>
+                </div>
+                <div className="flex-1 overflow-y-auto min-h-0 p-2">
+                  <RunList rows={runs} onPick={(r) => { autoPicked.current = true; setRid(r) }} />
                 </div>
               </section>
 
@@ -349,12 +328,16 @@ export default function App() {
                   </div>
                 </div>
 
-                {/* Granular Log Terminal (Fixed at Bottom) */}
-                <div className="flex-none p-3 border-t bg-slate-50">
-                  <div className="flex items-center gap-2 mb-2">
-                    <div className="w-2 h-2 rounded-full bg-green-500 animate-pulse"></div>
-                    <h2 className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">System Live Logs</h2>
-                  </div>
+                {/* Unified Input Panel */}
+                <UnifiedInputPanel
+                  apiBase={API}
+                  runId={rid}
+                  onRunStarted={(id) => { setRid(id); autoPicked.current = true; }}
+                  onPauseChange={setInterventionPaused}
+                />
+
+                {/* Granular Log Terminal (Fixed at Bottom, Collapsed by default? or Small?) */}
+                <div className="flex-none p-2 border-t bg-[#1e1e1e]">
                   <LogTerminal />
                 </div>
               </section>
