@@ -15,6 +15,11 @@ set -e
 # Configuration
 # ============================================================
 
+# Load .env if exists
+if [ -f .env ]; then
+    export $(grep -v '^#' .env | xargs)
+fi
+
 VLLM_CONTAINER="duo-talk-vllm"
 FLORENCE_CONTAINER="duo-talk-florence2"
 FLORENCE_IMAGE="duo-talk-florence2"
@@ -22,7 +27,6 @@ FLORENCE_IMAGE="duo-talk-florence2"
 VLLM_PORT=8000
 FLORENCE_PORT=5001
 
-# vLLM settings
 # vLLM settings
 VLLM_MODEL="RedHatAI/gemma-3-12b-it-quantized.w8a8"
 VLLM_GPU_MEMORY=0.85
@@ -230,9 +234,14 @@ start_all() {
     echo "=========================================="
     echo "Step 1/2: Starting vLLM"
     echo "=========================================="
-    if ! start_vllm; then
-        log_error "Failed to start vLLM"
-        return 1
+    
+    if [ "$LLM_BACKEND" = "ollama" ]; then
+        log_info "Skipping vLLM (Backend is set to 'ollama')"
+    else
+        if ! start_vllm; then
+            log_error "Failed to start vLLM"
+            return 1
+        fi
     fi
     
     # Then start Florence-2

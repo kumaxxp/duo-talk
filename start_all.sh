@@ -1,10 +1,15 @@
 #!/bin/bash
 #
-# DUO-TALK Completel Launcher
+# DUO-TALK Complete Launcher
 # Starts Docker services (LLM/Vision) AND the GUI System
 #
 
 set -e
+
+# Load .env variables explicitly
+if [ -f .env ]; then
+    export $(grep -v '^#' .env | xargs)
+fi
 
 # Colors
 GREEN='\033[0;32m'
@@ -17,8 +22,12 @@ echo "🚀 DUO-TALK COMPLETE LAUNCHER"
 echo "════════════════════════════════════════════════════════════════════════════"
 echo ""
 
+echo "backend mode: ${LLM_BACKEND}"
+
 # 1. Start Docker Services
 echo -e "${BLUE}【Step 1/2】 Starting AI Engine (Docker)...${NC}"
+
+# Explicitly pass environment variables to the script
 ./scripts/docker_services.sh start
 
 if [ $? -ne 0 ]; then
