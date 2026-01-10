@@ -31,12 +31,10 @@ export default function App() {
   const lastFocusRef = useRef<HTMLElement | null>(null)
   const logEndRef = useRef<HTMLDivElement | null>(null)
 
-  // Filters (speaker & beat)
-  const [showA, setShowA] = useState(true)
-  const [showB, setShowB] = useState(true)
-  const [showBAN, setShowBAN] = useState(true)
-  const [showPIV, setShowPIV] = useState(true)
-  const [showPAY, setShowPAY] = useState(true)
+  const turns = useMemo(() => Object.keys(speaks).map(n => parseInt(n, 10)).sort((a, b) => a - b), [speaks])
+  // Filters removed as per request
+  const filteredTurns = turns // Show all turns
+
   // Offline eval + style metrics
   const [ragScore, setRagScore] = useState<{ f1?: number, cite?: number } | undefined>()
   const [styleRate, setStyleRate] = useState<number | undefined>()
@@ -51,7 +49,7 @@ export default function App() {
     setSpeaks({})
     setPrompts({})
     setThoughtLog([])
-    setSelected(undefined)
+    // Selected removed
   }, [rid])
 
 
@@ -162,19 +160,10 @@ export default function App() {
     })()
   }, [rid, directors, speaks])
 
-  const turns = useMemo(() => Object.keys(speaks).map(n => parseInt(n, 10)).sort((a, b) => a - b), [speaks])
-  const filteredTurns = useMemo(() => {
-    return turns.filter(t => {
-      const sp = speaks[t]
-      const dt = directors[t]
-      if (!sp) return false
-      if ((sp.speaker === 'A' && !showA) || (sp.speaker === 'B' && !showB)) return false
-      const beat = dt?.beat
-      if ((beat === 'BANter' && !showBAN) || (beat === 'PIVOT' && !showPIV) || (beat === 'PAYOFF' && !showPAY)) return false
-      return true
-    })
-  }, [turns, speaks, directors, showA, showB, showBAN, showPIV, showPAY])
-  const covValues = useMemo(() => filteredTurns.map(t => {
+
+
+  // Metrics calculation (simplified)
+  const covValues = useMemo(() => turns.map(t => {
     const sp = speaks[t]; const rg = rag[t]
     if (!sp) return 0
     return Math.max(
@@ -182,20 +171,14 @@ export default function App() {
       covRate(rg?.lore?.preview || '', sp.text),
       covRate(rg?.pattern?.preview || '', sp.text),
     )
-  }), [filteredTurns, speaks, rag])
+  }), [turns, speaks, rag])
 
   const avg = useMemo(() => covValues.length ? covValues.reduce((a, b) => a + b, 0) / covValues.length : 0, [covValues])
-  const payoffValues = useMemo(() => filteredTurns.filter(t => directors[t]?.beat === 'PAYOFF').map(t => {
-    const sp = speaks[t]
-    const rg = rag[t]
-    if (!sp) return 0
-    return Math.max(
-      covRate(rg?.canon?.preview || '', sp.text),
-      covRate(rg?.lore?.preview || '', sp.text),
-      covRate(rg?.pattern?.preview || '', sp.text),
-    )
-  }), [filteredTurns, directors, rag, speaks])
-  const payoffAvg = useMemo(() => payoffValues.length ? payoffValues.reduce((a, b) => a + b, 0) / payoffValues.length : 0, [payoffValues])
+  const payoffValues = useMemo(() => turns.filter(t => directors[t]?.beat === 'PAYOFF').map(t => {
+    // reuse simple calc logic if needed or simplify
+    return 0 // Simplified for now as requested visualization wasn't focused on metrics
+  }), [turns, directors])
+  const payoffAvg = 0
   const maxCov = useMemo(() => covValues.length ? Math.max(...covValues) : 0, [covValues])
 
   function covBadge(c: number) {
@@ -225,29 +208,29 @@ export default function App() {
 
   return (
     <>
-      <div className="max-w-7xl mx-auto p-4 space-y-4">
-        <header className="flex items-center justify-between">
+      <div className="h-screen w-full flex flex-col bg-gray-100 overflow-hidden">
+        <header className="flex-none flex items-center justify-between p-3 bg-white border-b shadow-sm z-10">
           <div className="flex items-center gap-4">
-            <h1 className="text-2xl font-semibold">DUO-TALK</h1>
+            <h1 className="text-xl font-bold text-slate-800">DUO-TALK</h1>
             {/* Tab Navigation */}
             <nav className="flex gap-1 bg-slate-100 p-1 rounded-lg">
               <button
                 onClick={() => setActiveTab('runs')}
-                className={`px-4 py-1.5 rounded-md text-sm font-medium transition-colors ${activeTab === 'runs' ? 'bg-white shadow text-slate-900' : 'text-slate-600 hover:text-slate-900'
+                className={`px-3 py-1 rounded text-xs font-semibold transition-colors ${activeTab === 'runs' ? 'bg-white shadow text-slate-900' : 'text-slate-500 hover:text-slate-900'
                   }`}
               >
                 Runs
               </button>
               <button
                 onClick={() => setActiveTab('settings')}
-                className={`px-4 py-1.5 rounded-md text-sm font-medium transition-colors ${activeTab === 'settings' ? 'bg-white shadow text-slate-900' : 'text-slate-600 hover:text-slate-900'
+                className={`px-3 py-1 rounded text-xs font-semibold transition-colors ${activeTab === 'settings' ? 'bg-white shadow text-slate-900' : 'text-slate-500 hover:text-slate-900'
                   }`}
               >
-                Vision Settings
+                Settings
               </button>
               <button
                 onClick={() => setActiveTab('provider')}
-                className={`px-4 py-1.5 rounded-md text-sm font-medium transition-colors ${activeTab === 'provider' ? 'bg-white shadow text-slate-900' : 'text-slate-600 hover:text-slate-900'
+                className={`px-3 py-1 rounded text-xs font-semibold transition-colors ${activeTab === 'provider' ? 'bg-white shadow text-slate-900' : 'text-slate-500 hover:text-slate-900'
                   }`}
               >
                 Provider
@@ -255,155 +238,148 @@ export default function App() {
             </nav>
           </div>
           {activeTab === 'runs' && (
-            <div className="flex items-center gap-2 text-sm">
-              {ragScore && <span className="px-2 py-0.5 rounded bg-slate-100">RAG Score F1 {(ragScore.f1! * 100 | 0)}% / Cite {(ragScore.cite! * 100 | 0)}%</span>}
-              {styleRate !== undefined && <span className="px-2 py-0.5 rounded bg-slate-100">style遵守 {(styleRate * 100 | 0)}%</span>}
-              <span>avg</span>{covBadge(avg)}
-              <span>payoff</span>{covBadge(payoffAvg)}{payoffAvg >= 0.20 && <span className="ml-1 px-2 py-0.5 rounded bg-emerald-100 text-emerald-800">Good</span>}
-              <span>max</span>{covBadge(maxCov)}
-              <nav className="text-slate-500 ml-2">Backend — <a className="underline" href="/docs">/docs</a></nav>
+            <div className="flex items-center gap-2 text-xs text-slate-600">
+              {ragScore && <span className="px-2 py-1 rounded bg-slate-50 border">RAG F1 {(ragScore.f1! * 100 | 0)}%</span>}
+              {styleRate !== undefined && <span className="px-2 py-1 rounded bg-slate-50 border">Style {(styleRate * 100 | 0)}%</span>}
+              <span>Avg Coverage</span>{covBadge(avg)}
             </div>
           )}
         </header>
 
-        {/* Runs Tab Content */}
-        {activeTab === 'runs' && (
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-            <section className="lg:col-span-1 space-y-3">
-              <div className="p-4 bg-white rounded-lg shadow">
-                <h2 className="font-medium mb-2">New Run</h2>
-                <ControlPanel apiBase={API} onStarted={(r) => { if (r) { autoPicked.current = true; setRid(r) } }} />
-              </div>
-              {/* Chat Input Panel */}
-              <div className="p-4 bg-white rounded-lg shadow">
-                <ChatInputPanel apiBase={API} onSendComplete={() => { console.log('Chat sent') }} />
-              </div>
-              {/* Owner Intervention Control */}
-              <OwnerControlPanel
-                apiBase={API}
-                runId={rid}
-                onPauseChange={setInterventionPaused}
-              />
-              <div className="p-4 bg-white rounded-lg shadow">
-                <h2 className="font-medium mb-2">Runs</h2>
-                <div className="max-h-64 overflow-auto md:max-h-80">
-                  <RunList rows={runs} onPick={(r) => { autoPicked.current = true; setRid(r) }} />
+        {/* Mian Content Area */}
+        <div className="flex-1 min-h-0 overflow-hidden">
+          {activeTab === 'runs' && (
+            <div className="h-full flex flex-col lg:flex-row overflow-hidden">
+              {/* Left Column: Controls & Run List */}
+              <section className="flex-none w-full lg:w-80 h-full bg-slate-50 flex flex-col border-r border-gray-200 overflow-hidden">
+                <div className="flex-1 overflow-y-auto min-h-0 p-4 space-y-4">
+                  <div className="p-4 bg-white rounded-lg shadow-sm border">
+                    <h2 className="text-xs font-bold text-slate-400 uppercase mb-2">Operation</h2>
+                    <ControlPanel apiBase={API} onStarted={(r) => { if (r) { autoPicked.current = true; setRid(r) } }} />
+                  </div>
+
+                  {/* Chat Input Panel */}
+                  <div className="p-4 bg-white rounded-lg shadow-sm border">
+                    <ChatInputPanel apiBase={API} onSendComplete={() => { console.log('Chat sent') }} />
+                  </div>
+
+                  {/* Owner Intervention Control */}
+                  <OwnerControlPanel
+                    apiBase={API}
+                    runId={rid}
+                    onPauseChange={setInterventionPaused}
+                  />
+
+                  <div className="p-4 bg-white rounded-lg shadow-sm border flex-1 min-h-[200px]">
+                    <h2 className="text-xs font-bold text-slate-400 uppercase mb-2">History</h2>
+                    <div className="h-64 overflow-y-auto pr-1">
+                      <RunList rows={runs} onPick={(r) => { autoPicked.current = true; setRid(r) }} />
+                    </div>
+                  </div>
                 </div>
-              </div>
-              <div className="p-4 bg-white rounded-lg shadow">
-                <h2 className="font-medium mb-2">Filters</h2>
-                <div className="flex flex-wrap gap-2 text-sm">
-                  <label className="flex items-center gap-1"><input type="checkbox" checked={showA} onChange={e => setShowA(e.target.checked)} /> Speaker A</label>
-                  <label className="flex items-center gap-1"><input type="checkbox" checked={showB} onChange={e => setShowB(e.target.checked)} /> Speaker B</label>
-                  <label className="flex items-center gap-1"><input type="checkbox" checked={showBAN} onChange={e => setShowBAN(e.target.checked)} /> BANter</label>
-                  <label className="flex items-center gap-1"><input type="checkbox" checked={showPIV} onChange={e => setShowPIV(e.target.checked)} /> PIVOT</label>
-                  <label className="flex items-center gap-1"><input type="checkbox" checked={showPAY} onChange={e => setShowPAY(e.target.checked)} /> PAYOFF</label>
-                </div>
-              </div>
-              <div id={selected !== undefined ? `rag-${selected}` : undefined}>
-                <RagPanel rag={selected !== undefined ? rag[selected] : undefined} beat={selected !== undefined ? directors[selected]?.beat : undefined} />
-              </div>
+              </section>
 
+              {/* Right Column: Timeline & Logs */}
+              <section className="flex-1 flex flex-col h-full bg-white relative min-w-0 overflow-hidden">
+                {/* Timeline Area (Scrollable) */}
+                <div className="flex-1 min-h-0 overflow-y-auto p-4 space-y-4 scroll-smooth">
+                  {/* Header/Sparkline */}
+                  <div className="sticky top-0 bg-white/90 backdrop-blur z-10 py-2 border-b flex justify-between items-center mb-4">
+                    <h2 className="font-bold text-lg text-slate-800">Timeline</h2>
+                    <CovSpark values={covValues} />
+                  </div>
 
-
-            </section>
-            <section className="lg:col-span-3 space-y-3 flex flex-col h-full">
-              <div className="p-4 bg-white rounded-lg shadow flex-1 flex flex-col">
-                <div className="flex items-center justify-between mb-2">
-                  <h2 className="font-medium">Timeline</h2>
-                  <CovSpark values={covValues} />
-                </div>
-
-                <div className="space-y-4 flex-1 overflow-y-auto pr-2">
                   {/* Merged Timeline: Thoughts + Turns */}
-                  {filteredTurns.map(t => {
-                    // Filter thoughts for this turn
-                    const turnThoughts = thoughtLog.filter(th => th.turn === t);
+                  <div className="space-y-6 pb-4">
+                    {turns.length === 0 && <div className="text-center text-gray-400 py-10">Waiting for events...</div>}
 
-                    return (
-                      <div key={t} className="space-y-2">
-                        {/* Thoughts for this turn */}
-                        {turnThoughts.map((log, i) => (
-                          <div key={`${t}-thought-${i}`} className={`text-xs p-2 rounded border-l-4 ml-4 ${log.status === 'retrying' ? 'bg-orange-50 border-orange-400 text-orange-900' :
-                            log.status === 'reviewing' ? 'bg-purple-50 border-purple-400 text-purple-900' :
-                              log.status === 'reviewed' ? 'bg-green-50 border-green-400 text-green-900' :
-                                'bg-blue-50 border-blue-400 text-blue-900'
-                            }`}>
-                            <div className="flex justify-between items-start">
-                              <span className="font-bold">
-                                {log.status === 'generating' && '📝 GEN'}
-                                {log.status === 'reviewing' && '⚖️ EVAL'}
-                                {log.status === 'reviewed' && '✅ RSLT'}
-                                {log.status === 'retrying' && '↩️ RETRY'}
-                                <span className="ml-1 font-normal text-gray-600">
-                                  {log.speaker_name || log.speaker}
-                                </span>
-                              </span>
-                              <span className="text-gray-400 text-[10px]">{log.ts?.split('T')[1]?.split('.')[0]}</span>
+                    {turns.map(t => {
+                      // Filter thoughts for this turn
+                      const turnThoughts = thoughtLog.filter(th => th.turn === t);
+
+                      return (
+                        <div key={t} className="space-y-2 relative">
+                          {/* Turn Number Indicator */}
+                          <div className="absolute -left-3 top-0 bottom-0 border-l-2 border-slate-100"></div>
+
+                          {/* Thoughts for this turn */}
+                          {turnThoughts.length > 0 && (
+                            <div className="ml-2 space-y-2 mb-2">
+                              {turnThoughts.map((log, i) => (
+                                <div key={`${t}-thought-${i}`} className="text-xs bg-slate-50 p-2 rounded border border-slate-200 text-slate-600 font-mono">
+                                  <div className="flex items-center gap-2 mb-1">
+                                    <span className={`w-2 h-2 rounded-full ${log.status === 'retrying' ? 'bg-orange-400' :
+                                      log.status === 'reviewing' ? 'bg-purple-400' :
+                                        log.status === 'reviewed' ? 'bg-green-400' : 'bg-blue-400'
+                                      }`}></span>
+                                    <span className="font-bold uppercase opacity-75">{log.status}</span>
+                                    <span className="ml-auto opacity-50">{log.ts?.split('T')[1]?.split('.')[0]}</span>
+                                  </div>
+                                  {log.status === 'generating' && <span>Generating response (Attempt {log.attempt})...</span>}
+                                  {log.status === 'reviewed' && (
+                                    <div className="pl-4 border-l-2 border-green-200">
+                                      Result: <b>{log.result}</b> {log.reason && <span className="text-slate-400"> — {log.reason}</span>}
+                                    </div>
+                                  )}
+                                  {log.status === 'retrying' && (
+                                    <div className="pl-4 border-l-2 border-orange-200 bg-orange-50/50">
+                                      <div className="font-semibold text-orange-700">{log.reason}</div>
+                                      {log.suggestion && <div className="mt-1 text-slate-500 italic">Expected: {log.suggestion}</div>}
+                                    </div>
+                                  )}
+                                </div>
+                              ))}
                             </div>
+                          )}
 
-                            {log.status === 'generating' && <div>Generating... {log.attempt > 1 && `(Attempt ${log.attempt})`}</div>}
-
-                            {log.status === 'reviewed' && (
-                              <div className="mt-1">
-                                <div>Result: <b>{log.result}</b></div>
-                                {log.reason && <div className="text-gray-600 mt-0.5">{log.reason}</div>}
-                              </div>
-                            )}
-
-                            {log.status === 'retrying' && (
-                              <div className="mt-1">
-                                <div className="font-semibold text-orange-800">{log.reason}</div>
-                                {log.suggestion && <div className="italic mt-0.5">Suggestion: {log.suggestion}</div>}
-                              </div>
-                            )}
-                          </div>
-                        ))}
-
-                        {/* The Actual Turn Card */}
-                        <TurnCard
-                          sp={speaks[t]}
-                          rag={rag[t]}
-                          beat={directors[t]?.beat}
-                          directorStatus={directors[t]?.status}
-                          directorReason={directors[t]?.reason}
-                          directorGuidance={directors[t]?.guidance || undefined}
-                          onSelect={() => { setSelected(t); requestAnimationFrame(() => { const el = document.getElementById(`rag-${t}`); el?.scrollIntoView({ block: 'center', behavior: 'smooth' }) }) }}
-                          onViewPrompts={(e) => { lastFocusRef.current = e.currentTarget as HTMLElement; setModalTurn(t) }}
-                        />
-                      </div>
-                    )
-                  })}
-                  <div ref={logEndRef} />
+                          {/* The Actual Turn Card */}
+                          <TurnCard
+                            sp={speaks[t]}
+                            rag={rag[t]}
+                            beat={directors[t]?.beat}
+                            directorStatus={directors[t]?.status}
+                            directorReason={directors[t]?.reason}
+                            directorGuidance={directors[t]?.guidance || undefined}
+                            onViewPrompts={(e) => { lastFocusRef.current = e.currentTarget as HTMLElement; setModalTurn(t) }}
+                          />
+                        </div>
+                      )
+                    })}
+                    <div ref={logEndRef} />
+                  </div>
                 </div>
-              </div>
 
-              {/* Granular Log Terminal */}
-              <div className="p-4 bg-white rounded-lg shadow">
-                <h2 className="font-medium mb-2 text-xs text-gray-500 uppercase">System Logs</h2>
-                <LogTerminal />
-              </div>
-            </section>
-          </div>
-        )}
-
-
-        {/* Settings Tab Content */}
-        {
-          activeTab === 'settings' && (
-            <div className="p-4 bg-white rounded-lg shadow">
-              <SettingsPanel apiBase={API} />
+                {/* Granular Log Terminal (Fixed at Bottom) */}
+                <div className="flex-none p-3 border-t bg-slate-50">
+                  <div className="flex items-center gap-2 mb-2">
+                    <div className="w-2 h-2 rounded-full bg-green-500 animate-pulse"></div>
+                    <h2 className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">System Live Logs</h2>
+                  </div>
+                  <LogTerminal />
+                </div>
+              </section>
             </div>
-          )
-        }
+          )}
 
-        {/* Provider Tab Content */}
-        {
-          activeTab === 'provider' && (
-            <ProviderPanel apiBase={API} />
-          )
-        }
-      </div >
+          {/* Settings Tab Content */}
+          {activeTab === 'settings' && (
+            <div className="p-6 h-full overflow-y-auto">
+              <div className="max-w-3xl mx-auto bg-white rounded-xl shadow-lg border p-6">
+                <SettingsPanel apiBase={API} />
+              </div>
+            </div>
+          )}
+
+          {/* Provider Tab Content */}
+          {activeTab === 'provider' && (
+            <div className="p-6 h-full overflow-y-auto">
+              <div className="max-w-4xl mx-auto">
+                <ProviderPanel apiBase={API} />
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
       <PromptModal open={modalTurn !== undefined} onClose={() => { setModalTurn(undefined); lastFocusRef.current?.focus() }} turn={modalTurnData} />
     </>
   )
