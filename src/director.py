@@ -262,6 +262,7 @@ Respond ONLY with JSON:
             )
 
         # 出力形式のチェック（かっこ付き、複数ブロック）
+        # 出力形式のチェック
         format_check = self._check_format(response)
         if not format_check["passed"]:
             # RETRY時はトピック状態を巻き戻す
@@ -272,6 +273,18 @@ Respond ONLY with JSON:
                 suggestion=format_check["suggestion"],
                 **current_topic_fields,
             )
+        
+        # WARN収集用リスト
+        static_warnings = []
+        
+        # Format WARN (lines >= 6) cannot easily be retrieved from _check_format unless we modify it to return issue even on pass,
+        # but _check_format currently prints and returns passed=True.
+        # We can re-check length here or trust _check_format logic.
+        # Since I modified _check_format to print warning but return passed=True, I'll stick to that
+        # OR I can re-check line count to append to static_warnings.
+        lines = [line.strip() for line in response.split("\n") if line.strip()]
+        if 6 <= len(lines) < 8:
+            static_warnings.append(f"format: 発言が長すぎます（{len(lines)}行）。5行以内にしてください。")
 
         # 設定整合性のチェック（姉妹が別居しているかのような表現）
         setting_check = self._check_setting_consistency(response)
@@ -294,6 +307,9 @@ Respond ONLY with JSON:
                 suggestion=praise_check["suggestion"],
                 **current_topic_fields,
             )
+        elif praise_check.get("issue", "").startswith("WARN:"):
+             # WARN
+             static_warnings.append(praise_check["issue"])
 
         # 話題ループ検出（LLM評価の前に実行）
         loop_check = self._detect_topic_loop(conversation_history, response)
@@ -335,14 +351,21 @@ Respond ONLY with JSON:
         # 散漫検出（複数話題への全レス）
         scatter_check = self._is_scattered_response(response)
         if scatter_check["detected"]:
+            # level check
+            level = scatter_check.get("level", "WARN")
             issues_str = "、".join(scatter_check["issues"])
-            print(f"    ⚠️ 散漫検出: {issues_str}")
-            return DirectorEvaluation(
-                status=DirectorStatus.RETRY,
-                reason=f"応答が散漫: {issues_str}",
-                suggestion="【制限】50〜80文字、2文以内、読点2個以内で応答してください。相手の発言から1つだけ選んで反応し、他は無視してください。",
-                **current_topic_fields,
-            )
+            
+            if level == "RETRY":
+                self.topic_state = old_topic_state
+                return DirectorEvaluation(
+                    status=DirectorStatus.RETRY,
+                    reason=f"応答が散漫(RETRY): {issues_str}",
+                    suggestion="【制限】50〜80文字、2文以内、読点2個以内で応答してください。",
+                    **current_topic_fields,
+                )
+            else:
+                 print(f"    ⚠️ 散漫検出(WARN): {issues_str}")
+                 static_warnings.append(f"scatter: {issues_str}。話題を絞ってください。")
 
         # 論理的矛盾のチェック（二重否定など）
         logic_check = self._check_logical_consistency(response)
@@ -366,9 +389,12 @@ Respond ONLY with JSON:
                 suggestion=f"以下のマーカーを含めてください: {', '.join(tone_check['expected'])}",
                 **current_topic_fields,
             )
+        elif tone_check.get("missing", "").startswith("WARN:"):
+             # WARN (Score 1)
+             static_warnings.append(tone_check["missing"])
 
         # 口調マーカーの詳細情報を取得（LLM評価用）
-        tone_info = self._check_tone_markers(speaker, response)
+        tone_info = tone_check
 
         # ファクトチェック（やなの発言のみ、次のあゆの発言で訂正させるため）
         fact_check_result: Optional[FactCheckResult] = None
@@ -384,6 +410,7 @@ Respond ONLY with JSON:
                 print(f"    ⚠️  誤り検出: {fact_check_result.claim}")
                 print(f"    ✓  正しい情報: {fact_check_result.correct_info}")
                 print(f"    📊 確信度: {fact_check_result.search_confidence}")
+                static_warnings.append(f"fact_error: {fact_check_result.claim} は間違いの可能性があります。")
 
         user_prompt = self._build_evaluation_prompt(
             frame_description=frame_description,
@@ -396,6 +423,7 @@ Respond ONLY with JSON:
             turn_number=turn_number,
             current_beat=current_beat,
             beat_info=beat_info,
+            static_warnings=static_warnings,
         )
 
         try:
@@ -411,33 +439,23 @@ Respond ONLY with JSON:
             import re
 
             json_text = result_text.strip()
-
-            # Try multiple extraction methods
             data = None
 
-            # Method 1: Extract from markdown code block
+            # Robust JSON extraction
             code_block_match = re.search(r"```(?:json)?\s*([\s\S]*?)```", json_text)
             if code_block_match:
-                try:
-                    data = json.loads(code_block_match.group(1).strip())
-                except json.JSONDecodeError:
-                    pass
-
-            # Method 2: Find JSON object anywhere in text
+                try: data = json.loads(code_block_match.group(1).strip())
+                except json.JSONDecodeError: pass
+            
             if data is None:
                 json_match = re.search(r"\{[\s\S]*\}", json_text)
                 if json_match:
-                    try:
-                        data = json.loads(json_match.group(0))
-                    except json.JSONDecodeError:
-                        pass
+                    try: data = json.loads(json_match.group(0))
+                    except json.JSONDecodeError: pass
 
-            # Method 3: Direct parse
             if data is None:
-                try:
-                    data = json.loads(json_text)
-                except json.JSONDecodeError:
-                    pass
+                 try: data = json.loads(json_text)
+                 except json.JSONDecodeError: pass
 
             if data is None:
                 # パース失敗時は安全側に倒してPASS/NOOP
@@ -455,49 +473,103 @@ Respond ONLY with JSON:
             # ★ コードによる「最後の殺し」実行
             validated_data = self._validate_director_output(data, turn_number, frame_description)
 
-            # 判定結果の抽出
-            status_str = validated_data.get("status", "PASS").upper()
-            status = (
-                DirectorStatus.PASS
-                if status_str == "PASS"
-                else DirectorStatus.RETRY
-                if status_str == "RETRY"
-                else DirectorStatus.MODIFY
-            )
+            # ★ Scoring System Logic
+            scores = data.get("scores", {})
+            score_values = []
+            for k in ["frame_consistency", "roleplay", "connection", "information_density", "naturalness"]:
+                val = scores.get(k)
+                if isinstance(val, (int, float)):
+                    score_values.append(val)
+            
+            avg_score = sum(score_values) / len(score_values) if score_values else 0
+            
+            # Determine Status from Score
+            if avg_score > 0: # If scores are missing, rely on 'status' field or fallback
+                if avg_score < 3.5:
+                    status = DirectorStatus.RETRY
+                else:
+                    status = DirectorStatus.PASS
+                    # 3.5 <= avg < 4.0 is WARN (Pass with issues)
+            else:
+                # Fallback to status field if no scores
+                status_str = data.get("status", "PASS").upper()
+                status = DirectorStatus.RETRY if status_str == "RETRY" else DirectorStatus.PASS
+                avg_score = 0.0
 
-            # RETRY時はトピック状態とNoveltyGuardを更新しない
+            # Handle RETRY
             if status == DirectorStatus.RETRY:
                 self.topic_state = old_topic_state
-                print(f"    🛡️ Director: RETRYのため状態を更新しません")
-            else:
-                # PASS/MODIFY時は NoveltyGuard を正式に更新
-                self.novelty_guard.check_and_update(response, update=True)
-                # TopicStateの正式な更新ログ（既にself.topic_stateは更新済み）
-                if temp_is_premature:
-                    print(f"    ⚠️ Topic premature switch detected (PASS): {old_topic_state.focus_hook} → {detected_hook}")
-                elif detected_hook == old_topic_state.focus_hook:
-                     print(f"    📊 Topic: {self.topic_state.focus_hook} depth={self.topic_state.hook_depth}/3 step={self.topic_state.depth_step}")
+                print(f"    🛡️ Director: RETRY (Score={avg_score:.1f})")
+                
+                # Check if we should override reason/suggestion from LLM
+                reason = data.get("reason", f"Score low ({avg_score:.1f})")
+                suggestion = data.get("suggestion", "全体的に見直してください")
+                
+                return DirectorEvaluation(
+                    status=DirectorStatus.RETRY,
+                    reason=reason,
+                    suggestion=suggestion,
+                    **current_topic_fields,
+                )
+
+            # Handle PASS (including WARN cases)
+            self.novelty_guard.check_and_update(response, update=True)
+            
+            # Warn handling for Next Instruction
+            next_instruction = data.get("next_instruction")
+            
+            # If WARN (Avg < 4.0 OR static_warnings exist), inject warnings into next_instruction
+            is_warn_score = 0 < avg_score < 4.0
+            llm_issues = data.get("issues", [])
+            
+            warning_messages = []
+            if static_warnings:
+                warning_messages.extend([f"[Warn: {w}]" for w in static_warnings])
+            if is_warn_score:
+                warning_messages.append(f"[Score: {avg_score:.1f} (Low)]")
+            if llm_issues:
+                 warning_messages.extend([f"[Issue: {i}]" for i in llm_issues])
+
+            if warning_messages:
+                # Append warnings to next instruction to guide correction
+                warn_text = " ".join(warning_messages)
+                print(f"    ⚠️ PASS with Warnings: {warn_text}")
+                
+                prefix = f"（前の発言に{len(warning_messages)}件の改善点あり: {warn_text}）"
+                if next_instruction:
+                    next_instruction = f"{prefix} {next_instruction}"
                 else:
-                     print(f"    🔀 Topic switch: → {detected_hook}")
+                    # action=NOOP but we want to pass context. 
+                    next_instruction = prefix 
 
-            # Build reason with issues if available
-            reason = validated_data.get("reason", "")
-            issues = validated_data.get("issues", [])
-            if issues and isinstance(issues, list):
-                reason_with_issues = f"{reason}\n- " + "\n- ".join(issues[:2])
+            # Topic Logging
+            if temp_is_premature:
+                print(f"    ⚠️ Topic premature switch detected (PASS): {old_topic_state.focus_hook} → {detected_hook}")
+            elif detected_hook == old_topic_state.focus_hook:
+                 print(f"    📊 Topic: {self.topic_state.focus_hook} depth={self.topic_state.hook_depth}/3 step={self.topic_state.depth_step}")
             else:
-                reason_with_issues = reason
-
-            beat_stage = validated_data.get("beat_stage", current_beat)
+                 print(f"    🔀 Topic switch: → {detected_hook}")
 
             # action判定
-            action = validated_data.get("action", "NOOP")
+            action = data.get("action", "NOOP")
+            next_pattern = data.get("next_pattern")
+            
             if action == "NOOP":
                 next_pattern = None
-                next_instruction = None
-            else:
-                next_pattern = validated_data.get("next_pattern")
-                next_instruction = validated_data.get("next_instruction")
+                # If we have next_instruction from warnings, we should keep it?
+                # Usually NOOP implies next_instruction is None.
+                # But if we have warnings, passing them to next_instruction is useful.
+                # BUT, get_instruction_for_next_turn will generate the instruction for the next turn independently?
+                # No, DirectorEvaluation.next_instruction is used for INTERVENE.
+                # If action=NOOP, DirectorEvaluation.next_instruction is typically ignored by the main loop (main.py or beat_manager).
+                # Wait, if action is NOOP, we should verify if next_instruction is used.
+                # If not used, we might lose the warning.
+                # So if warnings exist, maybe we should force INTERVENE?
+                if warning_messages:
+                     action = "INTERVENE"
+                     print("    ⚠️ Upgrading to INTERVENE to convey warnings.")
+                else:
+                     next_instruction = None
 
                 # パターンの整合性チェック
                 if next_pattern and next_pattern not in ["A", "B", "C", "D", "E"]:
@@ -525,6 +597,16 @@ Respond ONLY with JSON:
                 if len(self.recent_patterns) > 5:
                     self.recent_patterns = self.recent_patterns[-5:]
 
+            # Build reason with issues if available
+            reason = validated_data.get("reason", "")
+            issues = validated_data.get("issues", [])
+            if issues and isinstance(issues, list):
+                reason_with_issues = f"{reason}\n- " + "\n- ".join(issues[:2])
+            else:
+                reason_with_issues = reason
+            
+            beat_stage = validated_data.get("beat_stage", current_beat)
+
             # ========== Director v3: 早すぎる話題転換のINTERVENE処理 ==========
             # 早期に検出したpremature switchフラグがある場合、INTERVENEで戻す
             if is_premature_switch:
@@ -544,7 +626,7 @@ Respond ONLY with JSON:
                 next_pattern=next_pattern,
                 next_instruction=next_instruction,
                 beat_stage=beat_stage,
-                action=validated_data.get("action", "NOOP"),
+                action=action,
                 hook=validated_data.get("hook"),
                 evidence=validated_data.get("evidence"),
                 **current_topic_fields,
@@ -574,10 +656,12 @@ Respond ONLY with JSON:
         turn_number: int = 1,
         current_beat: str = "SETUP",
         beat_info: dict = None,
+        static_warnings: list = None,
     ) -> str:
         """Build comprehensive evaluation prompt checking all 5 criteria with beat orchestration"""
         char_desc = "Elder Sister (やな) - action-driven, quick-witted" if speaker == "A" else "Younger Sister (あゆ) - logical, reflective, formal"
         domains_str = ", ".join(domains or [])
+        static_warnings = static_warnings or []
 
         # Character-specific tone markers
         tone_markers = (
@@ -613,6 +697,16 @@ Respond ONLY with JSON:
         # スピーカー混同防止用の強調ブロック
         speaker_name = "やな（姉）" if speaker == "A" else "あゆ（妹）"
         praise_note = "" if speaker == "A" else "\n║ ※褒め言葉禁止はこのあゆの発言に適用されます"
+
+        # Static Check Warnings Section
+        warning_section = ""
+        if static_warnings:
+             warning_list_str = "\n".join([f"- {w}" for w in static_warnings])
+             warning_section = f"""
+【Static Analysis Warnings】
+The system has detected the following minor issues. Please consider them in your instruction if status is PASS/WARN.
+{warning_list_str}
+"""
 
         prompt = f"""
 ╔════════════════════════════════════════════════════════════╗
@@ -664,60 +758,53 @@ Respond ONLY with JSON:
             markers_str = ", ".join([f'「{m}」' for m in tone_markers_found[:3]])
             tone_status = f"\n【口調マーカー検証結果】✓ 検出済み: {markers_str} → 口調は問題なし"
         else:
-            tone_status = "\n【口調マーカー検証結果】✗ 未検出 → 口調に注意が必要"
+            tone_status = "\n【口調マーカー検証結果】✗ 未検出または弱信号 → 口調に注意が必要"
 
         prompt += f"""
 {tone_status}
+{warning_section}
 
 【評価の前提】
-- status(PASS/RETRY/MODIFY) は「今の発言の品質」評価
+- status(PASS/RETRY) は「今の発言の品質」評価
 - action(NOOP/INTERVENE) は「次ターンに介入する価値があるか」
 - 基本は NOOP 推奨だが、**会話がループしている場合は積極的に介入せよ**
 
-【評価基準】
-1. Progress（進行度）← 最重要・厳格化
-   - ❌ NG: 前のターンと同じ単語（おせち/親戚/お年玉）を繰り返すだけ
-   - ❌ NG: 「楽しみだね」「そうだね」という同意のみで新情報なし
-   - ❌ NG: オウム返し（相手の言葉をそのまま繰り返す）
-   - ✓ OK: 新しいトピック（初詣/福袋/雑煮の具）が出ている
-   - ✓ OK: 具体的なエピソードや理由が追加されている
+【Scoring Criteria (1-5)】
+1. Frame Consistency: その場の状況（景色や場所）に合った内容か
+2. Roleplay: 姉妹の関係性、性格が守られているか
+3. Connection: 直前の相手の発言を無視していないか
+4. Density: 内容が薄すぎないか、または詰め込みすぎていないか
+5. Naturalness: 機械的な繰り返しや、唐突な表現がないか
 
-2. Participation: 自然な掛け合いか（オウム返しは減点）
-
-3. Knowledge Domain: 専門領域内か
-   - {speaker}が話すべき領域：{domain_expectations}
-
-4. Narration Quality: 新規性があり、会話が前進しているか
-   - 抽象語の意味確認（例:「何が違うの？」）は原則減点
-   - 感情/口調の演技指導は絶対に出さない
-
-【介入ゲート（action判定）】
-- 次の条件なら action=INTERVENE に切り替える
-  (a) **話題ループ**: 同じ名詞（おせち/お年玉/親戚）が3回以上繰り返されている
-  (b) **抽象的な同意のみ**: 「楽しみ」「大事」「いいね」の連鎖で新情報がない
-  → 指示例: 「話題を変えて。『初詣』『福袋』『雑煮の具』など別の要素へ」
-
-- 次の条件なら action=NOOP
-  (c) 新しい情報やトピックが出続けている
-  (d) 導入(ターン1-2)で大きな逸脱がない
-  (e) hookが抽象語のみ、または根拠(evidence)がない
+【判定基準 (Avg Score)】
+- Avg < 3.5 -> RETRY
+- 3.5 <= Avg < 4.0 -> WARN (Status=PASS but issues noted)
+- Avg >= 4.0 -> PASS
 
 【応答フォーマット】
 JSON ONLY:
 {{
-  "status": "PASS" | "RETRY" | "MODIFY",
+  "scores": {{
+    "frame_consistency": int,
+    "roleplay": int,
+    "connection": int,
+    "information_density": int,
+    "naturalness": int
+  }},
+  "status": "PASS" | "RETRY", 
   "reason": "評価理由（30字以内）",
   "issues": ["問題点があれば記述"],
-  "suggestion": "修正案（RETRY/MODIFY時のみ）",
+  "suggestion": "修正案（RETRY時のみ）",
   "beat_stage": "{current_beat}",
   "action": "NOOP" | "INTERVENE",
   "hook": "具体名詞を含む短い句 or null",
   "evidence": {{ "dialogue": "抜粋 or null", "frame": "抜粋 or null" }},
   "next_pattern": "A" | "B" | "C" | "D" | "E" | null,
-  "next_instruction": "INTERVENEの場合のみ。NOOPならnull"
+  "next_instruction": "INTERVENEの場合、またはStatic Warningsがある場合は必ず修正指示を記述"
 }}
 """
         return prompt.strip()
+
 
     def get_instruction_for_next_turn(
         self,
@@ -837,7 +924,10 @@ JSON ONLY:
 
     def _check_tone_markers(self, speaker: str, response: str) -> dict:
         """
-        口調マーカーの存在をチェックする。
+        口調マーカーの多信号判定を行う。
+        Score 0 -> RETRY
+        Score 1 -> WARN (passed=True, but missing info)
+        Score 2+ -> PASS
 
         Args:
             speaker: "A" or "B"
@@ -851,48 +941,97 @@ JSON ONLY:
                 "missing": str
             }
         """
+        # 正規化（引用部分などを除外して判定）
+        normalized = self._normalize_text(response)
+        
+        # 定義：マーカーリスト
+        # 語尾マーカー
+        MARKERS_YANA = ["ね", "わ", "へ？", "かな", "かも"] # 調整：spec通り
+        MARKERS_AYU = ["です", "ます", "でしょう", "ですね", "ました"]
+
+        # 語彙マーカー
+        VOCAB_YANA = ["やだ", "ほんと", "えー", "うーん", "すっごい", "そっか", "だね"] # spec + alpha
+        VOCAB_AYU = ["つまり", "要するに", "一般的に", "目安", "推奨", "ですよ", "ません"]
+
         if speaker == "A":
-            # やな（姉）の口調マーカー
-            markers = ["ね", "へ？", "わ！", "あ、", "そっか", "よね", "かな", "だね"]
-            expected_desc = ["〜ね", "へ？", "わ！", "あ、そっか", "〜よね", "〜かな"]
+            target_markers = MARKERS_YANA
+            target_vocab = VOCAB_YANA
+            expected_desc = ["〜ね", "わ！", "〜かな", "〜かも"]
         else:
-            # あゆ（妹）の口調マーカー（「姉様」は毎回不要なので必須から除外）
-            # 「ございます」は禁止なので含めない
-            # 「ます」系も追加（例: 「来ました」「思います」など）
-            markers = ["です", "ですよ", "ですね", "でしょう", "ます", "ました", "ません"]
-            expected_desc = ["です", "ですね", "ですよ", "〜ます"]
+            target_markers = MARKERS_AYU
+            target_vocab = VOCAB_AYU
+            expected_desc = ["です", "ます", "でしょう", "ですね"]
 
-        found = []
-        for marker in markers:
-            if marker in response:
-                found.append(marker)
+        marker_hit = 0
+        found_markers = []
+        for m in target_markers:
+            if m in normalized:
+                marker_hit = 1
+                found_markers.append(m)
+                break # 1つあれば1点
+        
+        vocab_hit = 0
+        for v in target_vocab:
+            if v in normalized:
+                vocab_hit = 1
+                found_markers.append(v)
+                break
 
-        # 最低1つのマーカーが必要
-        passed = len(found) >= 1
-
-        # 特別なケース: やなは「姉様」を使ってはいけない（あゆの呼び方）
+        style_hit = 0
         if speaker == "A":
-            forbidden_words = ["姉様"]
-            for forbidden in forbidden_words:
-                if forbidden in response:
-                    return {
-                        "passed": False,
-                        "expected": expected_desc,
-                        "found": found,
-                        "missing": f"禁止ワード「{forbidden}」を使用（やなは姉なので「姉様」は使えません）",
-                    }
+            # やな: 2文以下かつ感嘆符（！または？）を含む
+            # 文数カウント（簡易）
+            sentence_count = normalized.count("。") + normalized.count("！") + normalized.count("？")
+            # 句点なしで終わる場合も考慮（正規化後なので文末記号がない場合もあるが）
+            if sentence_count == 0 and len(normalized) > 0:
+                sentence_count = 1
+            
+            has_exclamation = "！" in normalized or "？" in normalized
+            if sentence_count <= 2 and has_exclamation:
+                style_hit = 1
+                found_markers.append("【文体:短文+感嘆】")
+        else:
+            # あゆ: 文末に丁寧語が2回以上出現
+            # 文末判定は難しいので、単純に丁寧語の出現回数で近似するか、文末分割してチェック
+            # spec: "文末に丁寧語（です/ます/でした/ました）が2回以上出現"
+            # ここではシンプルに丁寧語カウント >= 2 で判定（文末でなくても丁寧ならOKとする緩和）
+            polite_count = 0
+            for p in ["です", "ます", "でした", "ました"]:
+                polite_count += normalized.count(p)
+            
+            if polite_count >= 2:
+                style_hit = 1
+                found_markers.append("【文体:丁寧語多用】")
 
-        # 特別なケース: あゆは「です」系または「ます」系のいずれかが必須
-        if speaker == "B":
-            polite_variants = ["です", "ます", "ました", "ません"]
-            has_polite = any(m in response for m in polite_variants)
-            passed = passed and has_polite
+        tone_score = marker_hit + vocab_hit + style_hit
+        
+        # 判定
+        passed = True
+        missing_msg = ""
+        
+        if tone_score == 0:
+            passed = False
+            missing_msg = "口調スコア0: 語尾・語彙・文体のいずれもキャラクターらしくありません"
+        elif tone_score == 1:
+            # WARN扱い -> PASSだが警告メッセージを残す（呼び出し元で処理）
+            passed = True 
+            missing_msg = "WARN: 口調スコア1（弱）: もう少しキャラクターらしさを強調してください"
+        
+        # 特別な禁止ワードチェック（やなの姉様呼び）は維持
+        if speaker == "A" and "姉様" in response:
+             return {
+                "passed": False,
+                "expected": expected_desc,
+                "found": found_markers,
+                "missing": "禁止ワード「姉様」を使用（やなは姉なので「姉様」は使えません）",
+            }
 
         return {
             "passed": passed,
             "expected": expected_desc,
-            "found": found,
-            "missing": "マーカーが見つかりません" if not found else "",
+            "found": found_markers,
+            "missing": missing_msg,
+            "score": tone_score 
         }
 
     def _check_setting_consistency(self, response: str) -> dict:
@@ -926,6 +1065,8 @@ JSON ONLY:
     def _check_praise_words(self, response: str, speaker: str) -> dict:
         """
         褒め言葉チェック（あゆの発言のみ適用）。
+        評価語 + 相手への肯定 = RETRY
+        評価語のみ = WARN
 
         Args:
             response: 評価対象の発言
@@ -942,14 +1083,44 @@ JSON ONLY:
         if speaker == "A":
             return {"passed": True, "issue": "", "suggestion": ""}
 
-        # あゆ（B）の発言のみチェック
-        for word in self.PRAISE_WORDS_FOR_AYU:
-            if word in response:
-                return {
-                    "passed": False,
-                    "issue": f"あゆの褒め言葉使用: 「{word}」",
-                    "suggestion": "評価・判定型の表現を避け、情報提供に徹してください",
-                }
+        # 正規化済みテキストで判定することを推奨するが、
+        # 褒め言葉は意味レベルなので原文でも良い。
+        # ただしspecに従い "「すごいね」は...除外" なので正規化を使う。
+        normalized = self._normalize_text(response)
+
+        # 評価語リスト
+        praise_words = ["すごい", "素晴らしい", "正解", "完璧", "天才", "素敵", "見事"]
+        
+        # 相手への肯定パターン (例: "あなたの考えは正しい")
+        # 厳密な正規表現は複雑だが、簡易的に「あなた」「君」「ユーザー」などの後に「正しい」「合ってる」等が来るかを見る
+        user_affirmation_pattern = r"(あなた|君|ユーザー|その(答え|考え|意見)).*(正しい|合って|良い|素敵|見事)"
+
+        import re
+        has_praise = False
+        found_word = ""
+        for word in praise_words:
+            if word in normalized:
+                has_praise = True
+                found_word = word
+                break
+        
+        has_affirmation = bool(re.search(user_affirmation_pattern, normalized))
+
+        if has_praise and has_affirmation:
+            # RETRY
+            return {
+                "passed": False,
+                "issue": f"あゆの褒め言葉（評価＋肯定）: 「{found_word}」＋相手肯定",
+                "suggestion": "評価・判定を行わず、事実やデータのみを提供してください。",
+            }
+        elif has_praise:
+            # WARN (PASSだが警告)
+            return {
+                "passed": True, # WARN扱い
+                "issue": f"WARN: あゆの褒め言葉使用（弱）: 「{found_word}」",
+                "suggestion": "なるべく評価的な言葉は避けてください。",
+            }
+
         return {"passed": True, "issue": "", "suggestion": ""}
 
     def _check_logical_consistency(self, response: str) -> dict:
@@ -1038,17 +1209,66 @@ JSON ONLY:
             #     "suggestion": "1つの連続した発言として出力してください。「」は使わず、直接話してください。",
             # }
 
-        # 改行で複数ブロックに分かれているかチェック（緩和案：3-5行程度なら許容）
+        # 改行で複数ブロックに分かれているかチェック
+        # 仕様変更: 8行以上でRETRY, 6-7行でWARN, 5行以下はPASS
         lines = [line.strip() for line in response.split("\n") if line.strip()]
-        if len(lines) > 5:
+        if len(lines) >= 8:
             return {
                 "passed": False,
-                "issue": f"発言が複数行に分かれすぎています（{len(lines)}行）",
-                "suggestion": "1つの連続した発言として、簡潔に出力してください。",
+                "issue": f"発言が長すぎます（{len(lines)}行）",
+                "suggestion": "5行以内にまとめて、簡潔に出力してください。",
             }
-        elif len(lines) > 1:
-            # 複数行だが許容範囲内
-            print(f"    ⚠️ Format: 複数行（{len(lines)}行）を検出しましたが、続行します。")
+        elif len(lines) >= 6:
+            # WARN扱い（PASSさせるが次回介入）
+            print(f"    ⚠️ Format: {len(lines)}行を検出（WARN）。次回短縮を指示します。")
+            # 内部的にはPASSだが、指導が必要な状態として扱うフラグやメッセージを持たせる設計が理想
+            # 現状はPASS返却のみ
+
+        return {
+            "passed": True,
+            "issue": "",
+            "suggestion": "",
+        }
+
+    def _normalize_text(self, text: str) -> str:
+        """
+        判定用にテキストを正規化する。
+        1. 引用・台本除外（「」、（）内の除去）
+           ただし、全体が「」で囲まれている場合は中身を採用する。
+        2. 記号正規化（！！→！、。。→。）
+        3. 空白正規化
+        """
+        import re
+        normalized = text.strip()
+
+        # 全体が「」で囲まれている場合は中身を取り出す（台本形式の救済）
+        # 文頭が「、文末が」で、かつ途中に閉じ括弧がない、あるいは
+        # 単純に最初と最後を取り除く
+        if normalized.startswith("「") and normalized.endswith("」"):
+             # 中身だけ取り出す（ただし、途中で閉じてまた開くケース "「A」「B」" は除外すべきだが
+             # ここでは簡易的に、全体がひとつの発言とみなせるなら剥がす）
+             # 厳密には count("「") == 1 とかチェックすると良い
+             if normalized.count("「") == 1:
+                 normalized = normalized[1:-1]
+        
+        # 引用・台本除外: 「」や（）で囲まれた部分を削除
+        # ただし、上記で剥がした後の残りの「」は引用とみなして削除
+        normalized = re.sub(r"「.*?」", "", normalized)
+        normalized = re.sub(r"（.*?）", "", normalized)
+        normalized = re.sub(r"\(.*?\)", "", normalized)
+
+        # 記号正規化
+        # ！！ -> ！
+        normalized = re.sub(r"！+", "！", normalized)
+        normalized = re.sub(r"？+", "？", normalized)
+        normalized = re.sub(r"、+", "、", normalized)
+        normalized = re.sub(r"。+", "。", normalized)
+        normalized = re.sub(r"…+", "…", normalized)
+
+        # 空白正規化
+        normalized = re.sub(r"\s+", " ", normalized).strip()
+
+        return normalized
 
         return {
             "passed": True,
@@ -1182,8 +1402,12 @@ JSON ONLY:
     def _is_scattered_response(self, response: str) -> dict:
         """
         散漫な応答（話題盛りすぎ）を検出する。
+        正規化については、文数カウントは記号依存なので原文（または正規化）どちらでも良いが、
+        specに "記号正規化" があるので正規化済みテキストを使うのが安全。
 
-        緩和版: 短い発言はスキップ、閾値を緩和、疑問文は除外
+        判定基準:
+          4文以上 かつ 話題3つ以上 -> RETRY
+          3文 または 話題2つ -> WARN
 
         Args:
             response: 評価対象の発言
@@ -1191,44 +1415,54 @@ JSON ONLY:
         Returns:
             {
                 "detected": bool,
-                "issues": list[str]
+                "issues": list[str],
+                "level": str # "RETRY" or "WARN"
             }
         """
+        normalized = self._normalize_text(response)
+
+        # 文数カウント
+        # 読点ではなく、句点・感嘆符・疑問符でカウント
+        # 改行は正規化でスペースになっているので考慮不要（ただし正規化で繋がってしまった場合は文脈が変わる恐れがあるが、
+        # normalize_textの実装は \s+ -> " " なので改行もスペースになる。文末記号がないと文が繋がる。
+        # しかし通常は文末記号があるはず。）
+        sentence_enders = ["。", "！", "？"]
+        sentence_count = 0
+        for char in sentence_enders:
+             sentence_count += normalized.count(char)
+        
+        # 句点なしで終わっている短い文が連続する場合などはカウント漏れするが、
+        # normalizedでは改行がないので、文末記号がないと文の区切りは判別不能。
+        # AIは通常文末記号をつけるのでこれで近似する。
+        if sentence_count == 0 and len(normalized) > 0:
+            sentence_count = 1
+
+        # 話題数の推定
+        # 「〜について」「〜は」「〜の話」などの切り替え語
+        topic_switch_pattern = r"(について|に関しては|の話|ですが|一方で|ちなみに)"
+        topic_boundaries = len(re.findall(topic_switch_pattern, normalized))
+        # 文頭の「〜は」は話題提示だが、文中の「〜は」は主語提示なので区別が難しい。
+        # 簡易的にキーワードヒット数で近似。
+
         issues = []
+        level = "PASS"
 
-        # 短い発言（80文字未満）は散漫検出をスキップ
-        if len(response) < 80:
-            return {"detected": False, "issues": []}
-
-        # 読点が多すぎる（8個以上で散漫と判定）← 技術説明向けに緩和
-        comma_count = response.count("、")
-        if comma_count >= 8:
-            issues.append(f"読点が多すぎる({comma_count}個)")
-
-        # 列挙表現が多い（3回以上で散漫）← 2→3に緩和
-        scatter_patterns = [
-            (r'も[、。！？]', "「〜も」"),
-            (r'あと[、]', "「あと」"),
-            (r'それと', "「それと」"),
-            (r'さらに', "「さらに」"),
-            (r'それから', "「それから」"),
-        ]
-        scatter_count = 0
-        for pattern, _ in scatter_patterns:
-            scatter_count += len(re.findall(pattern, response))
-
-        if scatter_count >= 3:
-            issues.append(f"列挙表現が多い({scatter_count}回)")
-
-        # 文の数が多すぎる（5文以上で散漫と判定）← 技術説明向けに緩和
-        # 疑問文「？」は除外（質問は自然なので）
-        sentence_count = len(re.findall(r'[。！]', response))
-        if sentence_count >= 5:
-            issues.append(f"文が多すぎる({sentence_count}文)")
+        # RETRY条件
+        # 4文以上 かつ 話題3つ以上 (spec: "4文以上かつ話題が3つ以上" -> RETRY)
+        # ちょっと待って、specは "4文以上かつ話題が3つ以上で RETRY"
+        # "3文または話題2つは WARN"
+        
+        if sentence_count >= 4 and topic_boundaries >= 3:
+            issues.append(f"話題と文が多すぎる（{sentence_count}文, 切換{topic_boundaries}回）")
+            level = "RETRY"
+        elif sentence_count >= 3 or topic_boundaries >= 2:
+            issues.append(f"やや散漫（{sentence_count}文, 切換{topic_boundaries}回）")
+            level = "WARN"
 
         if issues:
-            return {"detected": True, "issues": issues}
-        return {"detected": False, "issues": []}
+            return {"detected": True, "issues": issues, "level": level}
+        
+        return {"detected": False, "issues": [], "level": "PASS"}
 
     def is_fatal_modify(self, reason: str) -> bool:
         """
