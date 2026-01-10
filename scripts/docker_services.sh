@@ -23,9 +23,12 @@ VLLM_PORT=8000
 FLORENCE_PORT=5001
 
 # vLLM settings
+# vLLM settings
 VLLM_MODEL="RedHatAI/gemma-3-12b-it-quantized.w8a8"
 VLLM_GPU_MEMORY=0.85
 VLLM_MAX_MODEL_LEN=8192
+
+
 
 # HuggingFace cache
 HF_CACHE="${HF_CACHE:-$HOME/.cache/huggingface}"
@@ -91,6 +94,21 @@ wait_for_endpoint() {
 # ============================================================
 # Stop Functions
 # ============================================================
+
+# Load Configuration from .env
+# ============================================================
+
+# Load configuration from .env if available
+ENV_FILE="$(dirname "$0")/../.env"
+if [ -f "$ENV_FILE" ]; then
+    # Load .env variables (ignoring comments)
+    export $(grep -v '^#' "$ENV_FILE" | xargs)
+    
+    if [ -n "$OPENAI_MODEL" ]; then
+        log_info "Using model from .env: $OPENAI_MODEL"
+        VLLM_MODEL="$OPENAI_MODEL"
+    fi
+fi
 
 stop_container() {
     local name=$1

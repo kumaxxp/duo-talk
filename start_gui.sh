@@ -140,7 +140,7 @@ echo ""
 # Backend API server
 echo -e "${GREEN}🔧 Starting Backend API Server...${NC}"
 export FLASK_PORT=5000
-python3 server/api_server.py &
+python3 server/api_server.py > server.log 2>&1 &
 BACKEND_PID=$!
 echo "   PID: $BACKEND_PID"
 echo -e "${GREEN}   Backend running on http://localhost:5000${NC}"
@@ -151,7 +151,7 @@ sleep 2
 # Frontend development server
 echo -e "${GREEN}🎨 Starting Frontend (Vite)...${NC}"
 cd duo-gui
-VITE_API_BASE=http://localhost:5000 npm run dev &
+VITE_API_BASE=http://localhost:5000 npm run dev > frontend.log 2>&1 &
 FRONTEND_PID=$!
 echo "   PID: $FRONTEND_PID"
 echo ""

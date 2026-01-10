@@ -27,3 +27,4 @@ duo-gui/.env*
 runs/uploads/
 memories/
 server.log
+memories/sister_memory/chroma.sqlite3

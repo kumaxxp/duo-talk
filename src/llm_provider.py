@@ -15,6 +15,7 @@ from typing import Optional, Dict, List, Any
 from enum import Enum
 
 from openai import OpenAI
+from src.config import config
 
 
 class BackendType(Enum):
@@ -219,7 +220,9 @@ class LLMProvider:
             defaults = self.config.get("defaults", {})
             backend_name = defaults.get("backend", "vllm")
             self._current_backend = BackendType(backend_name)
-            self._current_model = defaults.get("model")
+            
+            # .envの設定を優先
+            self._current_model = config.openai_model or defaults.get("model")
 
         backend_config = self.get_backend_config(self._current_backend)
         base_url = backend_config.get("base_url", "http://localhost:8000/v1")

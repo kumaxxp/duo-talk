@@ -318,6 +318,8 @@ class UnifiedPipeline:
                     conversation_history=conversation_history,
                     topic_guidance=topic_guidance,
                     turn_number=turn,
+                    event_callback=event_callback,
+                    run_id=run_id,
                 )
             except Exception as e:
                 print(f"    ❌ Speech generation error: {e}")
@@ -467,6 +469,8 @@ class UnifiedPipeline:
         topic_guidance: Optional[Dict[str, Any]],
         turn_number: int,
         max_retry: int = 2,
+        event_callback: Optional[Callable[[str, Dict], None]] = None,
+        run_id: Optional[str] = None,
     ) -> Tuple[str, Optional[DirectorEvaluation]]:
         """
         リトライ付き発話生成
@@ -479,6 +483,8 @@ class UnifiedPipeline:
             topic_guidance: トピックガイダンス
             turn_number: ターン番号（0-indexed）
             max_retry: 最大リトライ回数
+            event_callback: イベント通知用コールバック
+            run_id: 実行ID
 
         Returns:
             (speech, evaluation)
@@ -486,7 +492,27 @@ class UnifiedPipeline:
         director_instruction: Optional[str] = None
         evaluation: Optional[DirectorEvaluation] = None
 
+        speaker_name = "やな" if speaker == "A" else "あゆ"
+
         for attempt in range(max_retry + 1):
+            # イベント: 生成開始
+            thought_data = {
+                "event": "thought",
+                "run_id": run_id,
+                "status": "generating",
+                "speaker": speaker,
+                "speaker_name": speaker_name,
+                "attempt": attempt + 1,
+                "max_retry": max_retry,
+                "turn": turn_number,
+                "timestamp": datetime.now().isoformat()
+            }
+            if run_id:
+                self.logger.log_event(thought_data)
+            
+            if event_callback:
+                event_callback("thought", thought_data)
+
             # 発話生成
             speech = character.speak_unified(
                 frame_description=frame_description,
@@ -494,6 +520,23 @@ class UnifiedPipeline:
                 director_instruction=director_instruction,
                 topic_guidance=topic_guidance,
             )
+
+            # イベント: 評価開始
+            review_data = {
+                "event": "thought",
+                "run_id": run_id,
+                "status": "reviewing",
+                "speaker": speaker,
+                "speaker_name": speaker_name,
+                "attempt": attempt + 1,
+                "turn": turn_number,
+                "timestamp": datetime.now().isoformat()
+            }
+            if run_id:
+                self.logger.log_event(review_data)
+
+            if event_callback:
+                event_callback("thought", review_data)
 
             # Director評価（NoveltyGuard内蔵）
             evaluation = self.director.evaluate_response(
@@ -506,6 +549,24 @@ class UnifiedPipeline:
                 turn_number=turn_number + 1,  # 1-indexed for Director
                 frame_num=1,  # 単一フレームの場合
             )
+            
+            # イベント: 評価完了（結果通知）
+            reviewed_data = {
+                "event": "thought",
+                "run_id": run_id,
+                "status": "reviewed",
+                "speaker": speaker,
+                "result": evaluation.status.name,
+                "reason": evaluation.reason,
+                "attempt": attempt + 1,
+                "turn": turn_number,
+                "timestamp": datetime.now().isoformat()
+            }
+            if run_id:
+                self.logger.log_event(reviewed_data)
+
+            if event_callback:
+                event_callback("thought", reviewed_data)
 
             # 評価結果に応じた処理
             if evaluation.status == DirectorStatus.PASS:
@@ -519,6 +580,23 @@ class UnifiedPipeline:
                     if director_instruction:
                         preview = director_instruction[:60] if len(director_instruction) > 60 else director_instruction
                         print(f"    🔁 INTERVENE リトライ ({attempt + 1}/{max_retry}): {preview}...")
+                        
+                        retry_data = {
+                            "event": "thought",
+                            "run_id": run_id,
+                            "status": "retrying",
+                            "speaker": speaker,
+                            "reason": f"介入: {evaluation.reason}",
+                            "suggestion": director_instruction,
+                            "attempt": attempt + 1,
+                            "turn": turn_number,
+                            "timestamp": datetime.now().isoformat()
+                        }
+                        if run_id:
+                            self.logger.log_event(retry_data)
+                        
+                        if event_callback:
+                            event_callback("thought", retry_data)
                         continue
                 return speech, evaluation
 
@@ -530,6 +608,23 @@ class UnifiedPipeline:
                     director_instruction = evaluation.suggestion
                     preview = director_instruction[:60] if director_instruction else "N/A"
                     print(f"    🔄 RETRY ({attempt + 1}/{max_retry}): {preview}...")
+                    
+                    retry_data = {
+                        "event": "thought",
+                        "run_id": run_id,
+                        "status": "retrying",
+                        "speaker": speaker,
+                        "reason": evaluation.reason,
+                        "suggestion": director_instruction,
+                        "attempt": attempt + 1,
+                        "turn": turn_number,
+                        "timestamp": datetime.now().isoformat()
+                    }
+                    if run_id:
+                        self.logger.log_event(retry_data)
+                    
+                    if event_callback:
+                        event_callback("thought", retry_data)
                     continue
 
             # リトライ上限またはその他のステータス

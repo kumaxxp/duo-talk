@@ -16,6 +16,7 @@ import requests
 from src.config import config
 
 # Config file for selected model
+# Config file for selected model (Deprecated, moved to .env)
 MODEL_CONFIG_PATH = Path(__file__).parent.parent / "config" / "model_config.json"
 
 
@@ -57,12 +58,12 @@ MODEL_PRESETS: Dict[str, dict] = {
         "vram_estimate": "18GB",
         "verified": True,
     },
-    "gemma3-12b": {
-        "name": "google/gemma-3-12b-it",
+    "gemma3-12b-int8": {
+        "name": "RedHatAI/gemma-3-12b-it-quantized.w8a8",
         "vllm_args": [
             "--dtype", "bfloat16",
             "--gpu-memory-utilization", "0.90",
-            "--max-model-len", "4096",
+            "--max-model-len", "8192",
             "--max-num-seqs", "2",
             "--host", "127.0.0.1",
             "--port", "8000",
@@ -71,9 +72,9 @@ MODEL_PRESETS: Dict[str, dict] = {
             "--limit-mm-per-prompt", '{"image": 1}',
         ],
         "supports_vision": True,
-        "description": "バランス型VLM",
+        "description": "軽量構成（INT8量子化）",
         "vram_estimate": "14GB",
-        "verified": False,  # OOM on 24GB GPU - requires ~23GB
+        "verified": True,
     },
     # === Text-only Models ===
     "qwen2.5-14b-awq": {
@@ -159,20 +160,28 @@ class ModelManager:
             self.status = "stopped"
 
     def _load_selected_model(self) -> Optional[str]:
-        """Load selected model from config file."""
-        if MODEL_CONFIG_PATH.exists():
-            try:
-                data = json.loads(MODEL_CONFIG_PATH.read_text())
-                return data.get("selected_model")
-            except (json.JSONDecodeError, KeyError):
-                pass
+        """Load selected model from .env or defaults."""
+        # 1. Check .env (via config object)
+        env_model = config.openai_model
+        
+        # Check if this model corresponds to a known preset
+        for model_id, preset in MODEL_PRESETS.items():
+            if preset["name"] == env_model:
+                return model_id
+            # Also check if env_model is the preset ID itself (legacy support)
+            if model_id == env_model:
+                return model_id
+                
+        # 2. Check defaults in llm_backends.yaml (via config)
+        # Note: config.openai_model is already populated from .env or defaults
+        
         return None
 
     def _save_selected_model(self, model_id: str) -> None:
-        """Save selected model to config file."""
-        MODEL_CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
-        data = {"selected_model": model_id}
-        MODEL_CONFIG_PATH.write_text(json.dumps(data, indent=2))
+        """Save selected model to .env file."""
+        # Deprecated: JSON config is no longer used
+        if MODEL_CONFIG_PATH.exists():
+             MODEL_CONFIG_PATH.unlink()
 
     def get_available_models(self) -> List[dict]:
         """Return list of available models."""
@@ -234,6 +243,8 @@ class ModelManager:
 
         # Update .env file for next startup
         preset = MODEL_PRESETS[model_id]
+        # Store the model identifier/name in .env
+        # We store the HuggingFace ID (e.g. RedHatAI/...) to be compatible with other tools
         self._update_env_file(preset["name"])
 
         if model_id == self.running_model:

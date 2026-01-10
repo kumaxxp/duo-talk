@@ -1,5 +1,0 @@
-{
-  "backend": "vllm",
-  "model": "gemma3-27b-int4",
-  "container_id": null
-}
