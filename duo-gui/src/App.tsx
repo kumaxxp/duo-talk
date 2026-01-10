@@ -9,8 +9,9 @@ import OwnerControlPanel from './components/OwnerControlPanel'
 import ProviderPanel from './components/ProviderPanel'
 import ChatInputPanel from './components/ChatInputPanel'
 import { covRate } from './hooks/useCov'
-import type { DirectorEvent, RAGEvent, SpeakEvent, ThoughtEvent } from './lib/types'
+import type { DirectorEvent, RAGEvent, SpeakEvent, ThoughtEvent, UnifiedSSEEvent } from './lib/types'
 import PromptModal from './components/PromptModal'
+import LogTerminal from './components/LogTerminal'
 
 const API = (import.meta as any).env?.VITE_API_BASE || ''
 
@@ -53,10 +54,7 @@ export default function App() {
     setSelected(undefined)
   }, [rid])
 
-  // Scroll to bottom of log when updated
-  useEffect(() => {
-    logEndRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }, [thoughtLog])
+
 
   const listRuns = async () => {
     const r = await fetch(`${API}/api/run/list`)
@@ -309,72 +307,84 @@ export default function App() {
 
 
             </section>
-            <section className="lg:col-span-3 space-y-3">
-              <div className="p-4 bg-white rounded-lg shadow">
-                <h2 className="font-medium mb-2">LLM Interaction Log</h2>
-                <div className="max-h-96 overflow-y-auto space-y-2 text-xs border rounded p-2 bg-slate-50">
-                  {thoughtLog.length === 0 && <div className="text-gray-400 text-center py-2">No interaction logs yet...</div>}
-                  {thoughtLog.map((log, i) => (
-                    <div key={i} className={`p-2 rounded border-l-4 ${log.status === 'retrying' ? 'bg-orange-50 border-orange-400 text-orange-900' :
-                        log.status === 'reviewing' ? 'bg-purple-50 border-purple-400 text-purple-900' :
-                          log.status === 'reviewed' ? 'bg-green-50 border-green-400 text-green-900' :
-                            'bg-blue-50 border-blue-400 text-blue-900'
-                      }`}>
-                      <div className="flex justify-between items-start">
-                        <span className="font-bold">
-                          {log.status === 'generating' && '📝 GEN'}
-                          {log.status === 'reviewing' && '⚖️ EVAL'}
-                          {log.status === 'reviewed' && '✅ RSLT'}
-                          {log.status === 'retrying' && '↩️ RETRY'}
-                          <span className="ml-1 font-normal text-gray-600">
-                            {log.speaker_name || log.speaker} (T{log.turn})
-                          </span>
-                        </span>
-                        <span className="text-gray-400 text-[10px]">{log.ts?.split('T')[1]?.split('.')[0]}</span>
-                      </div>
-
-                      {log.status === 'generating' && <div>Generating response... (Attempt {log.attempt})</div>}
-
-                      {log.status === 'reviewed' && (
-                        <div className="mt-1">
-                          <div>Result: <b>{log.result}</b></div>
-                          {log.reason && <div className="text-gray-600 mt-0.5">{log.reason}</div>}
-                        </div>
-                      )}
-
-                      {log.status === 'retrying' && (
-                        <div className="mt-1">
-                          <div className="font-semibold text-orange-800">{log.reason}</div>
-                          {log.suggestion && <div className="italic mt-0.5">Suggestion: {log.suggestion}</div>}
-                        </div>
-                      )}
-                    </div>
-                  ))}
-                  <div ref={logEndRef} />
-                </div>
-              </div>
-              <div className="p-4 bg-white rounded-lg shadow">
+            <section className="lg:col-span-3 space-y-3 flex flex-col h-full">
+              <div className="p-4 bg-white rounded-lg shadow flex-1 flex flex-col">
                 <div className="flex items-center justify-between mb-2">
                   <h2 className="font-medium">Timeline</h2>
                   <CovSpark values={covValues} />
                 </div>
 
+                <div className="space-y-4 flex-1 overflow-y-auto pr-2">
+                  {/* Merged Timeline: Thoughts + Turns */}
+                  {filteredTurns.map(t => {
+                    // Filter thoughts for this turn
+                    const turnThoughts = thoughtLog.filter(th => th.turn === t);
 
+                    return (
+                      <div key={t} className="space-y-2">
+                        {/* Thoughts for this turn */}
+                        {turnThoughts.map((log, i) => (
+                          <div key={`${t}-thought-${i}`} className={`text-xs p-2 rounded border-l-4 ml-4 ${log.status === 'retrying' ? 'bg-orange-50 border-orange-400 text-orange-900' :
+                            log.status === 'reviewing' ? 'bg-purple-50 border-purple-400 text-purple-900' :
+                              log.status === 'reviewed' ? 'bg-green-50 border-green-400 text-green-900' :
+                                'bg-blue-50 border-blue-400 text-blue-900'
+                            }`}>
+                            <div className="flex justify-between items-start">
+                              <span className="font-bold">
+                                {log.status === 'generating' && '📝 GEN'}
+                                {log.status === 'reviewing' && '⚖️ EVAL'}
+                                {log.status === 'reviewed' && '✅ RSLT'}
+                                {log.status === 'retrying' && '↩️ RETRY'}
+                                <span className="ml-1 font-normal text-gray-600">
+                                  {log.speaker_name || log.speaker}
+                                </span>
+                              </span>
+                              <span className="text-gray-400 text-[10px]">{log.ts?.split('T')[1]?.split('.')[0]}</span>
+                            </div>
 
+                            {log.status === 'generating' && <div>Generating... {log.attempt > 1 && `(Attempt ${log.attempt})`}</div>}
 
+                            {log.status === 'reviewed' && (
+                              <div className="mt-1">
+                                <div>Result: <b>{log.result}</b></div>
+                                {log.reason && <div className="text-gray-600 mt-0.5">{log.reason}</div>}
+                              </div>
+                            )}
 
-                <div className="space-y-3">
-                  {filteredTurns.map(t => (
-                    <TurnCard key={t} sp={speaks[t]} rag={rag[t]} beat={directors[t]?.beat}
-                      directorStatus={directors[t]?.status} directorReason={directors[t]?.reason}
-                      directorGuidance={directors[t]?.guidance || undefined}
-                      onSelect={() => { setSelected(t); requestAnimationFrame(() => { const el = document.getElementById(`rag-${t}`); el?.scrollIntoView({ block: 'center', behavior: 'smooth' }) }) }}
-                      onViewPrompts={(e) => { lastFocusRef.current = e.currentTarget as HTMLElement; setModalTurn(t) }} />
-                  ))}
+                            {log.status === 'retrying' && (
+                              <div className="mt-1">
+                                <div className="font-semibold text-orange-800">{log.reason}</div>
+                                {log.suggestion && <div className="italic mt-0.5">Suggestion: {log.suggestion}</div>}
+                              </div>
+                            )}
+                          </div>
+                        ))}
+
+                        {/* The Actual Turn Card */}
+                        <TurnCard
+                          sp={speaks[t]}
+                          rag={rag[t]}
+                          beat={directors[t]?.beat}
+                          directorStatus={directors[t]?.status}
+                          directorReason={directors[t]?.reason}
+                          directorGuidance={directors[t]?.guidance || undefined}
+                          onSelect={() => { setSelected(t); requestAnimationFrame(() => { const el = document.getElementById(`rag-${t}`); el?.scrollIntoView({ block: 'center', behavior: 'smooth' }) }) }}
+                          onViewPrompts={(e) => { lastFocusRef.current = e.currentTarget as HTMLElement; setModalTurn(t) }}
+                        />
+                      </div>
+                    )
+                  })}
+                  <div ref={logEndRef} />
                 </div>
               </div>
+
+              {/* Granular Log Terminal */}
+              <div className="p-4 bg-white rounded-lg shadow">
+                <h2 className="font-medium mb-2 text-xs text-gray-500 uppercase">System Logs</h2>
+                <LogTerminal />
+              </div>
             </section>
-          </div >
+          </div>
         )}
 
 

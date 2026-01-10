@@ -72,6 +72,40 @@ def release_processing_lock():
         is_processing = False
 
 
+# ==================== SYSTEM MANAGEMENT ====================
+
+@app.route('/api/system/log/tail', methods=['GET'])
+def get_log_tail():
+    """
+    Get the last N lines of the server log.
+    
+    Query Params:
+        lines (int): Number of lines to return (default: 50)
+        
+    Returns:
+        JSON: {"lines": ["line 1", "line 2", ...]}
+    """
+    try:
+        lines_to_read = request.args.get('lines', default=50, type=int)
+        log_file = Path(__file__).parent.parent / "server.log"
+        
+        if not log_file.exists():
+            return jsonify({"lines": ["Log file not found"]})
+            
+        # Efficiently read last N lines
+        # Using simple deque logic since logs aren't massive yet, 
+        # for production consider optimal tailing
+        with open(log_file, 'r', encoding='utf-8', errors='replace') as f:
+            from collections import deque
+            last_lines = deque(f, maxlen=lines_to_read)
+            return jsonify({"lines": list(last_lines)})
+            
+    except Exception as e:
+        logger.error(f"Error reading log tail: {str(e)}")
+        # Return error as a log line so it appears in terminal
+        return jsonify({"lines": [f"Error reading log: {str(e)}"]})
+
+
 # ==================== RUN MANAGEMENT ====================
 
 @app.route('/api/run/list', methods=['GET'])
