@@ -13,11 +13,20 @@ interface BackendHealth {
   container_id?: string | null
 }
 
+interface FlorenceHealth {
+  available: boolean
+  state: string
+  container_id: string | null
+  gpu_memory_gb: number | null
+  error?: string
+}
+
 interface ProviderStatus {
   current_backend: string | null
   current_model: string | null
   ollama: BackendHealth
   vllm: BackendHealth
+  florence2?: FlorenceHealth
   defaults: {
     backend: string
     model: string
@@ -42,16 +51,20 @@ interface BackendInfo {
 }
 
 // === Component ===
+import { Eye, Activity } from 'lucide-react'
+
 export default function ProviderPanel({ apiBase }: { apiBase: string }) {
   // State
   const [status, setStatus] = useState<ProviderStatus | null>(null)
   const [backends, setBackends] = useState<BackendInfo[]>([])
   const [loading, setLoading] = useState(true)
   const [switching, setSwitching] = useState(false)
-  const [dockerAction, setDockerAction] = useState<'starting' | 'stopping' | null>(null)
+  const [dockerAction, setDockerAction] = useState<'starting' | 'stopping' | 'florence_start' | 'florence_stop' | null>(null)
   const [message, setMessage] = useState<{ type: 'success' | 'error' | 'info'; text: string } | null>(null)
   const [dockerCommand, setDockerCommand] = useState<string | null>(null)
   const [selectedVllmModel, setSelectedVllmModel] = useState<string>('gemma3-12b-int8')
+
+  // ... (fetchStatus etc same) ...
 
   // Fetch status
   const fetchStatus = useCallback(async () => {
@@ -64,7 +77,7 @@ export default function ProviderPanel({ apiBase }: { apiBase: string }) {
     }
   }, [apiBase])
 
-  // Fetch backends
+  // ... (fetchBackends same) ...
   const fetchBackends = useCallback(async () => {
     try {
       const res = await fetch(`${apiBase}/api/v2/provider/backends`)
@@ -93,7 +106,7 @@ export default function ProviderPanel({ apiBase }: { apiBase: string }) {
     return () => clearInterval(interval)
   }, [fetchStatus])
 
-  // Switch backend
+  // ... (handleSwitchBackend same) ...
   const handleSwitchBackend = async (backend: string, modelId?: string) => {
     setSwitching(true)
     setMessage(null)
@@ -120,7 +133,7 @@ export default function ProviderPanel({ apiBase }: { apiBase: string }) {
     }
   }
 
-  // Start vLLM Docker
+  // ... (vLLM docker handlers same) ...
   const handleStartDocker = async () => {
     setDockerAction('starting')
     setMessage({ type: 'info', text: 'vLLM Docker を起動中... (2-3分かかります)' })
@@ -147,7 +160,6 @@ export default function ProviderPanel({ apiBase }: { apiBase: string }) {
     }
   }
 
-  // Stop vLLM Docker
   const handleStopDocker = async () => {
     setDockerAction('stopping')
     setMessage(null)
@@ -169,7 +181,43 @@ export default function ProviderPanel({ apiBase }: { apiBase: string }) {
     }
   }
 
-  // Get Docker command
+  // Florence-2 Handlers
+  const handleStartFlorence = async () => {
+    setDockerAction('florence_start')
+    setMessage({ type: 'info', text: 'Florence-2 を起動中...' })
+    try {
+      const res = await fetch(`${apiBase}/api/v2/provider/florence/start`, { method: 'POST' })
+      const data = await res.json()
+      if (data.success) {
+        setMessage({ type: 'success', text: 'Florence-2 を起動しました' })
+        await fetchStatus()
+      } else {
+        setMessage({ type: 'error', text: data.error || '起動に失敗しました' })
+      }
+    } catch {
+      setMessage({ type: 'error', text: 'エラーが発生しました' })
+    } finally {
+      setDockerAction(null)
+    }
+  }
+
+  const handleStopFlorence = async () => {
+    setDockerAction('florence_stop')
+    try {
+      const res = await fetch(`${apiBase}/api/v2/provider/florence/stop`, { method: 'POST' })
+      const data = await res.json()
+      if (data.success) {
+        setMessage({ type: 'success', text: 'Florence-2 を停止しました' })
+        await fetchStatus()
+      }
+    } catch {
+      // ignore
+    } finally {
+      setDockerAction(null)
+    }
+  }
+
+  // ... (helpers same) ...
   const handleGetDockerCommand = async (modelId: string) => {
     try {
       const res = await fetch(`${apiBase}/api/v2/provider/docker/command/${modelId}`)
@@ -182,14 +230,12 @@ export default function ProviderPanel({ apiBase }: { apiBase: string }) {
     }
   }
 
-  // Copy to clipboard
   const copyToClipboard = (text: string) => {
     navigator.clipboard.writeText(text)
     setMessage({ type: 'info', text: 'コピーしました' })
     setTimeout(() => setMessage(null), 2000)
   }
 
-  // Render status icon
   const StatusIcon = ({ available }: { available: boolean }) => {
     if (available) {
       return <CheckCircle className="w-5 h-5 text-green-500" />
@@ -212,6 +258,9 @@ export default function ProviderPanel({ apiBase }: { apiBase: string }) {
   const vllmModels = vllmBackend?.models || []
   const isOllamaActive = status?.current_backend === 'ollama'
   const isVllmActive = status?.current_backend === 'vllm'
+
+  // Determine display name for current backend
+  const currentBackendName = isOllamaActive ? 'Ollama' : (isVllmActive ? 'vLLM (Docker)' : (status?.current_backend || '-'))
 
   return (
     <div className="space-y-6">
@@ -246,7 +295,7 @@ export default function ProviderPanel({ apiBase }: { apiBase: string }) {
       <div className="p-4 bg-gradient-to-r from-slate-800 to-slate-700 rounded-lg text-white">
         <div className="text-sm text-slate-300 mb-1">現在のバックエンド</div>
         <div className="flex items-center gap-3">
-          <span className="text-2xl font-bold capitalize">{status?.current_backend || '-'}</span>
+          <span className="text-2xl font-bold capitalize">{currentBackendName}</span>
           <span className="px-2 py-1 bg-slate-600 rounded text-sm">{status?.current_model || '-'}</span>
         </div>
       </div>
@@ -269,7 +318,6 @@ export default function ProviderPanel({ apiBase }: { apiBase: string }) {
             <StatusIcon available={status?.ollama?.available || false} />
           </div>
 
-          {/* Ollama Status */}
           <div className="space-y-2 mb-4">
             <div className="flex items-center gap-2 text-sm">
               <span className={`w-2 h-2 rounded-full ${status?.ollama?.available ? 'bg-green-500' : 'bg-red-400'}`} />
@@ -289,7 +337,7 @@ export default function ProviderPanel({ apiBase }: { apiBase: string }) {
             )}
           </div>
 
-          {/* Ollama Models */}
+          {/* Ollama Models List */}
           <div className="space-y-2 mb-4 max-h-40 overflow-y-auto">
             {ollamaModels.map((model) => (
               <button
@@ -317,7 +365,6 @@ export default function ProviderPanel({ apiBase }: { apiBase: string }) {
             ))}
           </div>
 
-          {/* Ollama Switch Button */}
           {!isOllamaActive && status?.ollama?.available && (
             <button
               onClick={() => handleSwitchBackend('ollama')}
@@ -345,7 +392,6 @@ export default function ProviderPanel({ apiBase }: { apiBase: string }) {
             <StatusIcon available={status?.vllm?.available || false} />
           </div>
 
-          {/* vLLM Status */}
           <div className="space-y-2 mb-4">
             <div className="flex items-center gap-2 text-sm">
               <span className={`w-2 h-2 rounded-full ${status?.vllm?.available ? 'bg-green-500' : 'bg-red-400'}`} />
@@ -365,7 +411,6 @@ export default function ProviderPanel({ apiBase }: { apiBase: string }) {
             )}
           </div>
 
-          {/* vLLM Model Selection */}
           <div className="mb-4">
             <label className="text-sm text-slate-600 mb-1 block">モデル選択</label>
             <select
@@ -384,24 +429,6 @@ export default function ProviderPanel({ apiBase }: { apiBase: string }) {
             </select>
           </div>
 
-          {/* Model Info */}
-          {vllmModels.find(m => m.id === selectedVllmModel) && (
-            <div className="mb-4 p-2 bg-slate-50 rounded text-xs space-y-1">
-              <div className="flex justify-between">
-                <span className="text-slate-500">VRAM:</span>
-                <span>{vllmModels.find(m => m.id === selectedVllmModel)?.vram_gb} GB</span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-slate-500">VLM:</span>
-                <span>{vllmModels.find(m => m.id === selectedVllmModel)?.supports_vlm ? 'O' : 'X'}</span>
-              </div>
-              <div className="text-slate-600 mt-1">
-                {vllmModels.find(m => m.id === selectedVllmModel)?.description}
-              </div>
-            </div>
-          )}
-
-          {/* vLLM Docker Controls */}
           <div className="flex gap-2">
             {!status?.vllm?.available ? (
               <button
@@ -409,11 +436,7 @@ export default function ProviderPanel({ apiBase }: { apiBase: string }) {
                 disabled={dockerAction !== null}
                 className="flex-1 py-2 bg-blue-500 text-white rounded hover:bg-blue-600 disabled:opacity-50 flex items-center justify-center gap-2"
               >
-                {dockerAction === 'starting' ? (
-                  <Loader2 className="w-4 h-4 animate-spin" />
-                ) : (
-                  <Play className="w-4 h-4" />
-                )}
+                {dockerAction === 'starting' ? <Loader2 className="w-4 h-4 animate-spin" /> : <Play className="w-4 h-4" />}
                 Docker起動
               </button>
             ) : (
@@ -430,19 +453,73 @@ export default function ProviderPanel({ apiBase }: { apiBase: string }) {
                   onClick={handleStopDocker}
                   disabled={dockerAction !== null}
                   className="px-4 py-2 bg-red-500 text-white rounded hover:bg-red-600 disabled:opacity-50 flex items-center justify-center"
-                  title="Docker停止"
                 >
-                  {dockerAction === 'stopping' ? (
-                    <Loader2 className="w-4 h-4 animate-spin" />
-                  ) : (
-                    <Square className="w-4 h-4" />
-                  )}
+                  {dockerAction === 'stopping' ? <Loader2 className="w-4 h-4 animate-spin" /> : <Square className="w-4 h-4" />}
                 </button>
               </>
             )}
           </div>
         </div>
+
+        {/* Florence-2 Card */}
+        <div className="p-4 bg-white border-2 border-slate-200 rounded-lg">
+          <div className="flex items-center justify-between mb-4">
+            <div className="flex items-center gap-2">
+              <Eye className="w-5 h-5 text-purple-500" />
+              <span className="font-semibold">Florence-2 (Vision)</span>
+            </div>
+            <StatusIcon available={status?.florence2?.available || false} />
+          </div>
+
+          <div className="space-y-2 mb-4">
+            <div className="flex items-center gap-2 text-sm">
+              <span className={`w-2 h-2 rounded-full ${status?.florence2?.available ? 'bg-green-500' : 'bg-red-400'}`} />
+              <span className="text-slate-600">
+                {status?.florence2?.available ? '起動中' : '停止'}
+              </span>
+              {status?.florence2?.container_id && (
+                <span className="text-xs text-slate-400 font-mono">
+                  ({status.florence2.container_id.slice(0, 12)})
+                </span>
+              )}
+            </div>
+            {status?.florence2?.available && status.florence2.gpu_memory_gb && (
+              <div className="text-sm text-slate-500">
+                GPU使用量: {status.florence2.gpu_memory_gb} GB
+              </div>
+            )}
+            {status?.florence2?.error && (
+              <div className="text-xs text-red-500 truncate" title={status.florence2.error}>
+                {status.florence2.error.slice(0, 50)}...
+              </div>
+            )}
+          </div>
+
+          <div className="mt-auto">
+            {!status?.florence2?.available ? (
+              <button
+                onClick={handleStartFlorence}
+                disabled={dockerAction !== null}
+                className="w-full py-2 bg-purple-500 text-white rounded hover:bg-purple-600 disabled:opacity-50 flex items-center justify-center gap-2"
+              >
+                {dockerAction === 'florence_start' ? <Loader2 className="w-4 h-4 animate-spin" /> : <Play className="w-4 h-4" />}
+                起動する
+              </button>
+            ) : (
+              <button
+                onClick={handleStopFlorence}
+                disabled={dockerAction !== null}
+                className="w-full py-2 bg-red-500 text-white rounded hover:bg-red-600 disabled:opacity-50 flex items-center justify-center gap-2"
+              >
+                {dockerAction === 'florence_stop' ? <Loader2 className="w-4 h-4 animate-spin" /> : <Square className="w-4 h-4" />}
+                停止する
+              </button>
+            )}
+          </div>
+        </div>
+
       </div>
+
 
       {/* Docker Command */}
       {dockerCommand && (

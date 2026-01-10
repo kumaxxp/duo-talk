@@ -26,7 +26,7 @@ MODEL_PRESETS: Dict[str, dict] = {
         "name": "RedHatAI/gemma-3-27b-it-quantized.w4a16",
         "vllm_args": [
             "--dtype", "bfloat16",
-            "--gpu-memory-utilization", "0.90",
+            "--gpu-memory-utilization", "0.88",
             "--max-model-len", "4096",
             "--max-num-seqs", "2",
             "--host", "127.0.0.1",
@@ -44,7 +44,7 @@ MODEL_PRESETS: Dict[str, dict] = {
         "name": "Qwen/Qwen2.5-VL-7B-Instruct",
         "vllm_args": [
             "--dtype", "half",
-            "--gpu-memory-utilization", "0.90",
+            "--gpu-memory-utilization", "0.88",
             "--max-model-len", "8192",
             "--max-num-seqs", "2",
             "--host", "127.0.0.1",
@@ -62,7 +62,7 @@ MODEL_PRESETS: Dict[str, dict] = {
         "name": "RedHatAI/gemma-3-12b-it-quantized.w8a8",
         "vllm_args": [
             "--dtype", "bfloat16",
-            "--gpu-memory-utilization", "0.90",
+            "--gpu-memory-utilization", "0.88",
             "--max-model-len", "8192",
             "--max-num-seqs", "2",
             "--host", "127.0.0.1",
@@ -82,7 +82,7 @@ MODEL_PRESETS: Dict[str, dict] = {
         "vllm_args": [
             "--quantization", "awq",
             "--dtype", "half",
-            "--gpu-memory-utilization", "0.90",
+            "--gpu-memory-utilization", "0.88",
             "--max-model-len", "8192",
             "--host", "127.0.0.1",
             "--port", "8000",
@@ -97,7 +97,7 @@ MODEL_PRESETS: Dict[str, dict] = {
         "vllm_args": [
             "--quantization", "awq",
             "--dtype", "half",
-            "--gpu-memory-utilization", "0.90",
+            "--gpu-memory-utilization", "0.88",
             "--max-model-len", "8192",
             "--host", "127.0.0.1",
             "--port", "8000",
@@ -111,7 +111,7 @@ MODEL_PRESETS: Dict[str, dict] = {
         "name": "Qwen/Qwen2.5-3B-Instruct",
         "vllm_args": [
             "--dtype", "half",
-            "--gpu-memory-utilization", "0.90",
+            "--gpu-memory-utilization", "0.88",
             "--max-model-len", "8192",
             "--host", "127.0.0.1",
             "--port", "8000",

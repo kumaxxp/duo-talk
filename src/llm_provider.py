@@ -7,15 +7,18 @@ LLM Provider - Ollama/vLLM バックエンド抽象化層
 import os
 import yaml
 import requests
+import json
 import subprocess
 import time
 from pathlib import Path
 from dataclasses import dataclass, field
-from typing import Optional, Dict, List, Any
+from typing import Optional, Dict, List, Any, Union
 from enum import Enum
 
 from openai import OpenAI
 from src.config import config
+from src.docker_manager import DockerServiceManager, DockerConfig, ServiceState
+from src.model_manager import get_model_manager, MODEL_PRESETS
 
 
 class BackendType(Enum):
@@ -52,7 +55,8 @@ class LLMProvider:
     """
 
     CONFIG_PATH = Path(__file__).parent.parent / "config" / "llm_backends.yaml"
-    STATE_PATH = Path(__file__).parent.parent / "config" / "llm_provider_state.json"
+    STATE_PATH = Path(__file__).parent.parent / \
+        "config" / "llm_provider_state.json"
 
     def __init__(self):
         self.config = self._load_config()
@@ -180,13 +184,26 @@ class LLMProvider:
                     return data["data"][0]["id"]
         except requests.RequestException:
             pass
-
         return None
 
     def get_status(self) -> Dict[str, Any]:
         """現在の状態を取得"""
         ollama_status = self.check_backend_health(BackendType.OLLAMA)
         vllm_status = self.check_backend_health(BackendType.VLLM)
+
+        # Get Florence-2 status via DockerServiceManager
+        florence_status = None
+        try:
+            with DockerServiceManager() as dm:
+                f_stat = dm.florence_status()
+                florence_status = {
+                    "available": f_stat.state.value == "running",
+                    "state": f_stat.state.value,
+                    "container_id": f_stat.container_id,
+                    "gpu_memory_gb": f_stat.gpu_memory_gb
+                }
+        except Exception as e:
+            florence_status = {"available": False, "error": str(e)}
 
         return {
             "current_backend": self._current_backend.value if self._current_backend else None,
@@ -202,6 +219,7 @@ class LLMProvider:
                 "error": vllm_status.error,
                 "container_id": self._docker_container_id,
             },
+            "florence2": florence_status,
             "defaults": self.config.get("defaults", {}),
         }
 
@@ -220,7 +238,7 @@ class LLMProvider:
             defaults = self.config.get("defaults", {})
             backend_name = defaults.get("backend", "vllm")
             self._current_backend = BackendType(backend_name)
-            
+
             # .envの設定を優先
             self._current_model = config.openai_model or defaults.get("model")
 
@@ -241,9 +259,11 @@ class LLMProvider:
 
         if self._current_backend is None:
             defaults = self.config.get("defaults", {})
-            self._current_backend = BackendType(defaults.get("backend", "vllm"))
+            self._current_backend = BackendType(
+                defaults.get("backend", "vllm"))
 
-        model_info = self.get_model_info(self._current_backend, self._current_model)
+        model_info = self.get_model_info(
+            self._current_backend, self._current_model)
         return model_info.name if model_info else self._current_model
 
     # ========== バックエンド切り替え ==========
@@ -319,7 +339,8 @@ class LLMProvider:
         if model_info is None:
             return f"# Unknown model: {model_id}"
 
-        docker_config = self.get_backend_config(BackendType.VLLM).get("docker", {})
+        docker_config = self.get_backend_config(
+            BackendType.VLLM).get("docker", {})
 
         cmd_parts = [
             "docker run --rm --gpus all",
@@ -343,50 +364,65 @@ class LLMProvider:
         return " \\\n    ".join(cmd_parts)
 
     def start_vllm_docker(self, model_id: str) -> Dict[str, Any]:
-        """vLLM Dockerコンテナを起動"""
-        model_info = self.get_model_info(BackendType.VLLM, model_id)
-        if model_info is None:
+        """vLLM Dockerコンテナを起動 (Unified with DockerServiceManager)"""
+        if model_id not in MODEL_PRESETS:
             return {"success": False, "error": f"Unknown model: {model_id}"}
-
-        docker_config = self.get_backend_config(BackendType.VLLM).get("docker", {})
-
-        # コマンド構築
-        cmd = [
-            "docker", "run", "-d", "--gpus", "all",
-            "-v", os.path.expanduser(docker_config.get("cache_mount", "~/.cache/huggingface:/root/.cache/huggingface")),
-            "-p", "8000:8000",
-        ]
-
-        if docker_config.get("ipc_host", True):
-            cmd.extend(["--ipc", "host"])
-
-        cmd.append(docker_config.get("image", "vllm/vllm-openai:latest"))
-        cmd.extend(["--model", model_info.name])
-        cmd.extend(["--gpu-memory-utilization", str(docker_config.get("gpu_memory_utilization", 0.85))])
-
-        for arg in model_info.docker_args:
-            cmd.append(arg)
-
+        
+        # 1. Update .env via ModelManager to ensure persistence
+        get_model_manager().select_model(model_id)
+        
+        # 2. Extract configuration from preset
+        preset = MODEL_PRESETS[model_id]
+        vllm_args = preset.get("vllm_args", [])
+        
+        # Parse args for DockerConfig
+        gpu_util = 0.85
+        max_len = 8192
+        
         try:
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
-            if result.returncode == 0:
-                container_id = result.stdout.strip()[:12]
-                self._docker_container_id = container_id
-                self._save_state()
+            if "--gpu-memory-utilization" in vllm_args:
+                idx = vllm_args.index("--gpu-memory-utilization")
+                gpu_util = float(vllm_args[idx + 1])
+            
+            if "--max-model-len" in vllm_args:
+                idx = vllm_args.index("--max-model-len")
+                max_len = int(vllm_args[idx + 1])
+        except (ValueError, IndexError):
+            pass
 
-                return {
-                    "success": True,
-                    "container_id": container_id,
-                    "message": "Container started. Waiting for model to load...",
-                    "model": model_info.name,
-                }
-            else:
-                return {
-                    "success": False,
-                    "error": result.stderr,
-                }
-        except subprocess.TimeoutExpired:
-            return {"success": False, "error": "Docker command timed out"}
+        # 3. Initialize DockerServiceManager with custom config
+        d_cfg = DockerConfig(
+            vllm_model=preset["name"],
+            vllm_gpu_memory=gpu_util,
+            vllm_max_model_len=max_len,
+            # Ensure we use standard container names
+            vllm_container="duo-talk-vllm"
+        )
+        
+        try:
+            # We use the manager to start vLLM
+            # Note: start_vllm returns boolean success
+            with DockerServiceManager(config=d_cfg) as dm:
+                success = dm.start_vllm()
+                status = dm.vllm_status()
+                
+                if success:
+                    # Update local state
+                    self._docker_container_id = status.container_id
+                    self._save_state()
+                    
+                    return {
+                        "success": True,
+                        "container_id": status.container_id,
+                        "message": "Container started successfully.",
+                        "model": preset["name"],
+                    }
+                else:
+                    return {
+                        "success": False,
+                        "error": "Failed to start vLLM container. Check docker logs."
+                    }
+                    
         except Exception as e:
             return {"success": False, "error": str(e)}
 
@@ -396,11 +432,13 @@ class LLMProvider:
             # コンテナIDがない場合、実行中のvLLMコンテナを探す
             try:
                 result = subprocess.run(
-                    ["docker", "ps", "-q", "--filter", "ancestor=vllm/vllm-openai:latest"],
+                    ["docker", "ps", "-q", "--filter",
+                        "ancestor=vllm/vllm-openai:latest"],
                     capture_output=True, text=True, timeout=10
                 )
                 if result.returncode == 0 and result.stdout.strip():
-                    self._docker_container_id = result.stdout.strip().split('\n')[0]
+                    self._docker_container_id = result.stdout.strip().split('\n')[
+                        0]
             except Exception:
                 pass
 
@@ -431,6 +469,30 @@ class LLMProvider:
                 return True
             time.sleep(3)
         return False
+
+    # ========== Florence-2 Docker Management ==========
+
+    def start_florence_docker(self) -> Dict[str, Any]:
+        """Florence-2 Dockerコンテナを起動"""
+        try:
+            with DockerServiceManager() as dm:
+                if dm.start_florence():
+                    return {"success": True, "message": "Florence-2 started"}
+                else:
+                    return {"success": False, "error": "Failed to start Florence-2"}
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
+    def stop_florence_docker(self) -> Dict[str, Any]:
+        """Florence-2 Dockerコンテナを停止"""
+        try:
+            with DockerServiceManager() as dm:
+                if dm.stop_florence():
+                    return {"success": True, "message": "Florence-2 stopped"}
+                else:
+                    return {"success": False, "error": "Failed to stop Florence-2"}
+        except Exception as e:
+            return {"success": False, "error": str(e)}
 
 
 # シングルトン

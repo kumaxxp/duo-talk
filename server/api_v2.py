@@ -24,7 +24,7 @@ from src.sister_memory import get_sister_memory
 from src.owner_intervention import get_intervention_manager, InterventionState
 
 # Blueprint for v2.1 APIs
-v2_api = Blueprint('v2_api', __name__, url_prefix='/api/v2')
+v2_api = Blueprint('v2_api_redux', __name__, url_prefix='/api/v2')
 
 # Global instances
 _signals: Optional[DuoSignals] = None
@@ -893,6 +893,20 @@ def stop_vllm_docker():
     """vLLM Dockerコンテナを停止"""
     provider = get_llm_provider()
     return jsonify(provider.stop_vllm_docker())
+
+
+@v2_api.route('/provider/florence/start', methods=['POST'])
+def start_florence_docker():
+    """Florence-2 Dockerコンテナを起動"""
+    provider = get_llm_provider()
+    return jsonify(provider.start_florence_docker())
+
+
+@v2_api.route('/provider/florence/stop', methods=['POST'])
+def stop_florence_docker():
+    """Florence-2 Dockerコンテナを停止"""
+    provider = get_llm_provider()
+    return jsonify(provider.stop_florence_docker())
 
 
 @v2_api.route('/provider/health/<backend>', methods=['GET'])

@@ -28,3 +28,6 @@ runs/uploads/
 memories/
 server.log
 memories/sister_memory/chroma.sqlite3
+ollama.log
+pull.log
+runs/commentary_runs.jsonl

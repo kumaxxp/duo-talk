@@ -33,12 +33,18 @@ from src.vision_config import (
 from scripts.run_narration import NarrationPipeline
 from src.owner_intervention import get_intervention_manager, InterventionState
 
+# Import Blueprints
+# from server.api_provider import provider_api  <-- REMOVED
+
 # Setup logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
 CORS(app)  # Enable CORS for React frontend
+
+# Register Blueprints
+# provider_api removed
 
 # Global state
 import threading
@@ -991,7 +997,18 @@ def health():
 
 # ==================== v2.1 API Extensions ====================
 from server.api_v2 import v2_api
-app.register_blueprint(v2_api)
+# Register Blueprints
+try:
+    app.register_blueprint(v2_api)
+except ValueError:
+    logger.warning("Blueprint 'v2_api' already registered")
+
+# ==================== Ollama API ====================
+from server.api_ollama import ollama_api
+try:
+    app.register_blueprint(ollama_api)
+except ValueError:
+    logger.warning("Blueprint 'ollama_api' already registered")
 
 # ==================== Unified API (v2.2) ====================
 from server.api_unified import unified_api
