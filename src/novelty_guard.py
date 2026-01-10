@@ -166,17 +166,18 @@ class NoveltyGuard:
         
         return is_specific, details
 
-    def check_and_update(self, text: str) -> LoopCheckResult:
+    def check_and_update(self, text: str, update: bool = True) -> LoopCheckResult:
         """
         ループ検知して結果を返す
 
         Args:
             text: チェックするテキスト（直近の発言）
+            update: 内部状態を更新するかどうか
 
         Returns:
             LoopCheckResult: 検知結果
         """
-        self.turn_count += 1
+        self.turn_count += 1 if update else 0
         current_nouns = self.extract_nouns(text)
         is_specific, specificity_details = self.check_specificity(text)
         
@@ -184,12 +185,14 @@ class NoveltyGuard:
         result.topic_depth = 0
 
         # 具体性履歴を更新
-        self.specificity_history.append(is_specific)
-        if len(self.specificity_history) > 10:
-            self.specificity_history.pop(0)
+        if update:
+            self.specificity_history.append(is_specific)
+            if len(self.specificity_history) > 10:
+                self.specificity_history.pop(0)
 
         # === ループ検知 ===
-        if len(self.recent_nouns) >= self.max_topic_depth:
+        target_nouns = self.recent_nouns
+        if len(target_nouns) >= self.max_topic_depth:
             overlap_count = 0
             common_nouns = current_nouns.copy()
 
@@ -208,7 +211,7 @@ class NoveltyGuard:
                 result.reason = f"同じ話題が{overlap_count}ターン連続"
                 
                 # 戦略選択
-                result.strategy = self._select_strategy(specificity_details)
+                result.strategy = self._select_strategy(specificity_details, update=update)
                 result.injection = self._generate_injection(
                     result.strategy,
                     result.stuck_nouns
@@ -228,12 +231,13 @@ class NoveltyGuard:
                     result.injection = self._generate_specificity_injection()
 
         # トピック状態を更新
-        self._update_topic_state(current_nouns, is_specific, specificity_details)
+        if update:
+            self._update_topic_state(current_nouns, is_specific, specificity_details)
 
-        # 履歴更新
-        self.recent_nouns.append(current_nouns)
-        if len(self.recent_nouns) > 10:
-            self.recent_nouns.pop(0)
+            # 履歴更新
+            self.recent_nouns.append(current_nouns)
+            if len(self.recent_nouns) > 10:
+                self.recent_nouns.pop(0)
 
         return result
 
@@ -261,17 +265,18 @@ class NoveltyGuard:
         self.topic_state.has_examples = details["has_examples"] or self.topic_state.has_examples
         self.topic_state.last_update_turn = self.turn_count
 
-    def _select_strategy(self, specificity_details: Dict[str, bool]) -> LoopBreakStrategy:
+    def _select_strategy(self, specificity_details: Dict[str, bool], update: bool = True) -> LoopBreakStrategy:
         """
         状況に応じた戦略を選択
         
         Args:
             specificity_details: 具体性の詳細情報
+            update: 選択した戦略を履歴に追加するか
         """
         # 直近2回で使った戦略は避ける
         recent_set = set(self.recent_strategies[-2:]) if self.recent_strategies else set()
         
-        # 優先順位付き戦略リスト（状況に応じて調整）
+        # 優先順位付き戦略リスト（状況に応じた調整）
         strategies = []
         
         # 数値がない場合は具体化優先
@@ -299,17 +304,18 @@ class NoveltyGuard:
                 unique_strategies.append(s)
         
         # 直近で使っていない戦略を選択
+        selected_strategy = LoopBreakStrategy.FORCE_SPECIFIC_SLOT
         for strategy in unique_strategies:
             if strategy not in recent_set:
-                self.recent_strategies.append(strategy)
-                if len(self.recent_strategies) > 10:
-                    self.recent_strategies.pop(0)
-                return strategy
+                selected_strategy = strategy
+                break
 
-        # 全部使った場合は最初の戦略
-        fallback = unique_strategies[0] if unique_strategies else LoopBreakStrategy.FORCE_SPECIFIC_SLOT
-        self.recent_strategies.append(fallback)
-        return fallback
+        if update:
+            self.recent_strategies.append(selected_strategy)
+            if len(self.recent_strategies) > 10:
+                self.recent_strategies.pop(0)
+                
+        return selected_strategy
 
     def _generate_injection(
         self,

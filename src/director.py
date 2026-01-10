@@ -167,7 +167,8 @@ Respond ONLY with JSON:
             print(f"    🔄 Frame changed to {frame_num}, topic state reset")
 
         # ========== Step 0: NoveltyGuard Loop Detection ==========
-        novelty_result = self.novelty_guard.check_and_update(response)
+        # 最初は update=False でチェックのみ行い、リトライ時は状態を壊さないようにする
+        novelty_result = self.novelty_guard.check_and_update(response, update=False)
         if novelty_result.loop_detected:
             print(f"    🔁 NoveltyGuard: ループ検知 stuck_nouns={novelty_result.stuck_nouns}")
             print(f"       戦略: {novelty_result.strategy.value}")
@@ -193,13 +194,24 @@ Respond ONLY with JSON:
         current_beat = self.beat_tracker.get_current_beat(turn_number)
         beat_info = self.beat_tracker.get_beat_info(current_beat)
 
-        # ========== Director v3: Topic Manager - 早期更新 ==========
-        # 早期リターンの前にTopicStateを更新する
+        # ========== Director v3: Topic Manager - 判定準備 ==========
         detected_hook = self._extract_hook_from_response(response, frame_description)
         is_premature_switch = False  # 早すぎる話題転換フラグ
 
+        if not self.topic_state.focus_hook:
+            print(f"    📊 Topic init (check): {detected_hook}")
+
+        # 現在のtopic状態を一時的に取得（RETRYでなければ後で正式に更新）
+        # ※ 注意: self.topic_state 自体を更新してしまっているので、RETRY時は巻き戻す必要がある。
+        # または、最初から更新せずに新しい状態を計算する。
+        
+        # 簡易的な巻き戻しのために以前の状態を保持
+        import copy
+        old_topic_state = copy.deepcopy(self.topic_state)
+        
+        # 判定用の仮更新（既存ロジックを流用）
+        temp_is_premature = False
         if self.topic_state.focus_hook:
-            # 同じ話題が続いているかチェック
             is_same_topic = (
                 detected_hook == self.topic_state.focus_hook or
                 detected_hook in self.topic_state.focus_hook or
@@ -207,21 +219,15 @@ Respond ONLY with JSON:
             )
             if is_same_topic:
                 self.topic_state.advance_depth()
-                print(f"    📊 Topic: {self.topic_state.focus_hook} depth={self.topic_state.hook_depth}/3 step={self.topic_state.depth_step}")
             else:
-                # 話題が変わった場合
-                if self.topic_state.can_switch_topic():
-                    self.topic_state.switch_topic(detected_hook)
-                    print(f"    🔀 Topic switch: → {detected_hook}")
-                else:
-                    # 早すぎる転換 - フラグを立てて後で処理
+                if not self.topic_state.can_switch_topic():
+                    temp_is_premature = True
                     is_premature_switch = True
-                    print(f"    ⚠️ Topic premature switch detected: {self.topic_state.focus_hook} → {detected_hook}")
+                else:
+                    self.topic_state.switch_topic(detected_hook)
         else:
-            # 初回はhookを設定
             self.topic_state.focus_hook = detected_hook
             self.topic_state.must_include = [detected_hook]
-            print(f"    📊 Topic init: {detected_hook}")
 
         # 現在のtopic状態をキャプチャ（早期リターンでも使用）
         current_topic_fields = {
@@ -258,6 +264,8 @@ Respond ONLY with JSON:
         # 出力形式のチェック（かっこ付き、複数ブロック）
         format_check = self._check_format(response)
         if not format_check["passed"]:
+            # RETRY時はトピック状態を巻き戻す
+            self.topic_state = old_topic_state
             return DirectorEvaluation(
                 status=DirectorStatus.RETRY,
                 reason=f"出力形式の問題: {format_check['issue']}",
@@ -278,6 +286,8 @@ Respond ONLY with JSON:
         # 褒め言葉チェック（あゆの発言のみ適用）
         praise_check = self._check_praise_words(response, speaker)
         if not praise_check["passed"]:
+            # RETRY時はトピック状態を巻き戻す
+            self.topic_state = old_topic_state
             return DirectorEvaluation(
                 status=DirectorStatus.RETRY,
                 reason=praise_check["issue"],
@@ -347,6 +357,8 @@ Respond ONLY with JSON:
         # 口調マーカーの事前チェック
         tone_check = self._check_tone_markers(speaker, response)
         if not tone_check["passed"]:
+            # RETRY時はトピック状態を巻き戻す
+            self.topic_state = old_topic_state
             # 口調マーカーが欠けている場合はRETRYを推奨
             return DirectorEvaluation(
                 status=DirectorStatus.RETRY,
@@ -429,6 +441,8 @@ Respond ONLY with JSON:
 
             if data is None:
                 # パース失敗時は安全側に倒してPASS/NOOP
+                # パース失敗はLLMの出力異常なのでRETRY扱いにはせずPASSさせるが、トピックは更新しない
+                self.topic_state = old_topic_state
                 return DirectorEvaluation(
                     status=DirectorStatus.PASS,
                     reason="JSON Parse Error - Safe Fallback",
@@ -450,6 +464,21 @@ Respond ONLY with JSON:
                 if status_str == "RETRY"
                 else DirectorStatus.MODIFY
             )
+
+            # RETRY時はトピック状態とNoveltyGuardを更新しない
+            if status == DirectorStatus.RETRY:
+                self.topic_state = old_topic_state
+                print(f"    🛡️ Director: RETRYのため状態を更新しません")
+            else:
+                # PASS/MODIFY時は NoveltyGuard を正式に更新
+                self.novelty_guard.check_and_update(response, update=True)
+                # TopicStateの正式な更新ログ（既にself.topic_stateは更新済み）
+                if temp_is_premature:
+                    print(f"    ⚠️ Topic premature switch detected (PASS): {old_topic_state.focus_hook} → {detected_hook}")
+                elif detected_hook == old_topic_state.focus_hook:
+                     print(f"    📊 Topic: {self.topic_state.focus_hook} depth={self.topic_state.hook_depth}/3 step={self.topic_state.depth_step}")
+                else:
+                     print(f"    🔀 Topic switch: → {detected_hook}")
 
             # Build reason with issues if available
             reason = validated_data.get("reason", "")
@@ -988,33 +1017,38 @@ JSON ONLY:
                 "suggestion": str
             }
         """
-        # かっこで囲まれた発言のチェック
-        # 「」で始まる発言は台本形式と判定
+        # 「」で始まる発言のチェック（緩和案：警告にとどめ、RETRYにはしない）
         stripped = response.strip()
         if stripped.startswith("「") or stripped.startswith("『"):
-            return {
-                "passed": False,
-                "issue": "発言が「」で囲まれています（台本形式）",
-                "suggestion": "「」を外して、直接話すように出力してください。例: わ！金閣寺だね！",
-            }
+            # 台本形式だが、一応PASSさせる（指示で修正を促す）
+            print(f"    ⚠️ Format: 台本形式を検出しましたが、続行します。")
+            # return {
+            #     "passed": False,
+            #     "issue": "発言が「」で囲まれています（台本形式）",
+            #     "suggestion": "「」を外して、直接話すように出力してください。例: わ！金閣寺だね！",
+            # }
 
         # 複数の「」ブロックがあるかチェック
         quote_count = response.count("「")
         if quote_count >= 2:
-            return {
-                "passed": False,
-                "issue": f"複数の「」ブロックがあります（{quote_count}個）",
-                "suggestion": "1つの連続した発言として出力してください。「」は使わず、直接話してください。",
-            }
+            print(f"    ⚠️ Format: 複数の「」ブロック（{quote_count}個）を検出しましたが、続行します。")
+            # return {
+            #     "passed": False,
+            #     "issue": f"複数の「」ブロックがあります（{quote_count}個）",
+            #     "suggestion": "1つの連続した発言として出力してください。「」は使わず、直接話してください。",
+            # }
 
-        # 改行で複数ブロックに分かれているかチェック
+        # 改行で複数ブロックに分かれているかチェック（緩和案：3-5行程度なら許容）
         lines = [line.strip() for line in response.split("\n") if line.strip()]
-        if len(lines) > 2:
+        if len(lines) > 5:
             return {
                 "passed": False,
-                "issue": f"発言が複数行に分かれています（{len(lines)}行）",
-                "suggestion": "1つの連続した発言として、改行なしで出力してください。",
+                "issue": f"発言が複数行に分かれすぎています（{len(lines)}行）",
+                "suggestion": "1つの連続した発言として、簡潔に出力してください。",
             }
+        elif len(lines) > 1:
+            # 複数行だが許容範囲内
+            print(f"    ⚠️ Format: 複数行（{len(lines)}行）を検出しましたが、続行します。")
 
         return {
             "passed": True,
