@@ -570,9 +570,9 @@ class UnifiedPipeline:
                 event_callback("thought", reviewed_data)
 
             # 評価結果に応じた処理
-            if evaluation.status == DirectorStatus.PASS:
+            if evaluation.status in {DirectorStatus.PASS, DirectorStatus.WARN}:
                 # PASS でも INTERVENE アクションならリトライ
-                if evaluation.action == "INTERVENE" and attempt < max_retry:
+                if evaluation.status == DirectorStatus.PASS and evaluation.action == "INTERVENE" and attempt < max_retry:
                     # next_instruction または suggestion を使用
                     director_instruction = (
                         getattr(evaluation, 'next_instruction', None)

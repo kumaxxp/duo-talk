@@ -53,7 +53,7 @@ class Director:
     PRAISE_WORDS_FOR_AYU = [
         "いい観点", "いい質問", "さすが", "鋭い",
         "おっしゃる通り", "その通り", "素晴らしい", "お見事",
-        "よく気づ", "正解です", "大正解",
+        "よく気づ", "正解です", "大正解", "正解", "すごい", "完璧", "天才",
     ]
 
     # 観光地名（トピック無関係チェック用）
@@ -128,7 +128,7 @@ Your role:
 
 Respond ONLY with JSON:
 {
-  "status": "PASS" | "RETRY" | "MODIFY",
+  "status": "PASS" | "WARN" | "RETRY" | "MODIFY",
   "reason": "Brief explanation",
   "suggestion": "How to improve (only for MODIFY)"
 }"""
@@ -261,9 +261,11 @@ Respond ONLY with JSON:
                 ]
             )
 
+        warnings = []
+
         # 出力形式のチェック（かっこ付き、複数ブロック）
         format_check = self._check_format(response)
-        if not format_check["passed"]:
+        if format_check["status"] == DirectorStatus.RETRY:
             # RETRY時はトピック状態を巻き戻す
             self.topic_state = old_topic_state
             return DirectorEvaluation(
@@ -272,6 +274,8 @@ Respond ONLY with JSON:
                 suggestion=format_check["suggestion"],
                 **current_topic_fields,
             )
+        if format_check["status"] == DirectorStatus.WARN:
+            warnings.append(format_check)
 
         # 設定整合性のチェック（姉妹が別居しているかのような表現）
         setting_check = self._check_setting_consistency(response)
@@ -285,7 +289,7 @@ Respond ONLY with JSON:
 
         # 褒め言葉チェック（あゆの発言のみ適用）
         praise_check = self._check_praise_words(response, speaker)
-        if not praise_check["passed"]:
+        if praise_check["status"] == DirectorStatus.RETRY:
             # RETRY時はトピック状態を巻き戻す
             self.topic_state = old_topic_state
             return DirectorEvaluation(
@@ -294,6 +298,8 @@ Respond ONLY with JSON:
                 suggestion=praise_check["suggestion"],
                 **current_topic_fields,
             )
+        if praise_check["status"] == DirectorStatus.WARN:
+            warnings.append(praise_check)
 
         # 話題ループ検出（LLM評価の前に実行）
         loop_check = self._detect_topic_loop(conversation_history, response)
@@ -334,14 +340,21 @@ Respond ONLY with JSON:
 
         # 散漫検出（複数話題への全レス）
         scatter_check = self._is_scattered_response(response)
-        if scatter_check["detected"]:
+        if scatter_check["status"] != DirectorStatus.PASS:
             issues_str = "、".join(scatter_check["issues"])
             print(f"    ⚠️ 散漫検出: {issues_str}")
-            return DirectorEvaluation(
-                status=DirectorStatus.RETRY,
-                reason=f"応答が散漫: {issues_str}",
-                suggestion="【制限】50〜80文字、2文以内、読点2個以内で応答してください。相手の発言から1つだけ選んで反応し、他は無視してください。",
-                **current_topic_fields,
+            if scatter_check["status"] == DirectorStatus.RETRY:
+                return DirectorEvaluation(
+                    status=DirectorStatus.RETRY,
+                    reason=f"応答が散漫: {issues_str}",
+                    suggestion="【制限】50〜80文字、2文以内で応答してください。相手の発言から1つだけ選んで反応し、他は無視してください。",
+                    **current_topic_fields,
+                )
+            warnings.append(
+                {
+                    "issue": f"応答が散漫: {issues_str}",
+                    "suggestion": "内容を1トピックに絞り、短くまとめてください。",
+                }
             )
 
         # 論理的矛盾のチェック（二重否定など）
@@ -356,7 +369,7 @@ Respond ONLY with JSON:
 
         # 口調マーカーの事前チェック
         tone_check = self._check_tone_markers(speaker, response)
-        if not tone_check["passed"]:
+        if tone_check["status"] == DirectorStatus.RETRY:
             # RETRY時はトピック状態を巻き戻す
             self.topic_state = old_topic_state
             # 口調マーカーが欠けている場合はRETRYを推奨
@@ -366,9 +379,16 @@ Respond ONLY with JSON:
                 suggestion=f"以下のマーカーを含めてください: {', '.join(tone_check['expected'])}",
                 **current_topic_fields,
             )
+        if tone_check["status"] == DirectorStatus.WARN:
+            warnings.append(
+                {
+                    "issue": f"口調が弱め（score={tone_check['score']}）",
+                    "suggestion": f"口調マーカーを補ってください: {', '.join(tone_check['expected'])}",
+                }
+            )
 
         # 口調マーカーの詳細情報を取得（LLM評価用）
-        tone_info = self._check_tone_markers(speaker, response)
+        tone_info = tone_check
 
         # ファクトチェック（やなの発言のみ、次のあゆの発言で訂正させるため）
         fact_check_result: Optional[FactCheckResult] = None
@@ -443,9 +463,15 @@ Respond ONLY with JSON:
                 # パース失敗時は安全側に倒してPASS/NOOP
                 # パース失敗はLLMの出力異常なのでRETRY扱いにはせずPASSさせるが、トピックは更新しない
                 self.topic_state = old_topic_state
+                fallback_status = DirectorStatus.WARN if warnings else DirectorStatus.PASS
+                fallback_reason = "JSON Parse Error - Safe Fallback"
+                if warnings:
+                    warning_summary = " / ".join(w["issue"] for w in warnings[:2])
+                    fallback_reason = f"{fallback_reason} | WARN: {warning_summary}"
                 return DirectorEvaluation(
-                    status=DirectorStatus.PASS,
-                    reason="JSON Parse Error - Safe Fallback",
+                    status=fallback_status,
+                    reason=fallback_reason,
+                    suggestion=warnings[0].get("suggestion") if warnings else None,
                     next_instruction=None,
                     next_pattern=None,
                     beat_stage=current_beat,
@@ -460,6 +486,8 @@ Respond ONLY with JSON:
             status = (
                 DirectorStatus.PASS
                 if status_str == "PASS"
+                else DirectorStatus.WARN
+                if status_str == "WARN"
                 else DirectorStatus.RETRY
                 if status_str == "RETRY"
                 else DirectorStatus.MODIFY
@@ -487,6 +515,15 @@ Respond ONLY with JSON:
                 reason_with_issues = f"{reason}\n- " + "\n- ".join(issues[:2])
             else:
                 reason_with_issues = reason
+
+            if warnings and status in {DirectorStatus.PASS, DirectorStatus.WARN}:
+                warning_summary = " / ".join(w["issue"] for w in warnings[:2])
+                if reason_with_issues:
+                    reason_with_issues = f"{reason_with_issues} | WARN: {warning_summary}"
+                else:
+                    reason_with_issues = f"WARN: {warning_summary}"
+                if status == DirectorStatus.PASS:
+                    status = DirectorStatus.WARN
 
             beat_stage = validated_data.get("beat_stage", current_beat)
 
@@ -537,10 +574,14 @@ Respond ONLY with JSON:
                     **current_topic_fields,
                 )
 
+            suggestion = validated_data.get("suggestion")
+            if status == DirectorStatus.WARN and not suggestion and warnings:
+                suggestion = warnings[0].get("suggestion")
+
             return DirectorEvaluation(
                 status=status,
                 reason=reason_with_issues,
-                suggestion=validated_data.get("suggestion"),
+                suggestion=suggestion,
                 next_pattern=next_pattern,
                 next_instruction=next_instruction,
                 beat_stage=beat_stage,
@@ -670,7 +711,7 @@ Respond ONLY with JSON:
 {tone_status}
 
 【評価の前提】
-- status(PASS/RETRY/MODIFY) は「今の発言の品質」評価
+- status(PASS/WARN/RETRY/MODIFY) は「今の発言の品質」評価
 - action(NOOP/INTERVENE) は「次ターンに介入する価値があるか」
 - 基本は NOOP 推奨だが、**会話がループしている場合は積極的に介入せよ**
 
@@ -705,10 +746,18 @@ Respond ONLY with JSON:
 【応答フォーマット】
 JSON ONLY:
 {{
-  "status": "PASS" | "RETRY" | "MODIFY",
+  "status": "PASS" | "WARN" | "RETRY" | "MODIFY",
   "reason": "評価理由（30字以内）",
   "issues": ["問題点があれば記述"],
   "suggestion": "修正案（RETRY/MODIFY時のみ）",
+  "scores": {{
+    "frame": 1-5,
+    "roleplay": 1-5,
+    "coherence": 1-5,
+    "density": 1-5,
+    "naturalness": 1-5
+  }},
+  "score_avg": 1-5,
   "beat_stage": "{current_beat}",
   "action": "NOOP" | "INTERVENE",
   "hook": "具体名詞を含む短い句 or null",
@@ -835,6 +884,32 @@ JSON ONLY:
             lines.append(f"{speaker}: {text}")
         return "\n".join(lines)
 
+    @staticmethod
+    def _normalize_for_checks(text: str) -> str:
+        """Normalize text for tone/praise checks."""
+        import re
+
+        normalized = text or ""
+        # Exclude quoted/script text
+        normalized = re.sub(r"[「『][^」』]*[」』]", "", normalized)
+        normalized = re.sub(r"（[^）]*）", "", normalized)
+        # Normalize punctuation variants
+        normalized = normalized.replace("｡", "。")
+        normalized = re.sub(r"([！？!?.])\1+", r"\1", normalized)
+        # Collapse whitespace
+        normalized = re.sub(r"\s+", " ", normalized).strip()
+        return normalized
+
+    @staticmethod
+    def _split_sentences(text: str) -> list[str]:
+        """Split text into sentences using punctuation and newlines."""
+        import re
+
+        if not text:
+            return []
+        parts = re.split(r"[。！？\n]+", text)
+        return [p.strip() for p in parts if p.strip()]
+
     def _check_tone_markers(self, speaker: str, response: str) -> dict:
         """
         口調マーカーの存在をチェックする。
@@ -845,54 +920,81 @@ JSON ONLY:
 
         Returns:
             {
-                "passed": bool,
+                "status": DirectorStatus,
+                "score": int,
+                "marker_hit": bool,
+                "vocab_hit": bool,
+                "style_hit": bool,
                 "expected": list[str],
                 "found": list[str],
                 "missing": str
             }
         """
+        import re
+
+        normalized = self._normalize_for_checks(response)
         if speaker == "A":
             # やな（姉）の口調マーカー
-            markers = ["ね", "へ？", "わ！", "あ、", "そっか", "よね", "かな", "だね"]
-            expected_desc = ["〜ね", "へ？", "わ！", "あ、そっか", "〜よね", "〜かな"]
+            markers = ["ね", "わ", "へ？", "かな", "かも"]
+            expected_desc = ["〜ね", "わ", "へ？", "〜かな", "〜かも"]
+            vocab_markers = ["やだ", "ほんと", "えー", "うーん", "すっごい"]
         else:
             # あゆ（妹）の口調マーカー（「姉様」は毎回不要なので必須から除外）
             # 「ございます」は禁止なので含めない
             # 「ます」系も追加（例: 「来ました」「思います」など）
-            markers = ["です", "ですよ", "ですね", "でしょう", "ます", "ました", "ません"]
-            expected_desc = ["です", "ですね", "ですよ", "〜ます"]
+            markers = ["です", "ます", "でしょう", "ですね", "ました"]
+            expected_desc = ["です", "ですね", "〜ます"]
+            vocab_markers = ["つまり", "要するに", "一般的に", "目安", "推奨"]
 
         found = []
         for marker in markers:
-            if marker in response:
+            if marker in normalized:
                 found.append(marker)
 
-        # 最低1つのマーカーが必要
-        passed = len(found) >= 1
+        marker_hit = len(found) >= 1
+        vocab_hit = any(word in normalized for word in vocab_markers)
 
         # 特別なケース: やなは「姉様」を使ってはいけない（あゆの呼び方）
         if speaker == "A":
             forbidden_words = ["姉様"]
             for forbidden in forbidden_words:
-                if forbidden in response:
+                if forbidden in normalized:
                     return {
-                        "passed": False,
+                        "status": DirectorStatus.RETRY,
+                        "score": 0,
+                        "marker_hit": marker_hit,
+                        "vocab_hit": vocab_hit,
+                        "style_hit": False,
                         "expected": expected_desc,
                         "found": found,
                         "missing": f"禁止ワード「{forbidden}」を使用（やなは姉なので「姉様」は使えません）",
                     }
 
-        # 特別なケース: あゆは「です」系または「ます」系のいずれかが必須
-        if speaker == "B":
-            polite_variants = ["です", "ます", "ました", "ません"]
-            has_polite = any(m in response for m in polite_variants)
-            passed = passed and has_polite
+        sentences = self._split_sentences(normalized)
+        sentence_count = len(sentences)
+        if speaker == "A":
+            style_hit = sentence_count <= 2 and ("！" in normalized or "？" in normalized)
+        else:
+            polite_matches = re.findall(r"(です|ます|でした|ました)", normalized)
+            style_hit = len(polite_matches) >= 2
+
+        tone_score = int(marker_hit) + int(vocab_hit) + int(style_hit)
+        if tone_score >= 2:
+            status = DirectorStatus.PASS
+        elif tone_score == 1:
+            status = DirectorStatus.WARN
+        else:
+            status = DirectorStatus.RETRY
 
         return {
-            "passed": passed,
+            "status": status,
+            "score": tone_score,
+            "marker_hit": marker_hit,
+            "vocab_hit": vocab_hit,
+            "style_hit": style_hit,
             "expected": expected_desc,
             "found": found,
-            "missing": "マーカーが見つかりません" if not found else "",
+            "missing": "口調スコアが不足しています" if tone_score < 2 else "",
         }
 
     def _check_setting_consistency(self, response: str) -> dict:
@@ -933,24 +1035,36 @@ JSON ONLY:
 
         Returns:
             {
-                "passed": bool,
+                "status": DirectorStatus,
                 "issue": str,
                 "suggestion": str
             }
         """
         # やな（A）の発言には適用しない
         if speaker == "A":
-            return {"passed": True, "issue": "", "suggestion": ""}
+            return {"status": DirectorStatus.PASS, "issue": "", "suggestion": ""}
 
         # あゆ（B）の発言のみチェック
-        for word in self.PRAISE_WORDS_FOR_AYU:
-            if word in response:
-                return {
-                    "passed": False,
-                    "issue": f"あゆの褒め言葉使用: 「{word}」",
-                    "suggestion": "評価・判定型の表現を避け、情報提供に徹してください",
-                }
-        return {"passed": True, "issue": "", "suggestion": ""}
+        normalized = self._normalize_for_checks(response)
+        sentences = self._split_sentences(normalized)
+        recipient_tokens = ["あなた", "きみ", "ユーザー", "その答え", "その考え", "その意見", "発言", "回答"]
+
+        for sentence in sentences:
+            for word in self.PRAISE_WORDS_FOR_AYU:
+                if word in sentence:
+                    if any(token in sentence for token in recipient_tokens):
+                        return {
+                            "status": DirectorStatus.RETRY,
+                            "issue": f"あゆの褒め言葉使用: 「{word}」",
+                            "suggestion": "評価・判定型の表現を避け、情報提供に徹してください",
+                        }
+                    return {
+                        "status": DirectorStatus.WARN,
+                        "issue": f"評価語の使用: 「{word}」",
+                        "suggestion": "評価語は避け、説明に置き換えてください",
+                    }
+
+        return {"status": DirectorStatus.PASS, "issue": "", "suggestion": ""}
 
     def _check_logical_consistency(self, response: str) -> dict:
         """
@@ -1012,7 +1126,7 @@ JSON ONLY:
 
         Returns:
             {
-                "passed": bool,
+                "status": DirectorStatus,
                 "issue": str,
                 "suggestion": str
             }
@@ -1040,18 +1154,23 @@ JSON ONLY:
 
         # 改行で複数ブロックに分かれているかチェック（緩和案：3-5行程度なら許容）
         lines = [line.strip() for line in response.split("\n") if line.strip()]
-        if len(lines) > 5:
+        if len(lines) >= 8:
             return {
-                "passed": False,
+                "status": DirectorStatus.RETRY,
                 "issue": f"発言が複数行に分かれすぎています（{len(lines)}行）",
                 "suggestion": "1つの連続した発言として、簡潔に出力してください。",
             }
-        elif len(lines) > 1:
-            # 複数行だが許容範囲内
+        if len(lines) >= 6:
+            return {
+                "status": DirectorStatus.WARN,
+                "issue": f"発言が複数行です（{len(lines)}行）",
+                "suggestion": "1つの連続した発言として、簡潔に出力してください。",
+            }
+        if len(lines) > 1:
             print(f"    ⚠️ Format: 複数行（{len(lines)}行）を検出しましたが、続行します。")
 
         return {
-            "passed": True,
+            "status": DirectorStatus.PASS,
             "issue": "",
             "suggestion": "",
         }
@@ -1183,52 +1302,43 @@ JSON ONLY:
         """
         散漫な応答（話題盛りすぎ）を検出する。
 
-        緩和版: 短い発言はスキップ、閾値を緩和、疑問文は除外
-
         Args:
             response: 評価対象の発言
 
         Returns:
             {
-                "detected": bool,
+                "status": DirectorStatus,
                 "issues": list[str]
             }
         """
+        import re
+
         issues = []
+        sentences = self._split_sentences(response)
+        sentence_count = len(sentences)
 
-        # 短い発言（80文字未満）は散漫検出をスキップ
-        if len(response) < 80:
-            return {"detected": False, "issues": []}
-
-        # 読点が多すぎる（8個以上で散漫と判定）← 技術説明向けに緩和
-        comma_count = response.count("、")
-        if comma_count >= 8:
-            issues.append(f"読点が多すぎる({comma_count}個)")
-
-        # 列挙表現が多い（3回以上で散漫）← 2→3に緩和
-        scatter_patterns = [
-            (r'も[、。！？]', "「〜も」"),
-            (r'あと[、]', "「あと」"),
-            (r'それと', "「それと」"),
-            (r'さらに', "「さらに」"),
-            (r'それから', "「それから」"),
+        topic_patterns = [
+            r"[^\s]{2,}について",
+            r"[^\s]{2,}の話",
+            r"[ぁ-んァ-ン一-龠]{2,}は[、。]",
         ]
-        scatter_count = 0
-        for pattern, _ in scatter_patterns:
-            scatter_count += len(re.findall(pattern, response))
+        topic_count = 0
+        for pattern in topic_patterns:
+            topic_count += len(re.findall(pattern, response))
 
-        if scatter_count >= 3:
-            issues.append(f"列挙表現が多い({scatter_count}回)")
-
-        # 文の数が多すぎる（5文以上で散漫と判定）← 技術説明向けに緩和
-        # 疑問文「？」は除外（質問は自然なので）
-        sentence_count = len(re.findall(r'[。！]', response))
-        if sentence_count >= 5:
+        if sentence_count >= 4 and topic_count >= 3:
             issues.append(f"文が多すぎる({sentence_count}文)")
+            issues.append(f"話題が多すぎる({topic_count}件)")
+            return {"status": DirectorStatus.RETRY, "issues": issues}
 
-        if issues:
-            return {"detected": True, "issues": issues}
-        return {"detected": False, "issues": []}
+        if sentence_count >= 3 or topic_count >= 2:
+            if sentence_count >= 3:
+                issues.append(f"文が多め({sentence_count}文)")
+            if topic_count >= 2:
+                issues.append(f"話題が多め({topic_count}件)")
+            return {"status": DirectorStatus.WARN, "issues": issues}
+
+        return {"status": DirectorStatus.PASS, "issues": []}
 
     def is_fatal_modify(self, reason: str) -> bool:
         """
@@ -1364,6 +1474,28 @@ JSON ONLY:
             data["next_pattern"] = None
         if data.get("hook") == "":
             data["hook"] = None
+
+        # === スコア平均によるstatus補正 ===
+        score_avg = data.get("score_avg")
+        scores = data.get("scores")
+        if isinstance(scores, dict):
+            numeric_scores = [
+                v for v in scores.values()
+                if isinstance(v, (int, float))
+            ]
+            if numeric_scores:
+                score_avg = sum(numeric_scores) / len(numeric_scores)
+                data["score_avg"] = round(score_avg, 2)
+
+        if isinstance(score_avg, (int, float)):
+            current_status = data.get("status", "PASS").upper()
+            if current_status in ["PASS", "WARN", "RETRY"]:
+                if score_avg < 3.5:
+                    data["status"] = "RETRY"
+                elif score_avg < 4.0:
+                    data["status"] = "WARN"
+                else:
+                    data["status"] = "PASS"
 
         # === 強制NOOP判定 ===
         force_noop = False

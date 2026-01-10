@@ -11,6 +11,7 @@ from datetime import datetime
 class DirectorStatus(str, Enum):
     """Director evaluation status"""
     PASS = "PASS"
+    WARN = "WARN"
     RETRY = "RETRY"
     MODIFY = "MODIFY"
 
