@@ -118,6 +118,7 @@ class DirectorEvaluation:
     focus_hook: Optional[str] = None          # 現在の話題（常に出力）
     hook_depth: int = 0                        # 深掘り段階
     depth_step: str = "DISCOVER"               # 深掘りステップ名
+    turns_on_hook: int = 0                     # このhookで何ターン経過
     forbidden_topics: List[str] = field(default_factory=list)  # 禁止トピック
     must_include: List[str] = field(default_factory=list)      # 必須ワード
     character_role: str = ""                   # キャラクターに期待する役割

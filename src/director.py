@@ -144,35 +144,54 @@ Respond ONLY with JSON:
         turn_number: int = 1,
         frame_num: int = 1,
     ) -> DirectorEvaluation:
-        """
-        Evaluate a character's response.
+        # 初期のTopic Stateを保持（Step 0での早期リターン用）
+        current_topic_fields_at_step0 = {
+            "focus_hook": self.topic_state.focus_hook,
+            "hook_depth": self.topic_state.hook_depth,
+            "depth_step": self.topic_state.depth_step,
+            "turns_on_hook": self.topic_state.turns_on_hook,
+            "forbidden_topics": self.topic_state.forbidden_topics.copy(),
+            "must_include": self.topic_state.must_include.copy(),
+        }
 
-        Args:
-            frame_description: Description of current frame
-            speaker: "A" or "B"
-            response: The character's response to evaluate
-            partner_previous_speech: The other character's previous speech
-            speaker_domains: List of domains this character should know (e.g., ["geography", "history"])
-            conversation_history: List of (speaker, text) tuples for context
-            turn_number: Current turn number for beat tracking
-
-        Returns:
-            DirectorEvaluation with status, reasoning, and next pattern/instruction
-        """
         # フレームが変わったらTopic Stateをリセット
         if frame_num != self.last_frame_num:
-            self.reset_topic_state()
+            self.topic_state = TopicState()
             self.novelty_guard.reset()  # NoveltyGuardもリセット
             self.last_frame_num = frame_num
             print(f"    🔄 Frame changed to {frame_num}, topic state reset")
+            # リセット後の状態を反映
+            current_topic_fields_at_step0.update({
+                "focus_hook": "",
+                "hook_depth": 0,
+                "depth_step": "DISCOVER",
+                "turns_on_hook": 0,
+                "forbidden_topics": [],
+                "must_include": [],
+            })
 
         # ========== Step 0: NoveltyGuard Loop Detection ==========
         # 最初は update=False でチェックのみ行い、リトライ時は状態を壊さないようにする
         novelty_result = self.novelty_guard.check_and_update(response, update=False)
         if novelty_result.loop_detected:
-            print(f"    🔁 NoveltyGuard: ループ検知 stuck_nouns={novelty_result.stuck_nouns}")
-            print(f"       戦略: {novelty_result.strategy.value}")
-            # ループ検知時は早期リターンでINTERVENE
+            # 深いループ（話題転換が必要）な場合
+            if novelty_result.strategy.value == "change_topic":
+                print(f"    🚨 NoveltyGuard: 重大なループ検出 -> 話題強制リセット")
+                return DirectorEvaluation(
+                    status=DirectorStatus.RETRY,
+                    reason=f"NoveltyGuard: 話題「{', '.join(novelty_result.stuck_nouns[:2])}」が限界までループしています。別の話題に変えてください。",
+                    suggestion=novelty_result.injection,
+                    next_pattern="D",
+                    beat_stage=self.beat_tracker.get_current_beat(turn_number),
+                    focus_hook="",
+                    hook_depth=0,
+                    depth_step="DISCOVER",
+                    turns_on_hook=0,
+                    forbidden_topics=[],
+                    must_include=[],
+                )
+
+            # 脱線→修正パターン
             return DirectorEvaluation(
                 status=DirectorStatus.PASS,
                 reason=f"NoveltyGuard: 話題「{'、'.join(novelty_result.stuck_nouns[:3])}」がループ中",
@@ -188,11 +207,17 @@ Respond ONLY with JSON:
                     "strategy": novelty_result.strategy.value,
                     "topic_depth": novelty_result.topic_depth,
                 },
+                **current_topic_fields_at_step0
             )
 
         # Get current beat stage from turn number
         current_beat = self.beat_tracker.get_current_beat(turn_number)
         beat_info = self.beat_tracker.get_beat_info(current_beat)
+
+        # 簡易的な巻き戻しのために以前の状態を保持
+        import copy
+        initial_topic_state = copy.deepcopy(self.topic_state)
+        initial_recent_patterns = self.recent_patterns[:]
 
         # ========== Director v3: Topic Manager - 判定準備 ==========
         detected_hook = self._extract_hook_from_response(response, frame_description)
@@ -201,14 +226,6 @@ Respond ONLY with JSON:
         if not self.topic_state.focus_hook:
             print(f"    📊 Topic init (check): {detected_hook}")
 
-        # 現在のtopic状態を一時的に取得（RETRYでなければ後で正式に更新）
-        # ※ 注意: self.topic_state 自体を更新してしまっているので、RETRY時は巻き戻す必要がある。
-        # または、最初から更新せずに新しい状態を計算する。
-        
-        # 簡易的な巻き戻しのために以前の状態を保持
-        import copy
-        old_topic_state = copy.deepcopy(self.topic_state)
-        
         # 判定用の仮更新（既存ロジックを流用）
         temp_is_premature = False
         if self.topic_state.focus_hook:
@@ -234,10 +251,12 @@ Respond ONLY with JSON:
             "focus_hook": self.topic_state.focus_hook,
             "hook_depth": self.topic_state.hook_depth,
             "depth_step": self.topic_state.depth_step,
+            "turns_on_hook": self.topic_state.turns_on_hook,
             "forbidden_topics": self.topic_state.forbidden_topics.copy(),
             "must_include": self.topic_state.must_include.copy(),
             "character_role": self._get_character_role(speaker, self.topic_state.depth_step),
         }
+
 
         if speaker_domains is None:
             speaker_domains = (
@@ -263,225 +282,86 @@ Respond ONLY with JSON:
 
         warnings = []
 
-        # 出力形式のチェック
+        # 形式チェック (static check)
         format_check = self._check_format(response)
-        if format_check["status"] == DirectorStatus.RETRY:
-            # RETRY時はトピック状態を巻き戻す
-            self.topic_state = old_topic_state
+        if format_check.get("status") == DirectorStatus.RETRY:
+            # 状態を復元してからリターン
+            self.topic_state = initial_topic_state
+            self.recent_patterns = initial_recent_patterns
             return DirectorEvaluation(
                 status=DirectorStatus.RETRY,
-                reason=f"出力形式の問題: {format_check['issue']}",
+                reason=format_check["issue"],
                 suggestion=format_check["suggestion"],
-                **current_topic_fields,
+                beat_stage=self.beat_tracker.get_current_beat(turn_number),
+                **current_topic_fields_at_step0
             )
-        if format_check["status"] == DirectorStatus.WARN:
+        elif format_check.get("status") == DirectorStatus.WARN:
             warnings.append(format_check)
 
-        # 設定整合性のチェック（姉妹が別居しているかのような表現）
-        setting_check = self._check_setting_consistency(response)
-        if not setting_check["passed"]:
+
+
+        # 口調マーカーのチェック (static check)
+        tone_check = self._check_tone_markers(speaker, response)
+        if tone_check["status"] == DirectorStatus.RETRY:
+            self.topic_state = initial_topic_state
+            self.recent_patterns = initial_recent_patterns
             return DirectorEvaluation(
                 status=DirectorStatus.RETRY,
-                reason=setting_check["issue"],
-                suggestion=setting_check["suggestion"],
-                **current_topic_fields,
+                reason=tone_check["issue"],
+                suggestion=tone_check["suggestion"],
+                beat_stage=self.beat_tracker.get_current_beat(turn_number),
+                **current_topic_fields_at_step0
             )
+        elif tone_check["status"] == DirectorStatus.WARN:
+            warnings.append(tone_check)
 
-        # 褒め言葉チェック（あゆの発言のみ適用）
+        # 褒め言葉の過剰使用チェック
         praise_check = self._check_praise_words(response, speaker)
         if praise_check["status"] == DirectorStatus.RETRY:
-            # RETRY時はトピック状態を巻き戻す
-            self.topic_state = old_topic_state
+            self.topic_state = initial_topic_state
+            self.recent_patterns = initial_recent_patterns
             return DirectorEvaluation(
                 status=DirectorStatus.RETRY,
                 reason=praise_check["issue"],
                 suggestion=praise_check["suggestion"],
-                **current_topic_fields,
+                beat_stage=self.beat_tracker.get_current_beat(turn_number),
+                **current_topic_fields_at_step0
             )
-        if praise_check["status"] == DirectorStatus.WARN:
+        elif praise_check["status"] == DirectorStatus.WARN:
             warnings.append(praise_check)
 
-        # 話題ループ検出（LLM評価の前に実行）
-        loop_check = self._detect_topic_loop(conversation_history, response)
-        if loop_check["detected"]:
-            print(f"    🔄 話題ループ検出: 「{loop_check['keyword']}」が{loop_check['count']}回繰り返し")
+        # 散漫な応答のチェック
+        if self._is_scattered_response(response):
+            warnings.append({
+                "status": DirectorStatus.WARN,
+                "issue": "散漫な応答",
+                "suggestion": "1つの話題に集中して、簡潔に話してください"
+            })
 
-            # 新しい話題の提案
-            new_topic = self._get_new_topic_suggestion(loop_check["keyword"])
+        # 推論とスコアリング (LLM評価)
+        fact_check_result = None
+        if self.enable_fact_check:
+             fact_check_result = self.fact_checker.check(response, frame_description)
+             self.last_fact_check = fact_check_result
 
-            return DirectorEvaluation(
-                status=DirectorStatus.PASS,
-                reason=f"話題ループ: 「{loop_check['keyword']}」が{loop_check['count']}回出現",
-                action="INTERVENE",
-                next_instruction=f"「{loop_check['keyword']}」の話題が続いています。「{new_topic}」など別の話題に展開してください。",
-                next_pattern="D",  # 脱線→修正パターン
-                beat_stage=current_beat,
-                hook=loop_check["keyword"],
-                evidence={"dialogue": f"「{loop_check['keyword']}」が{loop_check['count']}回出現", "frame": None},
-                **current_topic_fields,
-            )
-
-        # 動的ループ検出（静的検出で見つからない場合のフォールバック）
-        dynamic_loop = self._detect_topic_loop_dynamic(conversation_history, response)
-        if dynamic_loop["detected"]:
-            print(f"    🔄 動的ループ検出: 「{dynamic_loop['keyword']}」が繰り返し出現")
-            new_topic = self._get_new_topic_suggestion(dynamic_loop["keyword"])
-            return DirectorEvaluation(
-                status=DirectorStatus.PASS,
-                reason=f"動的ループ: 「{dynamic_loop['keyword']}」が繰り返し",
-                action="INTERVENE",
-                next_instruction=f"「{dynamic_loop['keyword']}」の話題が続いています。別の視点や話題に展開してください。",
-                next_pattern="D",
-                beat_stage=current_beat,
-                hook=dynamic_loop["keyword"],
-                evidence={"dialogue": f"「{dynamic_loop['keyword']}」が繰り返し", "frame": None},
-                **current_topic_fields,
-            )
-
-        # 散漫検出（複数話題への全レス）
-        scatter_check = self._is_scattered_response(response)
-        if scatter_check["status"] != DirectorStatus.PASS:
-            issues_str = "、".join(scatter_check["issues"])
-            print(f"    ⚠️ 散漫検出: {issues_str}")
-            if scatter_check["status"] == DirectorStatus.RETRY:
-                self.topic_state = old_topic_state
-                return DirectorEvaluation(
-                    status=DirectorStatus.RETRY,
-                    reason=f"応答が散漫: {issues_str}",
-                    suggestion="【制限】50〜80文字、2文以内で応答してください。相手の発言から1つだけ選んで反応し、他は無視してください。",
-                    **current_topic_fields,
-                )
-            warnings.append(
-                {
-                    "issue": f"応答が散漫: {issues_str}",
-                    "suggestion": "内容を1トピックに絞り、短くまとめてください。",
-                }
-            )
-
-        # 論理的矛盾のチェック（二重否定など）
-        logic_check = self._check_logical_consistency(response)
-        if not logic_check["passed"]:
-            return DirectorEvaluation(
-                status=DirectorStatus.RETRY,
-                reason=logic_check["issue"],
-                suggestion=logic_check["suggestion"],
-                **current_topic_fields,
-            )
-
-        # 口調マーカーの事前チェック
-        tone_check = self._check_tone_markers(speaker, response)
-        if tone_check["status"] == DirectorStatus.RETRY:
-            # RETRY時はトピック状態を巻き戻す
-            self.topic_state = old_topic_state
-            # 口調マーカーが欠けている場合はRETRYを推奨
-            return DirectorEvaluation(
-                status=DirectorStatus.RETRY,
-                reason=f"口調マーカー不足: {tone_check['missing']}",
-                suggestion=f"以下のマーカーを含めてください: {', '.join(tone_check['expected'])}",
-                **current_topic_fields,
-            )
-        if tone_check["status"] == DirectorStatus.WARN:
-            warnings.append(
-                {
-                    "issue": f"口調が弱め（score={tone_check['score']}）",
-                    "suggestion": f"口調マーカーを補ってください: {', '.join(tone_check['expected'])}",
-                }
-            )
-
-        # 口調マーカーの詳細情報を取得（LLM評価用）
-        tone_info = tone_check
-
-        # ファクトチェック（やなの発言のみ、次のあゆの発言で訂正させるため）
-        fact_check_result: Optional[FactCheckResult] = None
-        if self.enable_fact_check and self.fact_checker and speaker == "A":
-            print("    🔍 ファクトチェック実行中...")
-            fact_check_result = self.fact_checker.check_statement(
-                statement=response,
-                context=frame_description,
-            )
-            self.last_fact_check = fact_check_result
-
-            if fact_check_result.has_error:
-                print(f"    ⚠️  誤り検出: {fact_check_result.claim}")
-                print(f"    ✓  正しい情報: {fact_check_result.correct_info}")
-                print(f"    📊 確信度: {fact_check_result.search_confidence}")
-                warnings.append({
-                    "issue": f"fact_error: {fact_check_result.claim} は間違いの可能性があります",
-                    "suggestion": f"正しい情報: {fact_check_result.correct_info}",
-                })
-
-        # Convert warnings to static_warnings format for prompt
+        # LLM scoring (consolidated)
         static_warnings = [w["issue"] for w in warnings]
-
-        user_prompt = self._build_evaluation_prompt(
-            frame_description=frame_description,
-            speaker=speaker,
-            response=response,
-            partner_speech=partner_previous_speech,
-            domains=speaker_domains,
-            conversation_history=conversation_history,
-            tone_markers_found=tone_info["found"],
-            turn_number=turn_number,
-            current_beat=current_beat,
-            beat_info=beat_info,
-            static_warnings=static_warnings,
+        data = self._get_llm_scoring(
+            frame_description,
+            speaker,
+            response,
+            partner_previous_speech,
+            speaker_domains,
+            conversation_history,
+            current_beat,
+            static_warnings
         )
 
         try:
-            result_text = self.llm.call(
-                system=self.system_prompt,
-                user=user_prompt,
-                temperature=0.3,  # Lower temperature for consistency
-                max_tokens=300,  # Increased for detailed evaluation
-            )
-
-            # Parse JSON response (robust extraction)
-            import json
-            import re
-
-            json_text = result_text.strip()
-            data = None
-
-            # Robust JSON extraction
-            code_block_match = re.search(r"```(?:json)?\s*([\s\S]*?)```", json_text)
-            if code_block_match:
-                try: data = json.loads(code_block_match.group(1).strip())
-                except json.JSONDecodeError: pass
-            
-            if data is None:
-                json_match = re.search(r"\{[\s\S]*\}", json_text)
-                if json_match:
-                    try: data = json.loads(json_match.group(0))
-                    except json.JSONDecodeError: pass
-
-            if data is None:
-                 try: data = json.loads(json_text)
-                 except json.JSONDecodeError: pass
-
-            if data is None:
-                # パース失敗時は安全側に倒してPASS/NOOP
-                # パース失敗はLLMの出力異常なのでRETRY扱いにはせずPASSさせるが、トピックは更新しない
-                self.topic_state = old_topic_state
-                fallback_status = DirectorStatus.WARN if warnings else DirectorStatus.PASS
-                fallback_reason = "JSON Parse Error - Safe Fallback"
-                if warnings:
-                    warning_summary = " / ".join(w["issue"] for w in warnings[:2])
-                    fallback_reason = f"{fallback_reason} | WARN: {warning_summary}"
-                return DirectorEvaluation(
-                    status=fallback_status,
-                    reason=fallback_reason,
-                    suggestion=warnings[0].get("suggestion") if warnings else None,
-                    next_instruction=None,
-                    next_pattern=None,
-                    beat_stage=current_beat,
-                    **current_topic_fields,
-                )
-
-            # ★ コードによる「最後の殺し」実行
-            validated_data = self._validate_director_output(data, turn_number, frame_description)
-
-            # ★ Scoring System Logic
+            # Parse scores and determine average status
             scores = data.get("scores", {})
+            validated_data = data # for backward compatibility in the code below
+            
             score_values = []
             for k in ["frame_consistency", "roleplay", "connection", "information_density", "naturalness"]:
                 val = scores.get(k)
@@ -500,13 +380,15 @@ Respond ONLY with JSON:
                     status = DirectorStatus.PASS
             else:
                 # Fallback to status field if no scores
-                status_str = validated_data.get("status", "PASS").upper()
+                status_str = data.get("status", "PASS").upper()
                 status = getattr(DirectorStatus, status_str, DirectorStatus.PASS)
                 avg_score = 0.0
 
             # Handle RETRY
             if status == DirectorStatus.RETRY:
-                self.topic_state = old_topic_state
+                # RETRY時は状態を復元（stateless評価）
+                self.topic_state = initial_topic_state
+                self.recent_patterns = initial_recent_patterns
                 print(f"    🛡️ Director: RETRY (Score={avg_score:.1f})")
                 
                 # Check if we should override reason/suggestion from LLM
@@ -517,11 +399,12 @@ Respond ONLY with JSON:
                     status=DirectorStatus.RETRY,
                     reason=reason,
                     suggestion=suggestion,
+                    beat_stage=current_beat,
                     **current_topic_fields,
                 )
 
             # Handle PASS (including WARN cases)
-            self.novelty_guard.check_and_update(response, update=True)
+            # self.novelty_guard.check_and_update(response, update=True)  # -> commit_evaluationへ移動
             
             # Warn handling for Next Instruction
             next_instruction = data.get("next_instruction")
@@ -547,30 +430,24 @@ Respond ONLY with JSON:
                 if next_instruction:
                     next_instruction = f"{prefix} {next_instruction}"
                 else:
-                    # action=NOOP but we want to pass context. 
                     next_instruction = prefix 
 
             # Topic Logging
             if temp_is_premature:
-                print(f"    ⚠️ Topic premature switch detected (PASS): {old_topic_state.focus_hook} → {detected_hook}")
-            elif detected_hook == old_topic_state.focus_hook:
+                print(f"    ⚠️ Topic premature switch detected (PASS): {initial_topic_state.focus_hook} → {detected_hook}")
+            elif detected_hook == initial_topic_state.focus_hook:
                  print(f"    📊 Topic: {self.topic_state.focus_hook} depth={self.topic_state.hook_depth}/3 step={self.topic_state.depth_step}")
             else:
                  print(f"    🔀 Topic switch: → {detected_hook}")
 
             # Handle warnings
-            reason = validated_data.get("reason", "")
+            reason = data.get("reason", "")
             reason_with_issues = reason
-            if warnings and status in {DirectorStatus.PASS, DirectorStatus.WARN}:
-                warning_summary = " / ".join(w["issue"] for w in warnings[:2])
-                if reason_with_issues:
-                    reason_with_issues = f"{reason_with_issues} | WARN: {warning_summary}"
-                else:
-                    reason_with_issues = f"WARN: {warning_summary}"
-                if status == DirectorStatus.PASS:
-                    status = DirectorStatus.WARN
+            if static_warnings and status in {DirectorStatus.PASS, DirectorStatus.WARN}:
+                status = DirectorStatus.WARN
+                reason_with_issues = f"{reason_with_issues} (Static Warn: {', '.join(static_warnings)})"
 
-            beat_stage = validated_data.get("beat_stage", current_beat)
+            beat_stage = data.get("beat_stage", current_beat)
 
             # action判定
             action = data.get("action", "NOOP")
@@ -578,15 +455,6 @@ Respond ONLY with JSON:
             
             if action == "NOOP":
                 next_pattern = None
-                # If we have next_instruction from warnings, we should keep it?
-                # Usually NOOP implies next_instruction is None.
-                # But if we have warnings, passing them to next_instruction is useful.
-                # BUT, get_instruction_for_next_turn will generate the instruction for the next turn independently?
-                # No, DirectorEvaluation.next_instruction is used for INTERVENE.
-                # If action=NOOP, DirectorEvaluation.next_instruction is typically ignored by the main loop (main.py or beat_manager).
-                # Wait, if action is NOOP, we should verify if next_instruction is used.
-                # If not used, we might lose the warning.
-                # So if warnings exist, maybe we should force INTERVENE?
                 if warning_messages:
                      action = "INTERVENE"
                      print("    ⚠️ Upgrading to INTERVENE to convey warnings.")
@@ -597,15 +465,13 @@ Respond ONLY with JSON:
                 if next_pattern and next_pattern not in ["A", "B", "C", "D", "E"]:
                     next_pattern = None
 
-                # ビートトラッカーによるパターン許可チェック（既存ロジック維持）
+                # ビートトラッカーによるパターン許可チェック
                 if next_pattern and not self.beat_tracker.is_pattern_allowed(next_pattern, self.recent_patterns):
                     next_pattern = self.beat_tracker.suggest_pattern(turn_number, self.recent_patterns)
 
-            # ファクトチェックで誤りが見つかった場合、訂正パターンに切り替え
+            # ファクトチェック訂正
             if fact_check_result and fact_check_result.has_error:
-                # パターンC（誤解→訂正）を強制
                 next_pattern = "C"
-                # 訂正指示を追加
                 correction_instruction = fact_check_result.correction_prompt
                 if next_instruction:
                     next_instruction = f"{correction_instruction}\n\n（追加指示）{next_instruction}"
@@ -613,59 +479,98 @@ Respond ONLY with JSON:
                     next_instruction = correction_instruction
                 print(f"    🎬 パターンを訂正モード(C)に変更")
 
-            # 履歴更新（NOOPでない場合のみ）
-            if next_pattern:
-                self.recent_patterns.append(next_pattern)
-                if len(self.recent_patterns) > 5:
-                    self.recent_patterns = self.recent_patterns[-5:]
-
-            # Issues from LLM (if any)
-            issues = validated_data.get("issues", [])
-            if issues and isinstance(issues, list):
-                reason_with_issues = f"{reason_with_issues}\n- " + "\n- ".join(issues[:2])
+            if llm_issues and isinstance(llm_issues, list):
+                reason_with_issues = f"{reason_with_issues}\n- " + "\n- ".join(llm_issues[:2])
             
-            beat_stage = validated_data.get("beat_stage", current_beat)
-
             # ========== Director v3: 早すぎる話題転換のINTERVENE処理 ==========
-            # 早期に検出したpremature switchフラグがある場合、INTERVENEで戻す
             if is_premature_switch:
+                # 状態を復元してからリターン
+                self.topic_state = initial_topic_state
+                self.recent_patterns = initial_recent_patterns
                 return DirectorEvaluation(
                     status=DirectorStatus.PASS,
-                    reason=f"話題が早すぎる転換（{self.topic_state.focus_hook}→{detected_hook}）",
+                    reason=f"話題が早すぎる転換（{initial_topic_state.focus_hook}→{detected_hook}）",
                     action="INTERVENE",
-                    next_instruction=self._build_strong_intervention(speaker),
+                    suggestion=f"話題「{initial_topic_state.focus_hook}」についてもう少し掘り下げてください。",
+                    next_pattern="D",
                     beat_stage=beat_stage,
-                    **current_topic_fields,
+                    **current_topic_fields_at_step0
                 )
 
-            suggestion = validated_data.get("suggestion")
+            suggestion = data.get("suggestion")
             if status == DirectorStatus.WARN and not suggestion and warnings:
                 suggestion = warnings[0].get("suggestion")
+
+            # ========== Finalize (Rollback state for statelessness) ==========
+            self.topic_state = initial_topic_state
+            self.recent_patterns = initial_recent_patterns
 
             return DirectorEvaluation(
                 status=status,
                 reason=reason_with_issues,
-                suggestion=suggestion,
+                suggestion=suggestion or data.get("suggestion"),
                 next_pattern=next_pattern,
                 next_instruction=next_instruction,
-                beat_stage=beat_stage,
                 action=action,
-                hook=validated_data.get("hook"),
-                evidence=validated_data.get("evidence"),
+                hook=data.get("hook"),
+                evidence=data.get("evidence"),
+                beat_stage=beat_stage,
                 **current_topic_fields,
             )
 
         except Exception as e:
-            # Fallback evaluation with beat tracking
-            fallback_pattern = self.beat_tracker.suggest_pattern(turn_number, self.recent_patterns)
-            self.recent_patterns.append(fallback_pattern)
+            import traceback
+            print(f"    ❌ Error in evaluate_response: {e}")
+            traceback.print_exc()
+            # エラー時も状態を復元
+            self.topic_state = initial_topic_state
+            self.recent_patterns = initial_recent_patterns
             return DirectorEvaluation(
                 status=DirectorStatus.PASS,
-                reason=f"Director evaluation error: {str(e)}",
-                next_pattern=fallback_pattern,
+                reason=f"Director error: {e}",
                 beat_stage=current_beat,
-                **current_topic_fields,
+                **current_topic_fields_at_step0,
             )
+    def _get_llm_scoring(
+        self,
+        frame_description: str,
+        speaker: str,
+        response: str,
+        partner_speech: Optional[str] = None,
+        domains: list = None,
+        conversation_history: list = None,
+        current_beat: str = "SETUP",
+        static_warnings: list = None,
+    ) -> dict:
+        """Fetch evaluation from LLM."""
+        beat_info = self.beat_tracker.get_beat_info(current_beat)
+        prompt = self._build_evaluation_prompt(
+            frame_description,
+            speaker,
+            response,
+            partner_speech,
+            domains,
+            conversation_history,
+            [], # tone markers check is covered by static_warnings
+            1, # turn placeholder
+            current_beat,
+            beat_info,
+            static_warnings
+        )
+        
+        try:
+            import json
+            eval_text = self.llm.call(
+                system="対話の品質を厳格に評価するディレクター（演出家）として振る舞ってください。",
+                user=prompt,
+                # response_format={"type": "json_object"} # Removed as it might not be supported in all environments
+            )
+            data = json.loads(eval_text)
+            return data
+        except Exception as e:
+            print(f"    ❌ LLM scoring failed: {e}")
+            return {"status": "PASS", "scores": {}, "reason": f"LLM Error: {e}"}
+
 
     def _build_evaluation_prompt(
         self,
@@ -929,10 +834,12 @@ JSON ONLY:
                 if repeated in text:
                     return True
 
+        # 同じ文字が複数回連続して繰り返されるのを検出 (例: "あああああ")
+        if re.search(r'(.{1})\1{' + str(threshold-1) + r',}', text):
+            return True
+
         # 同じ単語が短い間隔で繰り返される（例: "鳥鳥鳥"）
-        import re
-        # 2-4文字の単語が4回以上連続
-        if re.search(r'(.{2,4})\1{3,}', text):
+        if re.search(r'(.{2,4})\1{2,}', text):
             return True
 
         return False
@@ -998,15 +905,15 @@ JSON ONLY:
 
         normalized = self._normalize_for_checks(response)
         if speaker == "A":
-            # やな（姉）の口調マーカー
-            markers = ["わ！", "へ？", "よね", "かな", "かも"] # "ね" を外して重複回避（だね/よねに任せるか、単体なら正規表現で）
-            expected_desc = ["わ！", "へ？", "〜よね", "〜かな", "〜かも"]
+            # やな（姉）の口調マーカー（感情表現・語尾）
+            markers = ["わ！", "へ？", "よね", "かな", "かも", "だね", "じゃん"]
+            expected_desc = ["わ！", "へ？", "〜よね", "〜かな", "〜かも", "〜だね"]
             vocab_markers = ["やだ", "ほんと", "えー", "うーん", "すっごい", "そっか", "だね", "ね。"]
         else:
-            # あゆ（妹）の口調マーカー
-            markers = ["でしょう", "ですね", "ました", "ません"]
-            expected_desc = ["〜でしょう", "〜ですね", "〜ました"]
-            vocab_markers = ["つまり", "要するに", "一般的に", "目安", "推奨", "ですよ", "です。"]
+            # あゆ（妹）の口調マーカー（丁寧・論理的）
+            markers = ["でしょう", "ですね", "ました", "ません", "ですよ"]
+            expected_desc = ["〜でしょう", "〜ですね", "〜ました", "〜ですよ"]
+            vocab_markers = ["つまり", "要するに", "一般的に", "目安", "推奨", "ですね", "です。"]
 
         found = []
         for marker in markers:
@@ -1029,7 +936,8 @@ JSON ONLY:
                         "style_hit": False,
                         "expected": expected_desc,
                         "found": found,
-                        "missing": f"禁止ワード「{forbidden}」を使用（やなは姉なので「姉様」は使えません）",
+                        "issue": f"禁止ワード「{forbidden}」を使用（やなは姉なので「姉様」は使えません）",
+                        "suggestion": "「姉様」あゆを呼ぶ時の言葉です。自分のことは「私」と言ってください。",
                     }
 
         sentences = self._split_sentences(normalized)
@@ -1050,13 +958,14 @@ JSON ONLY:
 
         return {
             "status": status,
-            "score": tone_score,
+            "score": int(tone_score),
             "marker_hit": marker_hit,
             "vocab_hit": vocab_hit,
             "style_hit": style_hit,
             "expected": expected_desc,
             "found": found,
-            "missing": "口調スコアが不足しています" if tone_score < 2 else "",
+            "issue": "口調スコアが不足しています" if tone_score < 2 else "",
+            "suggestion": f"以下の口調マーカーを適切に含めてください: {', '.join(expected_desc)}" if tone_score < 2 else "",
         }
 
     def _check_setting_consistency(self, response: str) -> dict:
@@ -1335,8 +1244,8 @@ JSON ONLY:
             return {"detected": False, "keyword": None}
 
         # 正規表現で「意味がありそうな単語」を抽出
-        # 漢字・カタカナ・英数字の2文字以上の連続
-        pattern = r'[一-龠々ヶァ-ヴーa-zA-Z0-9]{2,}'
+        # 漢字（々含む）・カタカナ（・含む）・英数字の2文字以上の連続
+        pattern = r'[一-龠々ヶァ-ヴー・a-zA-Z0-9]{2,}'
 
         # 直近3ターン + 現在の発言からそれぞれ単語セットを作成
         texts = [text for _, text in conversation_history[-3:]] + [response]
@@ -1407,14 +1316,44 @@ JSON ONLY:
             issues.append(f"話題が多すぎる({topic_count}件)")
             return {"status": DirectorStatus.RETRY, "issues": issues}
 
-        if sentence_count >= 3 or topic_count >= 2:
-            if sentence_count >= 3:
+        # 1-2文程度なら、話題が多く見えても散漫とはみなさない
+        if sentence_count >= 3 and (sentence_count >= 5 or topic_count >= 2):
+            if sentence_count >= 5:
                 issues.append(f"文が多め({sentence_count}文)")
             if topic_count >= 2:
                 issues.append(f"話題が多め({topic_count}件)")
             return {"status": DirectorStatus.WARN, "issues": issues}
 
         return {"status": DirectorStatus.PASS, "issues": []}
+
+    def commit_evaluation(self, response: str, evaluation: DirectorEvaluation) -> None:
+        """
+        最終的に確定した評価内容を Director の内部状態に反映する。
+        これにより、次ターンの評価に正しい話題状態やループ履歴が引き継がれる。
+        """
+        if not evaluation:
+            return
+
+        # 1. Topic State の更新
+        self.topic_state.focus_hook = evaluation.focus_hook or ""
+        self.topic_state.hook_depth = evaluation.hook_depth
+        self.topic_state.depth_step = evaluation.depth_step
+        self.topic_state.turns_on_hook = evaluation.turns_on_hook
+        self.topic_state.forbidden_topics = evaluation.forbidden_topics[:]
+        self.topic_state.must_include = evaluation.must_include[:]
+
+        # 2. NoveltyGuard (話題履歴) の更新
+        # RETRYステータス以外、または確定した会話は履歴に追加
+        if evaluation.status != DirectorStatus.RETRY:
+            self.novelty_guard.check_and_update(response, update=True)
+
+        # 3. Pattern 履歴の更新
+        if evaluation.next_pattern:
+            self.recent_patterns.append(evaluation.next_pattern)
+            if len(self.recent_patterns) > 5:
+                self.recent_patterns = self.recent_patterns[-5:]
+
+        print(f"    ✅ Director: State committed [Topic: {self.topic_state.focus_hook}]")
 
     def is_fatal_modify(self, reason: str) -> bool:
         """
@@ -1457,8 +1396,8 @@ JSON ONLY:
         重要: 全体の会話ではなく、直前の発言（response）からのみ抽出する。
         これにより、会話の自然な流れが維持される。
         """
-        # 正規表現で名詞候補を抽出（漢字・カタカナ・英数字の2文字以上）
-        pattern = r'[一-龠々ヶァ-ヴーa-zA-Z]{2,}'
+        # 漢字（々含む）・カタカナ（・含む）・英数字の2文字以上、および「お/ご」で始まる単語
+        pattern = r'[ァ-ヶー・]{2,}|[一-龠々ヶ]{2,}|[おご][一-龠々ヶ]{1,}[ぁ-ん]?|[a-zA-Z0-9]{2,}'
 
         # 直前の発言からのみ抽出
         candidates = re.findall(pattern, response)
@@ -1466,12 +1405,13 @@ JSON ONLY:
         # 禁止トピックを除外
         candidates = [c for c in candidates if c not in self.topic_state.forbidden_topics]
 
-        # 一般的すぎる単語を除外（拡張版）
+        # 一般的すぎる単語や形容詞的な名詞を除外
         stop_words = {
             "そう", "ですね", "ます", "です", "やな", "あゆ", "姉様", "姉", "妹",
             "本当", "確か", "良い", "いい", "今年", "毎年", "今日", "昨日",
             "ちょっと", "なんか", "すごい", "とても", "少し", "やっぱり",
             "大事", "大切", "楽しみ", "嬉しい", "面白い", "一緒", "みんな",
+            "可愛", "綺麗", "不思議", "自然", "気持", "状態", "自分", "相手"
         }
         candidates = [c for c in candidates if c not in stop_words and len(c) >= 2]
 

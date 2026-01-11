@@ -600,9 +600,13 @@ class UnifiedPipeline:
                         if event_callback:
                             event_callback("thought", retry_data)
                         continue
+                
+                # PASS/WARN でリトライしない場合、状態を確定
+                self.director.commit_evaluation(speech, evaluation)
                 return speech, evaluation
 
             elif evaluation.status == DirectorStatus.MODIFY:
+                self.director.commit_evaluation(speech, evaluation)
                 return speech, evaluation
 
             elif evaluation.status == DirectorStatus.RETRY:
@@ -633,6 +637,9 @@ class UnifiedPipeline:
             # リトライ上限またはその他のステータス
             break
 
+        # 最終的な結果を確定
+        if evaluation:
+            self.director.commit_evaluation(speech, evaluation)
         return speech, evaluation
 
     def _merge_context(

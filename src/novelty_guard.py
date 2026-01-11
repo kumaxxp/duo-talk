@@ -29,6 +29,7 @@ class LoopBreakStrategy(Enum):
     FORCE_PAST_REFERENCE = "past_reference"    # 過去の具体的エピソード
     FORCE_WHY = "force_why"                    # なぜ？を掘り下げる
     FORCE_EXPAND = "force_expand"              # 話題を広げる
+    FORCE_CHANGE_TOPIC = "change_topic"        # 話題を強制的に変える
     NOOP = "noop"                              # 介入なし
 
 
@@ -120,8 +121,8 @@ class NoveltyGuard:
 
         Note: 本番環境ではMeCab等での形態素解析を推奨
         """
-        # カタカナ・漢字の連続を抽出
-        nouns = set(re.findall(r'[ァ-ヶー]{2,}|[一-龯]{2,}', text))
+        # カタカナ、漢字の連続、および「お/ご」で始まる名詞を抽出
+        nouns = set(re.findall(r'[ァ-ヶー・]{2,}|[一-龠]{2,}|[おご][一-龠]{1,}[ぁ-ん]?', text))
 
         # 短すぎる名詞と一般的な名詞を除外
         nouns = {n for n in nouns if len(n) >= 2 and n not in self.stop_nouns}
@@ -196,22 +197,35 @@ class NoveltyGuard:
             overlap_count = 0
             common_nouns = current_nouns.copy()
 
+            # 深いループの判定（連続する過去 N 件の重なりを確認）
+            deep_overlap_count = 0
+            for past_nouns in reversed(self.recent_nouns):
+                if current_nouns & past_nouns:
+                    deep_overlap_count += 1
+                else:
+                    break
+
             for past_nouns in self.recent_nouns[-self.max_topic_depth:]:
                 intersection = current_nouns & past_nouns
                 if intersection:
                     overlap_count += 1
                     common_nouns &= past_nouns
 
-            result.topic_depth = overlap_count
+            result.topic_depth = overlap_count # 互換性のため維持
 
             # ループ検知条件
             if overlap_count >= self.max_topic_depth and common_nouns:
                 result.loop_detected = True
                 result.stuck_nouns = list(common_nouns)[:5]
-                result.reason = f"同じ話題が{overlap_count}ターン連続"
+                result.reason = f"同じ話題が{deep_overlap_count}ターン連続"
                 
-                # 戦略選択
-                result.strategy = self._select_strategy(specificity_details, update=update)
+                # 深いループ（5ターン以上）の場合は強制話題転換
+                if deep_overlap_count >= 5:
+                    result.strategy = LoopBreakStrategy.FORCE_CHANGE_TOPIC
+                else:
+                    # 戦略選択
+                    result.strategy = self._select_strategy(specificity_details, update=update)
+
                 result.injection = self._generate_injection(
                     result.strategy,
                     result.stuck_nouns
@@ -361,6 +375,12 @@ class NoveltyGuard:
                 "- 「それって、〜にも関係あるよね」\n"
                 "- 別の角度から見てみる\n"
                 "- 新しい視点を加える"
+            ),
+            LoopBreakStrategy.FORCE_CHANGE_TOPIC: (
+                f"【話題強制終了】「{topic}」の話はもう十分にしました。この話はここで切り上げ、全く別の話題に移ってください。\n"
+                "- 目の前の景色の別の部分に注目する\n"
+                "- 相手に全く新しい質問を投げかける\n"
+                "- 以前の話題を引きずらないこと"
             ),
         }
 
