@@ -119,7 +119,13 @@
       "Bash(./start_gui.sh:*)",
       "Bash(wc:*)",
       "Bash(timeout 45 python:*)",
-      "Bash(tee:*)"
+      "Bash(tee:*)",
+      "Bash(gh pr view:*)",
+      "Bash(git checkout:*)",
+      "Bash(git merge:*)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(git push:*)"
     ]
   }
 }
