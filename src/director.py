@@ -219,6 +219,7 @@ Respond ONLY with JSON:
         initial_topic_state = copy.deepcopy(self.topic_state)
         initial_recent_patterns = self.recent_patterns[:]
 
+        warnings = []
         # ========== Director v3: Topic Manager - 判定準備 ==========
         detected_hook = self._extract_hook_from_response(response, frame_description)
         is_premature_switch = False  # 早すぎる話題転換フラグ
@@ -240,8 +241,17 @@ Respond ONLY with JSON:
                 if not self.topic_state.can_switch_topic():
                     temp_is_premature = True
                     is_premature_switch = True
-                else:
-                    self.topic_state.switch_topic(detected_hook)
+                    # Add to static warnings instead of forcing INTERVENE later
+                    warnings.append({
+                        "status": DirectorStatus.WARN,
+                        "issue": f"話題が早すぎる転換（{self.topic_state.focus_hook}→{detected_hook}）",
+                        "suggestion": f"話題「{self.topic_state.focus_hook}」についてもう少し掘り下げてください。"
+                    })
+                
+                # リトライ（INTERVENE）は行わないが、内部状態は新しい話題に更新しておくか、
+                # あるいは古い話題を維持して深掘りを促すか。
+                # ユーザーの「検出のみ」という意図を汲み、状態自体は更新（switch）させておく。
+                self.topic_state.switch_topic(detected_hook)
         else:
             self.topic_state.focus_hook = detected_hook
             self.topic_state.must_include = [detected_hook]
@@ -280,7 +290,6 @@ Respond ONLY with JSON:
                 ]
             )
 
-        warnings = []
 
         # 形式チェック (static check)
         format_check = self._check_format(response)
@@ -483,19 +492,20 @@ Respond ONLY with JSON:
                 reason_with_issues = f"{reason_with_issues}\n- " + "\n- ".join(llm_issues[:2])
             
             # ========== Director v3: 早すぎる話題転換のINTERVENE処理 ==========
-            if is_premature_switch:
-                # 状態を復元してからリターン
-                self.topic_state = initial_topic_state
-                self.recent_patterns = initial_recent_patterns
-                return DirectorEvaluation(
-                    status=DirectorStatus.PASS,
-                    reason=f"話題が早すぎる転換（{initial_topic_state.focus_hook}→{detected_hook}）",
-                    action="INTERVENE",
-                    suggestion=f"話題「{initial_topic_state.focus_hook}」についてもう少し掘り下げてください。",
-                    next_pattern="D",
-                    beat_stage=beat_stage,
-                    **current_topic_fields_at_step0
-                )
+            # 早すぎる話題転換のINTERVENE処理は将来のためコメントアウト
+            # if is_premature_switch:
+            #     # 状態を復元してからリターン
+            #     self.topic_state = initial_topic_state
+            #     self.recent_patterns = initial_recent_patterns
+            #     return DirectorEvaluation(
+            #         status=DirectorStatus.PASS,
+            #         reason=f"話題が早すぎる転換（{initial_topic_state.focus_hook}→{detected_hook}）",
+            #         action="INTERVENE",
+            #         suggestion=f"話題「{initial_topic_state.focus_hook}」についてもう少し掘り下げてください。",
+            #         next_pattern="D",
+            #         beat_stage=beat_stage,
+            #         **current_topic_fields_at_step0
+            #     )
 
             suggestion = data.get("suggestion")
             if status == DirectorStatus.WARN and not suggestion and warnings:
@@ -1411,7 +1421,8 @@ JSON ONLY:
             "本当", "確か", "良い", "いい", "今年", "毎年", "今日", "昨日",
             "ちょっと", "なんか", "すごい", "とても", "少し", "やっぱり",
             "大事", "大切", "楽しみ", "嬉しい", "面白い", "一緒", "みんな",
-            "可愛", "綺麗", "不思議", "自然", "気持", "状態", "自分", "相手"
+            "可愛", "綺麗", "不思議", "自然", "気持", "状態", "自分", "相手",
+            "絶対", "無理", "最高", "最低", "結局", "当然", "突然", "普通", "最近"
         }
         candidates = [c for c in candidates if c not in stop_words and len(c) >= 2]
 
