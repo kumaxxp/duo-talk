@@ -263,7 +263,6 @@ Respond ONLY with JSON:
 
         warnings = []
 
-        # 出力形式のチェック（かっこ付き、複数ブロック）
         # 出力形式のチェック
         format_check = self._check_format(response)
         if format_check["status"] == DirectorStatus.RETRY:
@@ -502,15 +501,7 @@ Respond ONLY with JSON:
             else:
                 # Fallback to status field if no scores
                 status_str = validated_data.get("status", "PASS").upper()
-                status = (
-                    DirectorStatus.PASS
-                    if status_str == "PASS"
-                    else DirectorStatus.WARN
-                    if status_str == "WARN"
-                    else DirectorStatus.RETRY
-                    if status_str == "RETRY"
-                    else DirectorStatus.MODIFY
-                )
+                status = getattr(DirectorStatus, status_str, DirectorStatus.PASS)
                 avg_score = 0.0
 
             # Handle RETRY
@@ -568,6 +559,7 @@ Respond ONLY with JSON:
                  print(f"    🔀 Topic switch: → {detected_hook}")
 
             # Handle warnings
+            reason = validated_data.get("reason", "")
             reason_with_issues = reason
             if warnings and status in {DirectorStatus.PASS, DirectorStatus.WARN}:
                 warning_summary = " / ".join(w["issue"] for w in warnings[:2])
@@ -627,13 +619,10 @@ Respond ONLY with JSON:
                 if len(self.recent_patterns) > 5:
                     self.recent_patterns = self.recent_patterns[-5:]
 
-            # Build reason with issues if available
-            reason = validated_data.get("reason", "")
+            # Issues from LLM (if any)
             issues = validated_data.get("issues", [])
             if issues and isinstance(issues, list):
-                reason_with_issues = f"{reason}\n- " + "\n- ".join(issues[:2])
-            else:
-                reason_with_issues = reason
+                reason_with_issues = f"{reason_with_issues}\n- " + "\n- ".join(issues[:2])
             
             beat_stage = validated_data.get("beat_stage", current_beat)
 
@@ -1010,15 +999,14 @@ JSON ONLY:
         normalized = self._normalize_for_checks(response)
         if speaker == "A":
             # やな（姉）の口調マーカー
-            markers = ["ね", "わ", "へ？", "かな", "かも"]
-            expected_desc = ["〜ね", "わ", "へ？", "〜かな", "〜かも"]
-            vocab_markers = ["やだ", "ほんと", "えー", "うーん", "すっごい", "そっか", "だね"]
+            markers = ["わ！", "へ？", "よね", "かな", "かも"] # "ね" を外して重複回避（だね/よねに任せるか、単体なら正規表現で）
+            expected_desc = ["わ！", "へ？", "〜よね", "〜かな", "〜かも"]
+            vocab_markers = ["やだ", "ほんと", "えー", "うーん", "すっごい", "そっか", "だね", "ね。"]
         else:
-            # あゆ（妹）の口調マーカー（「姉様」は毎回不要なので必須から除外）
-            # 「ございます」は禁止なので含めない
-            markers = ["です", "ます", "でしょう", "ですね", "ました"]
-            expected_desc = ["です", "ですね", "〜ます"]
-            vocab_markers = ["つまり", "要するに", "一般的に", "目安", "推奨", "ですよ", "ません"]
+            # あゆ（妹）の口調マーカー
+            markers = ["でしょう", "ですね", "ました", "ません"]
+            expected_desc = ["〜でしょう", "〜ですね", "〜ました"]
+            vocab_markers = ["つまり", "要するに", "一般的に", "目安", "推奨", "ですよ", "です。"]
 
         found = []
         for marker in markers:
@@ -1401,13 +1389,18 @@ JSON ONLY:
         sentence_count = len(sentences)
 
         topic_patterns = [
-            r"[^\s]{2,}について",
-            r"[^\s]{2,}の話",
-            r"[ぁ-んァ-ン一-龠]{2,}は[、。]",
+            r"について(も)?(です|した|話|考える|触れる)",
+            r"の話(を|で|に|も)",
+            r"[一-龠]{2,}は[ぁ-ん]", # 「は」の後に活用形が来る場合（広い、など）
         ]
         topic_count = 0
+        import re
         for pattern in topic_patterns:
-            topic_count += len(re.findall(pattern, response))
+            matches = re.findall(pattern, response)
+            topic_count += len(matches)
+            
+        # デバッグ用に出力（テスト時）
+        # print(f"DEBUG Scatter: sentence={sentence_count}, topic={topic_count}")
 
         if sentence_count >= 4 and topic_count >= 3:
             issues.append(f"文が多すぎる({sentence_count}文)")
