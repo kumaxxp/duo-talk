@@ -341,7 +341,7 @@ Respond ONLY with JSON:
         # 推論とスコアリング (LLM評価)
         fact_check_result = None
         if self.enable_fact_check:
-             fact_check_result = self.fact_checker.check(response, frame_description)
+             fact_check_result = self.fact_checker.check_statement(response, frame_description)
              self.last_fact_check = fact_check_result
 
         # LLM scoring (consolidated)

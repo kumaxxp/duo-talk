@@ -30,9 +30,13 @@ export default function App() {
   const lastFocusRef = useRef<HTMLElement | null>(null)
   const logEndRef = useRef<HTMLDivElement | null>(null)
 
-  const turns = useMemo(() => Object.keys(speaks).map(n => parseInt(n, 10)).sort((a, b) => a - b), [speaks])
-  // Filters removed as per request
-  const filteredTurns = turns // Show all turns
+  const turns = useMemo(() => {
+    const allTurns = new Set<number>()
+    Object.keys(speaks).forEach(n => allTurns.add(parseInt(n, 10)))
+    Object.keys(directors).forEach(n => allTurns.add(parseInt(n, 10)))
+    thoughtLog.forEach(th => { if (th.turn !== undefined) allTurns.add(th.turn) })
+    return Array.from(allTurns).sort((a, b) => a - b)
+  }, [speaks, directors, thoughtLog])
 
   // Offline eval + style metrics
   const [ragScore, setRagScore] = useState<{ f1?: number, cite?: number } | undefined>()
@@ -292,15 +296,17 @@ export default function App() {
                           )}
 
                           {/* The Actual Turn Card */}
-                          <TurnCard
-                            sp={speaks[t]}
-                            rag={rag[t]}
-                            beat={directors[t]?.beat}
-                            directorStatus={directors[t]?.status}
-                            directorReason={directors[t]?.reason}
-                            directorGuidance={directors[t]?.guidance || undefined}
-                            onViewPrompts={(e) => { lastFocusRef.current = e.currentTarget as HTMLElement; setModalTurn(t) }}
-                          />
+                          {speaks[t] && (
+                            <TurnCard
+                              sp={speaks[t]}
+                              rag={rag[t]}
+                              beat={directors[t]?.beat}
+                              directorStatus={directors[t]?.status}
+                              directorReason={directors[t]?.reason}
+                              directorGuidance={directors[t]?.guidance || undefined}
+                              onViewPrompts={(e) => { lastFocusRef.current = e.currentTarget as HTMLElement; setModalTurn(t) }}
+                            />
+                          )}
                         </div>
                       )
                     })}
