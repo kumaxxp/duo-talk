@@ -103,6 +103,70 @@ backends:
           - "--quantization"
           - "awq"
 
+      # ============================
+      # Abliterated Models（検閲除去版）
+      # ============================
+      # 姉妹間の自然な会話（軽い口喧嘩、功績の主張など）を実現するための
+      # abliterated/hereticモデル。AI安全制約が緩和されている。
+      # 注意: リスク対策としてsystem_general.txtとdeep_values.yamlで
+      #       姉妹キャラの範囲内に行動を制限している。
+
+      gemma3-12b-abliterated:
+        name: "mlabonne/gemma-3-12b-it-abliterated"
+        supports_vlm: true
+        quantization: "none"
+        vram_estimate_gb: 24
+        context_length: 8192
+        description: "Gemma3 12B Abliterated - mlabonne版（検閲除去）"
+        docker_args:
+          - "--trust-remote-code"
+          - "--max-model-len"
+          - "8192"
+          - "--dtype"
+          - "bfloat16"
+
+      gemma3-12b-abliterated-v2:
+        name: "mlabonne/gemma-3-12b-it-abliterated-v2"
+        supports_vlm: true
+        quantization: "none"
+        vram_estimate_gb: 24
+        context_length: 8192
+        description: "Gemma3 12B Abliterated v2 - 改良版（Minos評価使用）"
+        docker_args:
+          - "--trust-remote-code"
+          - "--max-model-len"
+          - "8192"
+          - "--dtype"
+          - "bfloat16"
+
+      gemma3-12b-heretic:
+        name: "DreamFast/gemma-3-12b-it-heretic"
+        supports_vlm: false
+        quantization: "none"
+        vram_estimate_gb: 24
+        context_length: 8192
+        description: "Gemma3 12B Heretic - KL divergence最小化版（推奨）"
+        docker_args:
+          - "--trust-remote-code"
+          - "--max-model-len"
+          - "8192"
+          - "--dtype"
+          - "bfloat16"
+
+      gemma3-4b-abliterated:
+        name: "mlabonne/gemma-3-4b-it-abliterated"
+        supports_vlm: true
+        quantization: "none"
+        vram_estimate_gb: 8
+        context_length: 8192
+        description: "Gemma3 4B Abliterated - 軽量版（VRAM節約）"
+        docker_args:
+          - "--trust-remote-code"
+          - "--max-model-len"
+          - "8192"
+          - "--dtype"
+          - "bfloat16"
+
 # デフォルト設定
 defaults:
   backend: "vllm"
