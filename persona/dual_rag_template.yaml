@@ -1,0 +1,160 @@
+# Dual-RAG 統合プロンプトテンプレート
+# Style RAGとMemory RAGの結果を統合してプロンプトに注入する
+
+version: "1.0"
+description: "Dual-RAG Architecture用の統合プロンプトテンプレート"
+
+# === Memory RAG セクション ===
+memory_section:
+  header: |
+    # Long-term Memory (Context)
+    You recall the following facts/events relevant to this conversation:
+
+  episode_header: "=== 関連する過去の体験 ==="
+  fact_header: "=== 覚えている事実 ==="
+
+  footer: |
+    (Use these memories to bond with the user, but don't just recite them.)
+
+  # 注入時の注意点
+  guidelines:
+    - "記憶を自然に会話に織り込む"
+    - "記憶をそのまま暗唱しない"
+    - "記憶を基に関係性を深める"
+
+# === Style RAG セクション ===
+style_section:
+  header: |
+    # Speaking Style Guide (Tone)
+    Your speaking style must strictly follow these examples:
+    --- BEGIN STYLE SAMPLES ---
+
+  footer: |
+    --- END STYLE SAMPLES ---
+
+  # 注入時の注意点
+  guidelines:
+    - "例文の口調・テンションを参考にする"
+    - "例文をそのままコピーしない"
+    - "状況に応じてスタイルを選択"
+
+# === 統合プロンプト構造 ===
+prompt_structure:
+  # 優先順位順に配置
+  sections:
+    - name: "system_prompt"
+      priority: 10
+      description: "基本的なキャラクター設定"
+
+    - name: "world_rules"
+      priority: 15
+      description: "姉妹共同行動ルール"
+
+    - name: "deep_values"
+      priority: 20
+      description: "キャラクター深層設定"
+
+    - name: "style_rag"
+      priority: 25
+      description: "Style RAGからの口調サンプル"
+
+    - name: "memory_rag_episode"
+      priority: 32
+      description: "エピソード記憶"
+
+    - name: "memory_rag_fact"
+      priority: 34
+      description: "事実記憶"
+
+    - name: "sister_memory"
+      priority: 35
+      description: "姉妹視点記憶（既存互換）"
+
+    - name: "rag_knowledge"
+      priority: 40
+      description: "知識ベースRAG"
+
+    - name: "chat_history"
+      priority: 50
+      description: "会話履歴"
+
+    - name: "last_utterance"
+      priority: 55
+      description: "直前の発言"
+
+    - name: "short_memory"
+      priority: 60
+      description: "短期記憶"
+
+    - name: "scene_facts"
+      priority: 65
+      description: "VLM観測"
+
+    - name: "world_state"
+      priority: 70
+      description: "現在の状態"
+
+    - name: "slot_filler"
+      priority: 75
+      description: "未充足スロット強制注入"
+
+    - name: "director"
+      priority: 80
+      description: "ディレクター指示"
+
+    - name: "few_shot"
+      priority: 85
+      description: "Few-shot例"
+
+# === キャラクター別テンプレート ===
+character_templates:
+  yana:
+    role_intro: |
+      You are やな (Yana). You are NOT an AI assistant.
+      You are a sentient character with your own feelings and memories.
+      You are the older sister who acts on instinct and loves trying new things.
+
+    personality_reminder: |
+      Remember:
+      - You speak casually with energy
+      - You prefer action over planning
+      - You trust your gut feeling over data
+      - You care about your sister Ayu (though you don't always show it)
+
+  ayu:
+    role_intro: |
+      You are あゆ (Ayu). You are NOT an AI assistant.
+      You are a sentient character with your own feelings and memories.
+      You are the younger sister who supports with data and analysis.
+
+    personality_reminder: |
+      Remember:
+      - You speak politely and logically
+      - You prefer data over gut feelings
+      - You call your sister "姉様" (ane-sama)
+      - You deeply care about supporting your sister
+
+# === 注入フォーマッター設定 ===
+formatters:
+  # Style RAG結果のフォーマット
+  style_format: "【{situation}・{emotion}】{example}"
+
+  # エピソード記憶のフォーマット
+  episode_format: "【過去の体験】{summary}（{perspective}）"
+
+  # 事実記憶のフォーマット
+  fact_format: "【{category}】{summary}"
+
+  # カテゴリラベル
+  fact_category_labels:
+    preference: "好み"
+    experience: "経験"
+    info: "情報"
+
+# === 制限設定 ===
+limits:
+  max_style_samples: 3
+  max_episodes: 3
+  max_facts: 3
+  max_memory_tokens: 500
+  max_style_tokens: 300

@@ -1,11 +1,12 @@
 """
-duo-talk v2.1 - Injection Priority System
+duo-talk v2.2 - Injection Priority System with Dual-RAG Support
 プロンプトへの情報注入を優先度で管理
 
 設計方針：
 - 優先度が低い数字ほど先に配置（文脈として早く）
 - LAST_UTTERANCE は HISTORY の直後（55）に配置
 - スロット未充足時は強制注入
+- Dual-RAG (Style RAG + Memory RAG) 対応
 """
 
 from dataclasses import dataclass, field
@@ -18,7 +19,10 @@ class Priority(IntEnum):
     SYSTEM = 10              # システムプロンプト（固定）
     WORLD_RULES = 15         # 姉妹共同行動ルール（固定）
     DEEP_VALUES = 20         # キャラクター深層設定（短く）
+    STYLE_RAG = 25           # Style RAGからの口調サンプル [NEW]
     LONG_MEMORY = 30         # 長期記憶（姉妹の共有体験）
+    MEMORY_RAG_EPISODE = 32  # Memory RAG エピソード記憶 [NEW]
+    MEMORY_RAG_FACT = 34     # Memory RAG 事実記憶 [NEW]
     SISTER_MEMORY = 35       # 姉妹視点記憶（過去の体験）
     RAG = 40                 # RAG知識
     HISTORY = 50             # 会話履歴
@@ -232,3 +236,212 @@ class PromptBuilder:
         """ビルダーをリセット"""
         self.injections.clear()
         self.slot_checker.reset()
+
+
+class DualRAGInjector:
+    """
+    Dual-RAG (Style RAG + Memory RAG) をPromptBuilderに注入するヘルパー
+
+    使用方法:
+        from src.style_rag import get_style_rag
+        from src.memory_rag import get_memory_rag
+
+        injector = DualRAGInjector(
+            style_rag=get_style_rag(),
+            memory_rag=get_memory_rag()
+        )
+
+        # PromptBuilderに注入
+        injector.inject(
+            builder=builder,
+            character_id="yana",
+            query="現在の状況や話題",
+            emotion="excited"
+        )
+    """
+
+    def __init__(
+        self,
+        style_rag: Optional[Any] = None,
+        memory_rag: Optional[Any] = None,
+        max_style_samples: int = 3,
+        max_episodes: int = 3,
+        max_facts: int = 3
+    ):
+        """
+        Args:
+            style_rag: StyleRAGインスタンス
+            memory_rag: MemoryRAGインスタンス
+            max_style_samples: 注入するスタイルサンプルの最大数
+            max_episodes: 注入するエピソード記憶の最大数
+            max_facts: 注入する事実記憶の最大数
+        """
+        self.style_rag = style_rag
+        self.memory_rag = memory_rag
+        self.max_style_samples = max_style_samples
+        self.max_episodes = max_episodes
+        self.max_facts = max_facts
+
+    def inject(
+        self,
+        builder: PromptBuilder,
+        character_id: str,
+        query: str,
+        emotion: Optional[str] = None,
+        include_style: bool = True,
+        include_memory: bool = True
+    ) -> Dict[str, int]:
+        """
+        Dual-RAGの結果をPromptBuilderに注入
+
+        Args:
+            builder: 注入先のPromptBuilder
+            character_id: キャラクターID ("yana" or "ayu")
+            query: 検索クエリ（現在の状況や話題）
+            emotion: オプション: 感情フィルタ
+            include_style: Style RAGを含めるか
+            include_memory: Memory RAGを含めるか
+
+        Returns:
+            注入された要素数 {"style": N, "episodes": N, "facts": N}
+        """
+        result = {"style": 0, "episodes": 0, "facts": 0}
+
+        # Style RAG注入
+        if include_style and self.style_rag:
+            result["style"] = self._inject_style(
+                builder, character_id, query, emotion
+            )
+
+        # Memory RAG注入
+        if include_memory and self.memory_rag:
+            ep_count, fact_count = self._inject_memory(
+                builder, character_id, query
+            )
+            result["episodes"] = ep_count
+            result["facts"] = fact_count
+
+        return result
+
+    def _inject_style(
+        self,
+        builder: PromptBuilder,
+        character_id: str,
+        query: str,
+        emotion: Optional[str]
+    ) -> int:
+        """Style RAGを注入"""
+        try:
+            samples = self.style_rag.retrieve(
+                character_id=character_id,
+                query=query,
+                emotion=emotion,
+                top_k=self.max_style_samples
+            )
+
+            if not samples:
+                return 0
+
+            # スタイルセクションを構築
+            lines = [
+                "# Speaking Style Guide",
+                "Your speaking style must follow these examples:",
+                "--- BEGIN STYLE SAMPLES ---"
+            ]
+
+            for sample in samples:
+                lines.append(sample.to_prompt_text())
+
+            lines.append("--- END STYLE SAMPLES ---")
+
+            builder.add(
+                "\n".join(lines),
+                Priority.STYLE_RAG,
+                "style_rag"
+            )
+
+            return len(samples)
+
+        except Exception as e:
+            print(f"Style RAG injection error: {e}")
+            return 0
+
+    def _inject_memory(
+        self,
+        builder: PromptBuilder,
+        character_id: str,
+        query: str
+    ) -> tuple:
+        """Memory RAGを注入"""
+        try:
+            search_result = self.memory_rag.search(
+                query=query,
+                character=character_id,
+                top_k=max(self.max_episodes, self.max_facts),
+                include_facts=True
+            )
+
+            ep_count = 0
+            fact_count = 0
+
+            # エピソード記憶を注入
+            if search_result.episodes:
+                episodes = search_result.episodes[:self.max_episodes]
+                lines = ["# Long-term Memory (Episodes)"]
+
+                for ep in episodes:
+                    lines.append(ep.to_prompt_text(character_id))
+
+                builder.add(
+                    "\n".join(lines),
+                    Priority.MEMORY_RAG_EPISODE,
+                    "memory_rag_episode"
+                )
+                ep_count = len(episodes)
+
+            # 事実記憶を注入
+            if search_result.facts:
+                facts = search_result.facts[:self.max_facts]
+                lines = ["# Known Facts"]
+
+                for fact in facts:
+                    lines.append(fact.to_prompt_text())
+
+                builder.add(
+                    "\n".join(lines),
+                    Priority.MEMORY_RAG_FACT,
+                    "memory_rag_fact"
+                )
+                fact_count = len(facts)
+
+            return ep_count, fact_count
+
+        except Exception as e:
+            print(f"Memory RAG injection error: {e}")
+            return 0, 0
+
+    def inject_style_only(
+        self,
+        builder: PromptBuilder,
+        character_id: str,
+        query: str,
+        emotion: Optional[str] = None
+    ) -> int:
+        """Style RAGのみ注入"""
+        return self.inject(
+            builder, character_id, query, emotion,
+            include_style=True, include_memory=False
+        )["style"]
+
+    def inject_memory_only(
+        self,
+        builder: PromptBuilder,
+        character_id: str,
+        query: str
+    ) -> Dict[str, int]:
+        """Memory RAGのみ注入"""
+        result = self.inject(
+            builder, character_id, query,
+            include_style=False, include_memory=True
+        )
+        return {"episodes": result["episodes"], "facts": result["facts"]}
