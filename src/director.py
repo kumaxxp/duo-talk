@@ -120,6 +120,8 @@ class Director:
         self.novelty_guard = NoveltyGuard(max_topic_depth=3, specificity_threshold=3)
         # 禁止コンテキスト管理（ループ検出時に自動追加）
         self.forbidden_context = get_forbidden_context_manager()
+        # LLM評価プロンプト保存用（デバッグ/Timeline表示用）
+        self.last_evaluation_prompt: Optional[str] = None
 
     def _default_system_prompt(self) -> str:
         """Default director prompt if file not found (deprecated)"""
@@ -582,7 +584,9 @@ Respond ONLY with JSON:
             beat_info,
             static_warnings
         )
-        
+        # プロンプトを保存（Timeline表示用）
+        self.last_evaluation_prompt = prompt
+
         try:
             import json
             eval_text = self.llm.call(

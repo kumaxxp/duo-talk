@@ -510,7 +510,15 @@ class UnifiedPipeline:
         speaker_name = "やな" if speaker == "A" else "あゆ"
 
         for attempt in range(max_retry + 1):
-            # イベント: 生成開始
+            # 1. プロンプトを先に準備
+            prompt = character.prepare_prompt_unified(
+                frame_description=frame_description,
+                conversation_history=conversation_history,
+                director_instruction=director_instruction,
+                topic_guidance=topic_guidance,
+            )
+
+            # 2. イベント: 生成開始（プロンプト付き）
             thought_data = {
                 "event": "thought",
                 "run_id": run_id,
@@ -521,7 +529,7 @@ class UnifiedPipeline:
                 "max_retry": max_retry,
                 "turn": turn_number,
                 "timestamp": datetime.now().isoformat(),
-                # プロンプトは生成後に取得（事前にはない）
+                "prompt": prompt,  # LLMに送信するプロンプト
             }
             if run_id:
                 self.logger.log_event(thought_data)
@@ -529,15 +537,13 @@ class UnifiedPipeline:
             if event_callback:
                 event_callback("thought", thought_data)
 
-            # 発話生成
-            speech = character.speak_unified(
-                frame_description=frame_description,
+            # 3. 準備済みプロンプトを使ってLLM呼び出し
+            speech = character.generate_from_prepared_prompt(
                 conversation_history=conversation_history,
-                director_instruction=director_instruction,
-                topic_guidance=topic_guidance,
             )
 
-            # イベント: 評価開始（プロンプト付き）
+            # イベント: 評価開始
+            # ※MinimalモードではLLM評価なし、FullモードではLLM評価あり
             review_data = {
                 "event": "thought",
                 "run_id": run_id,
@@ -547,8 +553,8 @@ class UnifiedPipeline:
                 "attempt": attempt + 1,
                 "turn": turn_number,
                 "timestamp": datetime.now().isoformat(),
-                "prompt": character.last_prompt,  # 生成に使用したプロンプト
                 "text": speech,  # 生成された応答
+                # プロンプトは評価後にDirectorから取得（LLM使用時のみ）
             }
             if run_id:
                 self.logger.log_event(review_data)
@@ -568,7 +574,7 @@ class UnifiedPipeline:
                 frame_num=1,  # 単一フレームの場合
             )
             
-            # イベント: 評価完了（結果通知、プロンプト付き）
+            # イベント: 評価完了（結果通知、Director評価プロンプト付き - Fullモードのみ）
             reviewed_data = {
                 "event": "thought",
                 "run_id": run_id,
@@ -577,11 +583,14 @@ class UnifiedPipeline:
                 "result": evaluation.status.name,
                 "reason": evaluation.reason,
                 "text": speech,
-                "prompt": character.last_prompt,  # 生成に使用したプロンプト
                 "attempt": attempt + 1,
                 "turn": turn_number,
-                "timestamp": datetime.now().isoformat()
+                "timestamp": datetime.now().isoformat(),
             }
+            # Director評価プロンプトがあれば含める（FullモードでLLM評価を行った場合のみ）
+            if self.director.last_evaluation_prompt:
+                reviewed_data["prompt"] = self.director.last_evaluation_prompt
+
             if run_id:
                 self.logger.log_event(reviewed_data)
 
@@ -609,10 +618,10 @@ class UnifiedPipeline:
                             "reason": f"介入: {evaluation.reason}",
                             "suggestion": director_instruction,
                             "text": speech,
-                            "prompt": character.last_prompt,  # 生成に使用したプロンプト
+                            "prompt": prompt,  # 生成に使用したプロンプト
                             "attempt": attempt + 1,
                             "turn": turn_number,
-                            "timestamp": datetime.now().isoformat()
+                            "timestamp": datetime.now().isoformat(),
                         }
                         if run_id:
                             self.logger.log_event(retry_data)
@@ -643,10 +652,10 @@ class UnifiedPipeline:
                         "reason": evaluation.reason,
                         "suggestion": director_instruction,
                         "text": speech,
-                        "prompt": character.last_prompt,  # 生成に使用したプロンプト
+                        "prompt": prompt,  # 生成に使用したプロンプト
                         "attempt": attempt + 1,
                         "turn": turn_number,
-                        "timestamp": datetime.now().isoformat()
+                        "timestamp": datetime.now().isoformat(),
                     }
                     if run_id:
                         self.logger.log_event(retry_data)

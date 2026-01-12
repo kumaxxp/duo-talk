@@ -43,7 +43,8 @@ class DirectorMinimal:
 
     def __init__(self):
         """最小構成なので、外部依存は一切なし"""
-        pass
+        # LLM評価プロンプト保存用（MinimalではLLMを使わないので常にNone）
+        self.last_evaluation_prompt: str | None = None
 
     def evaluate_response(
         self,
