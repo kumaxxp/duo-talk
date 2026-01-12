@@ -7,6 +7,7 @@ import json
 import os
 import time
 import httpx
+import yaml
 from pathlib import Path
 from typing import Optional, Dict, Any, List
 
@@ -15,6 +16,15 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from flask import Blueprint, jsonify, request
 from src.config import config
 from src.docker_manager import DockerServiceManager, ServiceState
+
+
+def load_llm_backends_config() -> Dict[str, Any]:
+    """Load llm_backends.yaml configuration"""
+    config_path = Path(__file__).parent.parent / "config" / "llm_backends.yaml"
+    if config_path.exists():
+        with open(config_path, 'r', encoding='utf-8') as f:
+            return yaml.safe_load(f)
+    return {}
 
 # Blueprint
 provider_api = Blueprint('provider_api', __name__)
@@ -122,16 +132,38 @@ def get_provider_status():
 @provider_api.route('/api/v2/provider/backends', methods=['GET'])
 def get_backends():
     """Get available backends and models"""
-    # Hardcoded for now based on what we know supports
-    
-    # 1. vLLM Models (matched with DockerConfig or presets)
-    vllm_models = [
-        {"id": "qwen2.5-vl-7b", "name": "Qwen2.5-VL-7B", "supports_vlm": True, "vram_gb": 18, "description": "Standard VLM"},
-        {"id": "gemma3-12b-int8", "name": "Gemma 3 12B (Int8)", "supports_vlm": True, "vram_gb": 14, "description": "High Performance VLM"}, 
-        {"id": "gemma3-27b-int4", "name": "Gemma 3 27B (Int4)", "supports_vlm": True, "vram_gb": 16, "description": "Large VLM"}
-    ]
 
-    # 2. Ollama Models
+    # Load config from llm_backends.yaml
+    backends_config = load_llm_backends_config()
+    ollama_config = backends_config.get('backends', {}).get('ollama', {}).get('models', {})
+    vllm_config = backends_config.get('backends', {}).get('vllm', {}).get('models', {})
+
+    # Build model name -> config lookup for Ollama
+    ollama_model_lookup: Dict[str, Dict[str, Any]] = {}
+    for model_id, model_info in ollama_config.items():
+        model_name = model_info.get('name', '')
+        ollama_model_lookup[model_name] = model_info
+
+    # 1. vLLM Models from config
+    vllm_models = []
+    for model_id, model_info in vllm_config.items():
+        vllm_models.append({
+            "id": model_id,
+            "name": model_info.get('name', model_id),
+            "supports_vlm": model_info.get('supports_vlm', False),
+            "vram_gb": model_info.get('vram_estimate_gb', 0),
+            "description": model_info.get('description', '')
+        })
+
+    # Fallback if no config
+    if not vllm_models:
+        vllm_models = [
+            {"id": "qwen2.5-vl-7b", "name": "Qwen2.5-VL-7B", "supports_vlm": True, "vram_gb": 18, "description": "Standard VLM"},
+            {"id": "gemma3-12b-int8", "name": "Gemma 3 12B (Int8)", "supports_vlm": True, "vram_gb": 14, "description": "High Performance VLM"},
+            {"id": "gemma3-27b-int4", "name": "Gemma 3 27B (Int4)", "supports_vlm": True, "vram_gb": 16, "description": "Large VLM"}
+        ]
+
+    # 2. Ollama Models - from Ollama API, enriched with config
     ollama_models = []
     try:
         resp = httpx.get("http://localhost:11434/api/tags", timeout=2.0)
@@ -140,12 +172,27 @@ def get_backends():
             for m in data.get('models', []):
                 name = m.get('name')
                 details = m.get('details', {})
+
+                # Check if this model is in our config
+                model_config = ollama_model_lookup.get(name, {})
+
+                # Use config value if available, otherwise use heuristic
+                # Abliterated models are LLM-only (no vision)
+                if model_config:
+                    supports_vlm = model_config.get('supports_vlm', False)
+                    description = model_config.get('description', f"{details.get('parameter_size', '?')} params")
+                else:
+                    # Heuristic: abliterated models don't support VLM
+                    is_abliterated = "abliterated" in name.lower()
+                    supports_vlm = not is_abliterated and ("llava" in name or "vision" in name or "gemma3" in name)
+                    description = f"{details.get('parameter_size', '?')} params"
+
                 ollama_models.append({
                     "id": name,
                     "name": name,
-                    "supports_vlm": "llava" in name or "vision" in name or "gemma3" in name, # Rough heuristic
+                    "supports_vlm": supports_vlm,
                     "vram_gb": round(m.get('size', 0) / (1024**3), 1),
-                    "description": f"{details.get('parameter_size', '?')} params"
+                    "description": description
                 })
     except Exception:
         pass

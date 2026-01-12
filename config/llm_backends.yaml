@@ -22,6 +22,28 @@ backends:
         context_length: 8192
         quantization: "Q4_K_M"
         description: "Ollama版 Gemma3 27B（大型）"
+      # Gemma3 Abliterated (検閲除去版) - LLMのみ
+      gemma3-abliterated-4b:
+        name: "huihui_ai/gemma3-abliterated:4b"
+        supports_vlm: false
+        vram_estimate_gb: 3
+        context_length: 8192
+        quantization: "Q4_K_M"
+        description: "Gemma3 4B Abliterated（検閲除去・軽量）"
+      gemma3-abliterated-12b:
+        name: "huihui_ai/gemma3-abliterated:12b"
+        supports_vlm: false
+        vram_estimate_gb: 8
+        context_length: 8192
+        quantization: "Q4_K_M"
+        description: "Gemma3 12B Abliterated（検閲除去・推奨）"
+      gemma3-abliterated-27b:
+        name: "huihui_ai/gemma3-abliterated:27b"
+        supports_vlm: false
+        vram_estimate_gb: 17
+        context_length: 8192
+        quantization: "Q4_K_M"
+        description: "Gemma3 27B Abliterated（検閲除去・高性能）"
 
   vllm:
     enabled: true
