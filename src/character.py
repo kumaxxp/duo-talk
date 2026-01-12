@@ -24,7 +24,7 @@ from src.beat_tracker import get_beat_tracker
 
 # v2.1 imports
 from src.signals import DuoSignals, SignalEvent, EventType
-from src.injection import PromptBuilder, Priority
+from src.injection import PromptBuilder, Priority, get_forbidden_context_manager
 from src.novelty_guard import NoveltyGuard, LoopBreakStrategy
 from src.silence_controller import SilenceController
 from src.prompt_loader import PromptLoader, CharacterPrompt, DirectorPrompt
@@ -1154,13 +1154,26 @@ JetRacer自動運転車の走行を実況・解説する姉妹AIの一人です�
                 "rag"
             )
 
-        # 2.5 姉妹視点記憶
+        # 2.5 姉妹視点記憶（禁止コンテキストフィルター適用）
         character_name = "yana" if self.char_id == "A" else "ayu"
         memories = self.sister_memory.search(
             query=frame_description or (partner_speech or ""),
             character=character_name,
-            n_results=2
+            n_results=5  # フィルタリング後に減る可能性があるため多めに取得
         )
+
+        # 禁止コンテキストを除外
+        if memories:
+            forbidden_ctx = get_forbidden_context_manager()
+            filtered_memories = []
+            for m in memories:
+                content = getattr(m, 'content', '') or getattr(m, 'text', '') or str(m)
+                if not forbidden_ctx.is_forbidden(content):
+                    filtered_memories.append(m)
+                else:
+                    print(f"    🚫 Memory filtered: {content[:30]}...")
+            memories = filtered_memories[:2]  # 最大2件
+
         if memories:
             memory_text = "\n".join([m.to_prompt_text() for m in memories])
             builder.add(

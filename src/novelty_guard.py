@@ -84,16 +84,28 @@ class NoveltyGuard:
         """
         self.max_topic_depth = max_topic_depth
         self.specificity_threshold = specificity_threshold
-        
+
         self.recent_nouns: List[Set[str]] = []
         self.recent_strategies: List[LoopBreakStrategy] = []
         self.turn_count: int = 0
-        
+
         # トピック状態トラッキング
         self.topic_state = TopicState()
-        
+
         # 具体性指標の履歴
         self.specificity_history: List[bool] = []
+
+        # セマンティック重複検出用：発話履歴
+        self.recent_utterances: List[str] = []
+        self.max_utterance_history = 10
+
+        # 重複パターン検出用の正規化パターン
+        self.question_patterns = [
+            r'覚えて(る|いる|いますか|ますか)(\?|？)?',
+            r'知って(る|いる|いますか|ますか)(\?|？)?',
+            r'〜(だ|です)(よね|ね)(\?|？)?',
+            r'〜(じゃない|ではない)(\?|？)?',
+        ]
 
         # 除外する一般的な名詞
         self.stop_nouns = {
@@ -164,8 +176,209 @@ class NoveltyGuard:
         
         # 1つでも具体的な要素があればTrue
         is_specific = any(details.values())
-        
+
         return is_specific, details
+
+    def check_semantic_repetition(self, text: str) -> Tuple[bool, str, float]:
+        """
+        セマンティックレベルの重複をチェック
+
+        同じ内容（同じ質問、同じエピソード参照など）が繰り返されているか検出。
+
+        Args:
+            text: チェックするテキスト
+
+        Returns:
+            (重複検出, 重複パターン説明, 類似度スコア)
+        """
+        # 最低3件の履歴がないとセマンティック重複は検出しない
+        # （初期ターンでの誤検出を防ぐ）
+        if len(self.recent_utterances) < 3:
+            return False, "", 0.0
+
+        # テキストを正規化（句読点・空白除去）
+        normalized_text = self._normalize_for_comparison(text)
+
+        max_similarity = 0.0
+        most_similar_idx = -1
+
+        for i, past_utterance in enumerate(self.recent_utterances):
+            normalized_past = self._normalize_for_comparison(past_utterance)
+
+            # 文字レベルの類似度
+            similarity = self._calculate_similarity(normalized_text, normalized_past)
+
+            if similarity > max_similarity:
+                max_similarity = similarity
+                most_similar_idx = i
+
+        # 高い類似度（0.7以上）で重複検出
+        if max_similarity >= 0.7:
+            pattern = "文全体の類似"
+            if max_similarity >= 0.9:
+                pattern = "ほぼ同一の発言"
+            return True, pattern, max_similarity
+
+        # 特定のパターンの繰り返しをチェック
+        pattern_match = self._check_question_pattern_repetition(text)
+        if pattern_match:
+            return True, pattern_match, 0.8
+
+        return False, "", max_similarity
+
+    def _normalize_for_comparison(self, text: str) -> str:
+        """比較用にテキストを正規化"""
+        # 句読点・空白・改行を除去
+        normalized = re.sub(r'[、。！？!?,.\s\n]', '', text)
+        # ひらがなの語尾変化を正規化
+        normalized = re.sub(r'(ます|です|だよ|だね|よね|かな|だな)$', '', normalized)
+        return normalized
+
+    def _calculate_similarity(self, text1: str, text2: str) -> float:
+        """
+        2つのテキストの類似度を計算（シンプルなn-gram Jaccard）
+        """
+        if not text1 or not text2:
+            return 0.0
+
+        # 2-gram セット
+        def get_ngrams(text: str, n: int = 2) -> Set[str]:
+            return {text[i:i+n] for i in range(len(text) - n + 1)} if len(text) >= n else {text}
+
+        ngrams1 = get_ngrams(text1)
+        ngrams2 = get_ngrams(text2)
+
+        if not ngrams1 or not ngrams2:
+            return 0.0
+
+        intersection = len(ngrams1 & ngrams2)
+        union = len(ngrams1 | ngrams2)
+
+        return intersection / union if union > 0 else 0.0
+
+    def _check_question_pattern_repetition(self, text: str) -> Optional[str]:
+        """
+        同じ質問パターンの繰り返しをチェック
+
+        例: 「覚えてる？」が複数回出現
+        """
+        # 「覚えてる」系のパターン
+        remember_pattern = r'覚えて(る|いる|いますか|ますか|ない)?'
+        if re.search(remember_pattern, text):
+            # 過去の発言で同じパターンが何回出たか
+            count = sum(1 for u in self.recent_utterances if re.search(remember_pattern, u))
+            if count >= 2:
+                return f"「覚えてる？」の繰り返し ({count+1}回目)"
+
+        # 「〜の時」パターン（同じエピソード参照）
+        episode_pattern = r'(前に|あの時|その時).{5,30}(た|だ)(時|とき)'
+        matches_current = re.findall(episode_pattern, text)
+        if matches_current:
+            for past_utterance in self.recent_utterances[-3:]:
+                matches_past = re.findall(episode_pattern, past_utterance)
+                if matches_past:
+                    return "同じエピソードへの繰り返し参照"
+
+        return None
+
+    def _update_utterance_history(self, text: str) -> None:
+        """発話履歴を更新"""
+        self.recent_utterances.append(text)
+        if len(self.recent_utterances) > self.max_utterance_history:
+            self.recent_utterances.pop(0)
+
+    def _generate_semantic_repeat_injection(self, repeat_pattern: str, severe: bool) -> str:
+        """セマンティック重複検出時のインジェクションを生成"""
+        if severe:
+            return (
+                f"【重複発言検出】「{repeat_pattern}」が検出されました。\n"
+                "この発言パターンは既に使われています。完全に別のアプローチに切り替えてください：\n"
+                "- 同じ質問やエピソードを参照しない\n"
+                "- 新しい話題や視点を導入する\n"
+                "- 繰り返しを避けて対話を前に進める"
+            )
+        else:
+            return (
+                f"【類似発言検出】「{repeat_pattern}」のような発言パターンが検出されました。\n"
+                "同じような内容を繰り返さず、別の角度から話を展開してください：\n"
+                "- 新しい具体例を挙げる\n"
+                "- 別の側面について話す\n"
+                "- 話を次のステップに進める"
+            )
+
+    def check_phrase_repetition(self, text: str) -> Tuple[bool, str, float]:
+        """
+        定型フレーズ繰り返し検出（履歴全体で同じフレーズが出現していないか）
+
+        「それもまた良い思い出ですね」のような定型フレーズの繰り返しを検出。
+        履歴が1件でも動作し、高い類似度で過去に同じ発言がないかチェック。
+
+        Args:
+            text: チェックするテキスト
+
+        Returns:
+            (繰り返し検出, マッチしたフレーズ, 類似度)
+        """
+        if not self.recent_utterances:
+            return False, "", 0.0
+
+        normalized_text = self._normalize_for_comparison(text)
+
+        # 短すぎる発言は無視
+        if len(normalized_text) < 8:
+            return False, "", 0.0
+
+        # 履歴全体をチェック（直前以外も含む）
+        for past_utterance in self.recent_utterances:
+            normalized_past = self._normalize_for_comparison(past_utterance)
+
+            if len(normalized_past) < 8:
+                continue
+
+            similarity = self._calculate_similarity(normalized_text, normalized_past)
+
+            # 高い閾値（0.85以上）で同一フレーズと判定
+            if similarity >= 0.85:
+                # 短いフレーズを表示用に抽出
+                display_phrase = past_utterance[:20] + "..." if len(past_utterance) > 20 else past_utterance
+                return True, display_phrase, similarity
+
+        return False, "", 0.0
+
+    def check_parrot_back(self, text: str) -> Tuple[bool, float]:
+        """
+        オウム返し検出（直前の発言との高類似度チェック）
+
+        相手の発言をほぼそのまま繰り返しているかを検出。
+        セマンティック重複とは別に、直前発言のみを高閾値でチェック。
+
+        Args:
+            text: チェックするテキスト
+
+        Returns:
+            (オウム返し検出, 類似度)
+        """
+        if not self.recent_utterances:
+            return False, 0.0
+
+        # 直前の発言のみチェック
+        last_utterance = self.recent_utterances[-1]
+
+        normalized_text = self._normalize_for_comparison(text)
+        normalized_last = self._normalize_for_comparison(last_utterance)
+
+        # 短すぎる発言は無視（相槌など）
+        if len(normalized_text) < 10 or len(normalized_last) < 10:
+            return False, 0.0
+
+        similarity = self._calculate_similarity(normalized_text, normalized_last)
+
+        # 高い閾値（0.75以上）でオウム返し検出
+        # これは「直前の発言をコピー」なので明確な問題
+        if similarity >= 0.75:
+            return True, similarity
+
+        return False, similarity
 
     def check_and_update(self, text: str, update: bool = True) -> LoopCheckResult:
         """
@@ -181,9 +394,65 @@ class NoveltyGuard:
         self.turn_count += 1 if update else 0
         current_nouns = self.extract_nouns(text)
         is_specific, specificity_details = self.check_specificity(text)
-        
+
         result = LoopCheckResult()
         result.topic_depth = 0
+
+        # === 定型フレーズ繰り返し検出（履歴全体で同じフレーズが出現していないか） ===
+        is_phrase_repeat, matched_phrase, phrase_similarity = self.check_phrase_repetition(text)
+        if is_phrase_repeat:
+            result.loop_detected = True
+            result.stuck_nouns = list(current_nouns)[:5]
+            result.reason = f"定型フレーズ繰り返し: 「{matched_phrase}」 (類似度: {phrase_similarity:.2f})"
+            result.strategy = LoopBreakStrategy.FORCE_EXPAND
+            result.injection = (
+                f"【定型フレーズ繰り返し検出】「{matched_phrase}」に類似した発言が既に使われています。\n"
+                "同じ表現の繰り返しは避け、別の言い方や視点で話してください：\n"
+                "- 具体的な感想や意見を述べる\n"
+                "- 新しい話題や質問を提起する\n"
+                "- 相手の発言に対して別の角度からリアクションする"
+            )
+            if update:
+                self._update_utterance_history(text)
+            return result
+
+        # === オウム返し検出（直前発言との高類似度） ===
+        is_parrot, parrot_similarity = self.check_parrot_back(text)
+        if is_parrot:
+            result.loop_detected = True
+            result.stuck_nouns = list(current_nouns)[:5]
+            result.reason = f"オウム返し検出 (類似度: {parrot_similarity:.2f})"
+            result.strategy = LoopBreakStrategy.FORCE_EXPAND
+            result.injection = (
+                "【オウム返し検出】相手の発言をほぼそのまま繰り返しています。\n"
+                "自分の言葉で別の視点や意見を述べてください：\n"
+                "- 相手の発言に対する自分の感想や意見\n"
+                "- 新しい情報や視点の追加\n"
+                "- 別の話題への自然な展開"
+            )
+            if update:
+                self._update_utterance_history(text)
+            return result
+
+        # === セマンティック重複検出 ===
+        is_semantic_repeat, repeat_pattern, similarity = self.check_semantic_repetition(text)
+        if is_semantic_repeat:
+            result.loop_detected = True
+            result.stuck_nouns = list(current_nouns)[:5]
+            result.reason = f"セマンティック重複: {repeat_pattern} (類似度: {similarity:.2f})"
+
+            # 高い類似度の場合は強制話題転換
+            if similarity >= 0.9:
+                result.strategy = LoopBreakStrategy.FORCE_CHANGE_TOPIC
+                result.injection = self._generate_semantic_repeat_injection(repeat_pattern, severe=True)
+            else:
+                result.strategy = LoopBreakStrategy.FORCE_EXPAND
+                result.injection = self._generate_semantic_repeat_injection(repeat_pattern, severe=False)
+
+            # 発話履歴を更新してから早期リターン
+            if update:
+                self._update_utterance_history(text)
+            return result
 
         # 具体性履歴を更新
         if update:
@@ -252,6 +521,9 @@ class NoveltyGuard:
             self.recent_nouns.append(current_nouns)
             if len(self.recent_nouns) > 10:
                 self.recent_nouns.pop(0)
+
+            # 発話履歴更新（セマンティック重複検出用）
+            self._update_utterance_history(text)
 
         return result
 
@@ -339,48 +611,60 @@ class NoveltyGuard:
         """戦略に応じた注入プロンプトを生成"""
         topic = "、".join(stuck_nouns[:3]) if stuck_nouns else "現在の話題"
 
+        # 禁止警告を全ての戦略に追加
+        forbidden_warning = f"\n\n⚠️【禁止】「{topic}」という単語を直接使わないでください。別の表現や話題に切り替えてください。"
+
         injections = {
             LoopBreakStrategy.FORCE_SPECIFIC_SLOT: (
-                f"【切り口変更：具体化】「{topic}」について、具体的な情報を1つ追加すること：\n"
-                "- 数値（速度、距離、時間、温度、回数など）\n"
-                "- 場所（どのコーナー、どの位置、どの区間）\n"
-                "- 過去の具体的な出来事（「前に〜した」「あの時〜だった」）"
+                f"【話題転換：別の視点へ】「{topic}」の話はループしています。\n"
+                "同じ話題を続けず、以下のいずれかに切り替えてください：\n"
+                "- 目の前の景色の別の部分に注目\n"
+                "- 全く違う具体的な話題を出す\n"
+                "- 相手に新しい質問を投げかける"
+                + forbidden_warning
             ),
             LoopBreakStrategy.FORCE_CONFLICT_WITHIN: (
-                f"【切り口変更：意見対立】「{topic}」について、姉妹で意見が分かれる点を出すこと：\n"
-                "- やな：直感や感覚での判断（「なんか〜な気がする」）\n"
-                "- あゆ：データや数値での根拠（「数値では〜です」）\n"
-                "※ 軽い対立 → 妥協 or 決着の流れで"
+                f"【話題転換：違う角度へ】「{topic}」がループしています。\n"
+                "この話題から離れて、別のことについて話してください：\n"
+                "- 姉妹の意見が分かれる別の話題\n"
+                "- 今見えている別のものについて\n"
+                "- 新しい発見や疑問"
+                + forbidden_warning
             ),
             LoopBreakStrategy.FORCE_ACTION_NEXT: (
-                f"【切り口変更：次の行動】「{topic}」の話を踏まえて、次に何をするか決めること：\n"
-                "- 具体的なアクションを決める\n"
-                "- 「じゃあ〜しよう」「まず〜してみよう」\n"
-                "※ 話を前に進める"
+                f"【話題転換：行動へ】「{topic}」の話はここで終わり：\n"
+                "- 別の場所に移動する提案\n"
+                "- 「じゃあ〜を見に行こう」\n"
+                "- 全く違うことを始める"
+                + forbidden_warning
             ),
             LoopBreakStrategy.FORCE_PAST_REFERENCE: (
-                f"【切り口変更：過去参照】「{topic}」に関連する過去の出来事を参照すること：\n"
-                "- 「前に似たことがあった」\n"
-                "- 「あの時は失敗/成功した」\n"
-                "- 「そこから学んだことを活かす」"
+                f"【話題転換：別の思い出へ】「{topic}」とは無関係な思い出を話してください：\n"
+                "- 全く違う場所での出来事\n"
+                "- 別のテーマの過去の話\n"
+                "- 今見えているものとは関係ない思い出"
+                + forbidden_warning
             ),
             LoopBreakStrategy.FORCE_WHY: (
-                f"【切り口変更：深掘り】「{topic}」について、「なぜ？」を掘り下げること：\n"
-                "- 「でも、なんでそうなるの？」\n"
-                "- 原因や理由を探る\n"
-                "- 背景にある仕組みを説明する"
+                f"【話題転換：新しい疑問へ】「{topic}」以外のことについて質問してください：\n"
+                "- 今見えている別のものについて「なぜ？」\n"
+                "- 相手のことについて質問\n"
+                "- 全く新しいテーマへの興味"
+                + forbidden_warning
             ),
             LoopBreakStrategy.FORCE_EXPAND: (
-                f"【切り口変更：話題拡張】「{topic}」から関連する話題に広げること：\n"
-                "- 「それって、〜にも関係あるよね」\n"
-                "- 別の角度から見てみる\n"
-                "- 新しい視点を加える"
+                f"【話題転換：別の話題へ】「{topic}」から完全に離れてください：\n"
+                "- 視界の中の別のものに注目\n"
+                "- 全く関係ない新しい話題を出す\n"
+                "- 相手の興味を引く別のことを提案"
+                + forbidden_warning
             ),
             LoopBreakStrategy.FORCE_CHANGE_TOPIC: (
-                f"【話題強制終了】「{topic}」の話はもう十分にしました。この話はここで切り上げ、全く別の話題に移ってください。\n"
+                f"【話題強制終了】「{topic}」の話は禁止です。全く別の話題に移ってください。\n"
                 "- 目の前の景色の別の部分に注目する\n"
                 "- 相手に全く新しい質問を投げかける\n"
                 "- 以前の話題を引きずらないこと"
+                + forbidden_warning
             ),
         }
 
@@ -401,6 +685,7 @@ class NoveltyGuard:
         self.recent_nouns.clear()
         self.recent_strategies.clear()
         self.specificity_history.clear()
+        self.recent_utterances.clear()  # セマンティック重複検出用履歴もクリア
         self.turn_count = 0
         self.topic_state = TopicState()
 
@@ -409,6 +694,7 @@ class NoveltyGuard:
         return {
             "turn_count": self.turn_count,
             "history_length": len(self.recent_nouns),
+            "utterance_history_length": len(self.recent_utterances),  # 発話履歴長
             "recent_strategies": [s.value for s in self.recent_strategies[-5:]],
             "current_nouns": list(self.recent_nouns[-1]) if self.recent_nouns else [],
             "topic_depth": self.topic_state.depth,

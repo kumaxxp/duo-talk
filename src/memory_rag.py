@@ -154,13 +154,19 @@ class MemoryRAG:
         self.duplicate_threshold = 0.9
         self.episode_boost = 0.1  # エピソードの検索優先度ブースト
 
+        # セッション内で使用済みの記憶ID（ループ防止用）
+        self._used_episode_ids: set = set()
+        self._used_fact_ids: set = set()
+
     # === 検索 ===
     def search(
         self,
         query: str,
         character: str,
         top_k: int = 5,
-        include_facts: bool = True
+        include_facts: bool = True,
+        exclude_used: bool = True,
+        mark_as_used: bool = True
     ) -> MemorySearchResult:
         """
         関連する記憶を統合検索
@@ -170,17 +176,32 @@ class MemoryRAG:
             character: 視点を取得するキャラクター
             top_k: 取得件数
             include_facts: 事実記憶も含めるか
+            exclude_used: 使用済み記憶を除外するか（ループ防止）
+            mark_as_used: 返却した記憶を使用済みとしてマークするか
 
         Returns:
             エピソードと事実の統合結果
         """
-        # エピソード検索
-        episodes = self._search_episodes(query, character, top_k)
+        # エピソード検索（使用済み除外オプション付き）
+        episodes = self._search_episodes(
+            query, character, top_k,
+            exclude_ids=self._used_episode_ids if exclude_used else None
+        )
 
         # 事実検索（オプション）
         facts = []
         if include_facts:
-            facts = self._search_facts(query, min(3, top_k))
+            facts = self._search_facts(
+                query, min(3, top_k),
+                exclude_ids=self._used_fact_ids if exclude_used else None
+            )
+
+        # 使用済みとしてマーク
+        if mark_as_used:
+            for ep in episodes:
+                self._used_episode_ids.add(ep.memory_id)
+            for fact in facts:
+                self._used_fact_ids.add(fact.memory_id)
 
         return MemorySearchResult(episodes=episodes, facts=facts)
 
@@ -188,42 +209,66 @@ class MemoryRAG:
         self,
         query: str,
         character: str,
-        top_k: int
+        top_k: int,
+        exclude_ids: Optional[set] = None
     ) -> List[EpisodeMemory]:
-        """エピソード検索"""
+        """エピソード検索（除外ID対応）"""
         if self.episodes.count() == 0:
             return []
+
+        # 除外IDがある場合、多めに取得してフィルタリング
+        fetch_count = top_k
+        if exclude_ids:
+            fetch_count = min(top_k + len(exclude_ids) + 5, self.episodes.count())
 
         try:
             results = self.episodes.query(
                 query_texts=[query],
-                n_results=min(top_k, self.episodes.count())
+                n_results=min(fetch_count, self.episodes.count())
             )
         except Exception as e:
             print(f"Episode search error: {e}")
             return []
 
-        return self._format_episode_results(results)
+        formatted = self._format_episode_results(results)
+
+        # 使用済みIDを除外
+        if exclude_ids:
+            formatted = [ep for ep in formatted if ep.memory_id not in exclude_ids]
+
+        return formatted[:top_k]
 
     def _search_facts(
         self,
         query: str,
-        top_k: int
+        top_k: int,
+        exclude_ids: Optional[set] = None
     ) -> List[FactMemory]:
-        """事実検索"""
+        """事実検索（除外ID対応）"""
         if self.facts.count() == 0:
             return []
+
+        # 除外IDがある場合、多めに取得してフィルタリング
+        fetch_count = top_k
+        if exclude_ids:
+            fetch_count = min(top_k + len(exclude_ids) + 5, self.facts.count())
 
         try:
             results = self.facts.query(
                 query_texts=[query],
-                n_results=min(top_k, self.facts.count())
+                n_results=min(fetch_count, self.facts.count())
             )
         except Exception as e:
             print(f"Fact search error: {e}")
             return []
 
-        return self._format_fact_results(results)
+        formatted = self._format_fact_results(results)
+
+        # 使用済みIDを除外
+        if exclude_ids:
+            formatted = [f for f in formatted if f.memory_id not in exclude_ids]
+
+        return formatted[:top_k]
 
     def _format_episode_results(
         self,
@@ -533,6 +578,50 @@ class MemoryRAG:
         """バッファをクリア（書き込みせず破棄）"""
         self.episode_buffer.clear()
         self.fact_buffer.clear()
+
+    # === 使用済み記憶の管理（ループ防止用） ===
+    def reset_used_memories(self) -> Dict[str, int]:
+        """
+        セッションの使用済み記憶をリセット
+
+        新しい会話セッション開始時に呼び出す。
+        これにより、以前使用した記憶を再度使用可能にする。
+
+        Returns:
+            リセット前の使用済み記憶数 {"episodes": N, "facts": N}
+        """
+        counts = {
+            "episodes": len(self._used_episode_ids),
+            "facts": len(self._used_fact_ids)
+        }
+        self._used_episode_ids.clear()
+        self._used_fact_ids.clear()
+        return counts
+
+    def mark_episode_used(self, memory_id: str) -> None:
+        """エピソードを使用済みとしてマーク"""
+        self._used_episode_ids.add(memory_id)
+
+    def mark_fact_used(self, memory_id: str) -> None:
+        """事実を使用済みとしてマーク"""
+        self._used_fact_ids.add(memory_id)
+
+    def get_used_memory_stats(self) -> Dict[str, Any]:
+        """使用済み記憶の統計を取得"""
+        return {
+            "used_episode_count": len(self._used_episode_ids),
+            "used_fact_count": len(self._used_fact_ids),
+            "used_episode_ids": list(self._used_episode_ids),
+            "used_fact_ids": list(self._used_fact_ids)
+        }
+
+    def is_episode_used(self, memory_id: str) -> bool:
+        """エピソードが使用済みかチェック"""
+        return memory_id in self._used_episode_ids
+
+    def is_fact_used(self, memory_id: str) -> bool:
+        """事実が使用済みかチェック"""
+        return memory_id in self._used_fact_ids
 
 
 # シングルトンインスタンス

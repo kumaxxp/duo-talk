@@ -14,6 +14,7 @@ from src.prompt_manager import get_prompt_manager
 from src.beat_tracker import get_beat_tracker
 from src.fact_checker import get_fact_checker, FactCheckResult
 from src.novelty_guard import NoveltyGuard, LoopCheckResult
+from src.injection import get_forbidden_context_manager
 
 
 class Director:
@@ -114,7 +115,11 @@ class Director:
         # 前回処理したフレーム番号（フレーム変更検出用）
         self.last_frame_num: int = -1
         # Director v3: NoveltyGuard for loop detection
-        self.novelty_guard = NoveltyGuard(max_topic_depth=3)
+        # 閾値調整: max_topic_depth=3 で3ターン連続の重複でループ検出
+        # 初期ターンでの誤検出を防ぐため、2→3に緩和
+        self.novelty_guard = NoveltyGuard(max_topic_depth=3, specificity_threshold=3)
+        # 禁止コンテキスト管理（ループ検出時に自動追加）
+        self.forbidden_context = get_forbidden_context_manager()
 
     def _default_system_prompt(self) -> str:
         """Default director prompt if file not found (deprecated)"""
@@ -174,39 +179,49 @@ Respond ONLY with JSON:
         # 最初は update=False でチェックのみ行い、リトライ時は状態を壊さないようにする
         novelty_result = self.novelty_guard.check_and_update(response, update=False)
         if novelty_result.loop_detected:
-            # 深いループ（話題転換が必要）な場合
-            if novelty_result.strategy.value == "change_topic":
-                print(f"    🚨 NoveltyGuard: 重大なループ検出 -> 話題強制リセット")
-                return DirectorEvaluation(
-                    status=DirectorStatus.RETRY,
-                    reason=f"NoveltyGuard: 話題「{', '.join(novelty_result.stuck_nouns[:2])}」が限界までループしています。別の話題に変えてください。",
-                    suggestion=novelty_result.injection,
-                    next_pattern="D",
-                    beat_stage=self.beat_tracker.get_current_beat(turn_number),
-                    focus_hook="",
-                    hook_depth=0,
-                    depth_step="DISCOVER",
-                    turns_on_hook=0,
-                    forbidden_topics=[],
-                    must_include=[],
-                )
+            # ループ検出時は常にRETRYを返す（閾値調整: PASS→INTERVENEではなくRETRY）
+            # これにより、ループ発話は通過せず再生成される
+            is_severe = novelty_result.strategy.value == "change_topic"
+            severity_label = "重大" if is_severe else "軽度"
+            print(f"    🚨 NoveltyGuard: {severity_label}ループ検出 -> RETRY")
 
-            # 脱線→修正パターン
+            # 禁止コンテキストにループしている名詞を追加
+            if novelty_result.stuck_nouns:
+                self.forbidden_context.add_keywords(novelty_result.stuck_nouns[:3])
+
             return DirectorEvaluation(
-                status=DirectorStatus.PASS,
-                reason=f"NoveltyGuard: 話題「{'、'.join(novelty_result.stuck_nouns[:3])}」がループ中",
-                action="INTERVENE",
-                next_instruction=novelty_result.injection,
+                status=DirectorStatus.RETRY,
+                reason=f"NoveltyGuard: 話題「{', '.join(novelty_result.stuck_nouns[:2])}」がループ中（{novelty_result.reason}）",
+                suggestion=novelty_result.injection,
                 next_pattern="D",  # 脱線→修正パターン
                 beat_stage=self.beat_tracker.get_current_beat(turn_number),
-                hook="、".join(novelty_result.stuck_nouns[:2]) if novelty_result.stuck_nouns else None,
-                evidence={"dialogue": f"同一名詞が{novelty_result.topic_depth}ターン連続", "frame": None},
                 novelty_info={
                     "loop_detected": True,
                     "stuck_nouns": novelty_result.stuck_nouns,
                     "strategy": novelty_result.strategy.value,
                     "topic_depth": novelty_result.topic_depth,
+                    "reason": novelty_result.reason,
                 },
+                # 重大ループの場合は話題リセット
+                focus_hook="" if is_severe else current_topic_fields_at_step0.get("focus_hook", ""),
+                hook_depth=0 if is_severe else current_topic_fields_at_step0.get("hook_depth", 0),
+                depth_step="DISCOVER" if is_severe else current_topic_fields_at_step0.get("depth_step", "DISCOVER"),
+                turns_on_hook=0 if is_severe else current_topic_fields_at_step0.get("turns_on_hook", 0),
+                forbidden_topics=[] if is_severe else current_topic_fields_at_step0.get("forbidden_topics", []),
+                must_include=[] if is_severe else current_topic_fields_at_step0.get("must_include", []),
+            )
+
+        # 具体性不足の検出（ループではないが改善が必要な場合）
+        if novelty_result.lacks_specificity:
+            print(f"    ⚠️ NoveltyGuard: 具体性不足検出")
+            # 具体性不足はWARNレベル（次ターンで改善を促す）
+            return DirectorEvaluation(
+                status=DirectorStatus.WARN,
+                reason=f"NoveltyGuard: {novelty_result.reason}",
+                action="INTERVENE",
+                next_instruction=novelty_result.injection,
+                next_pattern="D",
+                beat_stage=self.beat_tracker.get_current_beat(turn_number),
                 **current_topic_fields_at_step0
             )
 
@@ -571,15 +586,96 @@ Respond ONLY with JSON:
         try:
             import json
             eval_text = self.llm.call(
-                system="対話の品質を厳格に評価するディレクター（演出家）として振る舞ってください。",
+                system="対話の品質を厳格に評価するディレクター（演出家）として振る舞ってください。JSONのみを出力してください。",
                 user=prompt,
                 # response_format={"type": "json_object"} # Removed as it might not be supported in all environments
             )
-            data = json.loads(eval_text)
-            return data
+
+            # JSONを抽出（マークダウンコードブロック対応）
+            data = self._extract_json_from_response(eval_text)
+            if data:
+                return data
+
+            # フォールバック: WARN状態で静的チェックを活用
+            print(f"    ⚠️ LLM返答からJSONを抽出できませんでした")
+            return self._create_fallback_evaluation(static_warnings)
+
         except Exception as e:
             print(f"    ❌ LLM scoring failed: {e}")
-            return {"status": "PASS", "scores": {}, "reason": f"LLM Error: {e}"}
+            return self._create_fallback_evaluation(static_warnings, error_msg=str(e))
+
+    def _extract_json_from_response(self, text: str) -> Optional[dict]:
+        """
+        LLMレスポンスからJSONを抽出する。
+        マークダウンコードブロックや余分なテキストに対応。
+        """
+        import json
+        import re
+
+        if not text or not text.strip():
+            return None
+
+        text = text.strip()
+
+        # 1. そのままパース試行
+        try:
+            return json.loads(text)
+        except json.JSONDecodeError:
+            pass
+
+        # 2. マークダウンコードブロックから抽出
+        code_block_patterns = [
+            r'```json\s*([\s\S]*?)\s*```',
+            r'```\s*([\s\S]*?)\s*```',
+        ]
+        for pattern in code_block_patterns:
+            match = re.search(pattern, text)
+            if match:
+                try:
+                    return json.loads(match.group(1).strip())
+                except json.JSONDecodeError:
+                    continue
+
+        # 3. JSONオブジェクトパターンを検出
+        json_pattern = r'\{[\s\S]*\}'
+        match = re.search(json_pattern, text)
+        if match:
+            try:
+                return json.loads(match.group(0))
+            except json.JSONDecodeError:
+                pass
+
+        return None
+
+    def _create_fallback_evaluation(
+        self,
+        static_warnings: list = None,
+        error_msg: str = ""
+    ) -> dict:
+        """
+        LLM評価失敗時のフォールバック評価を作成。
+        静的チェック結果を活用してWARN/PASSを決定。
+        """
+        static_warnings = static_warnings or []
+
+        # 静的警告がある場合はWARN、なければPASS
+        if static_warnings:
+            status = "WARN"
+            reason = f"LLM評価失敗、静的チェック警告あり: {', '.join(static_warnings[:2])}"
+        else:
+            status = "PASS"
+            reason = "LLM評価失敗、静的チェックは問題なし"
+
+        if error_msg:
+            reason = f"{reason} (Error: {error_msg})"
+
+        return {
+            "status": status,
+            "scores": {},
+            "reason": reason,
+            "action": "NOOP",
+            "issues": static_warnings[:3] if static_warnings else [],
+        }
 
 
     def _build_evaluation_prompt(
@@ -1470,6 +1566,7 @@ JSON ONLY:
         self.novelty_guard.reset()
         self.recent_patterns.clear()
         self.last_frame_num = -1
+        self.forbidden_context.clear()  # 禁止コンテキストもリセット
         print("    🔄 Director: 新しいセッションのため状態をリセット")
 
     def _validate_director_output(self, data: dict, turn_number: int, frame_description: str = "") -> dict:

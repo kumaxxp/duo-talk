@@ -127,7 +127,12 @@
       "Bash(git commit:*)",
       "Bash(git push:*)",
       "mcp__gemini-cli__ask-gemini",
-      "Bash(timeout 5 python:*)"
+      "Bash(timeout 5 python:*)",
+      "Bash(pip3 install:*)",
+      "Bash(conda env list:*)",
+      "Bash(/home/owner/work/duo-talk/.venv/bin/python -m src.rag_cli style stats:*)",
+      "Bash(/home/owner/work/duo-talk/.venv/bin/python -m src.rag_cli:*)",
+      "Bash(/home/owner/work/duo-talk/.venv/bin/python:*)"
     ]
   }
 }

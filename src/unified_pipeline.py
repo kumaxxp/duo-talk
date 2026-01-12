@@ -20,6 +20,7 @@ from src.director import Director
 from src.types import DirectorEvaluation, DirectorStatus
 from src.logger import Logger
 from src.signals import DuoSignals
+from src.memory_rag import get_memory_rag
 
 if TYPE_CHECKING:
     from src.jetracer_client import JetRacerClient
@@ -244,6 +245,8 @@ class UnifiedPipeline:
 
         # 3. Director/NoveltyGuard リセット
         self.director.reset_for_new_session()
+        # Memory RAGの使用済み記憶をリセット（ループ防止）
+        get_memory_rag().reset_used_memories()
 
         # 3. 入力収集
         try:
@@ -831,4 +834,7 @@ class UnifiedPipeline:
         self.director.reset_for_new_session()
         self.char_a = None
         self.char_b = None
-        print("[UnifiedPipeline] State reset")
+        # Memory RAGの使用済み記憶をリセット（ループ防止機構）
+        memory_rag = get_memory_rag()
+        used_counts = memory_rag.reset_used_memories()
+        print(f"[UnifiedPipeline] State reset (freed {used_counts['episodes']} episodes, {used_counts['facts']} facts)")
