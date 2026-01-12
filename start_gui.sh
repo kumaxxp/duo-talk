@@ -151,7 +151,7 @@ sleep 2
 # Frontend development server
 echo -e "${GREEN}🎨 Starting Frontend (Vite)...${NC}"
 cd duo-gui
-VITE_API_BASE=http://localhost:5000 npm run dev > frontend.log 2>&1 &
+npm run dev > frontend.log 2>&1 &
 FRONTEND_PID=$!
 echo "   PID: $FRONTEND_PID"
 echo ""
