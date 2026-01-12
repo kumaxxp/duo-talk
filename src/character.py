@@ -1117,7 +1117,7 @@ JetRacer自動運転車の走行を実況・解説する姉妹AIの一人です�
 
         # 2.1 システムプロンプト
         builder.add(
-            self._get_system_prompt(),
+            self.system_prompt,  # PromptManagerから取得したものを使用
             Priority.SYSTEM,
             "system"
         )
@@ -1319,7 +1319,7 @@ JetRacer自動運転車の走行を実況・解説する姉妹AIの一人です�
         # speak_unified と同じプロンプト構築ロジックを実行
         builder = PromptBuilder()
 
-        builder.add(self._get_system_prompt(), Priority.SYSTEM, "system")
+        builder.add(self.system_prompt, Priority.SYSTEM, "system")  # PromptManagerから取得
         builder.add(self._world_rules, Priority.WORLD_RULES, "world_rules")
         builder.add(self._character_prompt.to_injection_text(), Priority.DEEP_VALUES, "character")
 
@@ -1449,7 +1449,7 @@ JetRacer自動運転車の走行を実況・解説する姉妹AIの一人です�
 
         for attempt in range(max_attempts):
             response = self.llm.call_with_history(
-                system=self._get_system_prompt(),
+                system=self.system_prompt,  # PromptManagerから取得
                 history=conversation_history,
                 current_speaker=self.char_id,
                 current_prompt=user_prompt,
