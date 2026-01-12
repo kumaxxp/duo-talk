@@ -5,6 +5,11 @@ JetRacer Data Fetcher - Jetsonからセンサーデータを取得
     client = JetRacerClient("http://192.168.x.x:8000")
     data = client.get_all_sensors()
     frame_desc = client.to_frame_description(data)
+
+Phase 0C拡張:
+    - health_check() 追加
+    - get_camera_image_pil() 追加（PIL.Image返却）
+    - モックAPI互換メソッド追加
 """
 import httpx
 import yaml
@@ -13,6 +18,13 @@ from pathlib import Path
 from typing import Optional, Dict, Any
 import time
 import os
+import io
+import base64
+import logging
+
+from PIL import Image
+
+logger = logging.getLogger(__name__)
 
 
 def load_config(config_path: str = None) -> dict:
@@ -434,7 +446,128 @@ class JetRacerClient:
     def last_state(self) -> Optional[JetRacerState]:
         """最後に取得した状態"""
         return self._last_state
-    
+
+    # === Phase 0C 拡張メソッド ===
+
+    def health_check(self) -> bool:
+        """
+        JetRacer-Agent APIの疎通確認
+
+        以下の順序でヘルスチェックを試行:
+        1. /health エンドポイント（モック用）
+        2. /status エンドポイント（本番用）
+
+        Returns:
+            接続成功ならTrue
+        """
+        # モックAPI互換: /health
+        try:
+            resp = self._client.get(f"{self.base_url}/health", timeout=3.0)
+            if resp.status_code == 200:
+                return True
+        except Exception:
+            pass
+
+        # 本番API: /status
+        try:
+            resp = self._client.get(f"{self.base_url}/status", timeout=3.0)
+            if resp.status_code == 200:
+                return True
+        except Exception as e:
+            logger.warning(f"JetRacer health check failed: {e}")
+
+        return False
+
+    def get_camera_image_pil(self, camera_id: int = 0) -> Optional[Image.Image]:
+        """
+        カメラ画像をPIL.Imageとして取得
+
+        Args:
+            camera_id: カメラID（0または1）
+
+        Returns:
+            PIL.Image or None（失敗時）
+        """
+        # モックAPI互換: /api/camera/capture
+        try:
+            resp = self._client.get(
+                f"{self.base_url}/api/camera/capture",
+                timeout=5.0
+            )
+            if resp.status_code == 200:
+                content_type = resp.headers.get("content-type", "")
+                if "image" in content_type:
+                    return Image.open(io.BytesIO(resp.content))
+        except Exception:
+            pass
+
+        # 本番API: base64エンコードされた画像
+        img_data = self.get_camera_image(camera_id=camera_id, as_base64=False)
+        if img_data:
+            try:
+                return Image.open(io.BytesIO(img_data))
+            except Exception as e:
+                logger.warning(f"Failed to decode camera image: {e}")
+
+        return None
+
+    def get_sensor_data_simple(self) -> Optional[Dict[str, float]]:
+        """
+        センサーデータを簡易形式で取得（モックAPI互換）
+
+        Returns:
+            {"distance_front": float, "distance_left": float, "distance_right": float}
+            or None（失敗時）
+        """
+        # モックAPI互換: /api/sensors
+        try:
+            resp = self._client.get(f"{self.base_url}/api/sensors", timeout=2.0)
+            if resp.status_code == 200:
+                return resp.json()
+        except Exception:
+            pass
+
+        # 本番API: 全センサーデータから抽出
+        data = self.get_all_sensors()
+        if data and data.get("distance", {}).get("valid"):
+            dist = data["distance"]
+            stats = dist.get("statistics", {})
+            return {
+                "distance_front": stats.get("avg_mm", 0) / 1000.0,  # mm → m
+                "distance_left": stats.get("min_mm", 0) / 1000.0,
+                "distance_right": stats.get("max_mm", 0) / 1000.0
+            }
+
+        return None
+
+    def get_vehicle_state_simple(self) -> Optional[Dict[str, Any]]:
+        """
+        車両状態を簡易形式で取得（モックAPI互換）
+
+        Returns:
+            {"speed": float, "steering": float, "mode": str}
+            or None（失敗時）
+        """
+        # モックAPI互換: /api/state
+        try:
+            resp = self._client.get(f"{self.base_url}/api/state", timeout=2.0)
+            if resp.status_code == 200:
+                return resp.json()
+        except Exception:
+            pass
+
+        # 本番API: 全センサーデータから抽出
+        data = self.get_all_sensors()
+        if data:
+            state = self.parse_state(data)
+            return {
+                "speed": abs(state.throttle) * 2.5,  # 推定速度（最大2.5m/s）
+                "steering": state.steering,
+                "mode": state.mode.upper() if state.mode else "UNKNOWN"
+            }
+
+        return None
+
     def close(self):
         """クライアントをクローズ"""
         self._client.close()

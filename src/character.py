@@ -964,28 +964,43 @@ JetRacer自動運転車の走行を実況・解説する姉妹AIの一人です�
     def _format_scene_facts(self, scene_facts: Dict[str, str]) -> str:
         """
         v2.2: DuoSignals.scene_factsをプロンプト用テキストにフォーマット
-        
+
         Florence-2等からの視覚解析結果をキャラクターが理解しやすい形式に変換
-        
+        VisionToSignalsからの出力フィールドにも対応（Phase 0C）
+
         Args:
             scene_facts: DuoSignals.scene_factsの辞書
-        
+
         Returns:
             フォーマットされたテキスト
         """
         if not scene_facts:
             return ""
-        
+
         lines = ["【視覚情報（Florence-2解析）】"]
-        
+
         # キャプション（シーン説明）
         if caption := scene_facts.get("caption"):
             lines.append(f"シーン: {caption}")
-        
-        # 検出物体
-        if objects := scene_facts.get("objects"):
-            lines.append(f"検出物体: {objects}")
-        
+
+        # 検出物体（objects または detected_objects）
+        detected = scene_facts.get("detected_objects") or scene_facts.get("objects")
+        if detected:
+            lines.append(f"検出物体: {detected}")
+
+        # 主要物体（Phase 0C: VisionToSignals対応）
+        if primary := scene_facts.get("primary_object"):
+            lines.append(f"主要物体: {primary}")
+
+        # 物体位置（Phase 0C: VisionToSignals対応）
+        if position := scene_facts.get("position"):
+            position_map = {
+                "left": "左側",
+                "right": "右側",
+                "center": "中央",
+            }
+            lines.append(f"位置: {position_map.get(position, position)}")
+
         # シーンタイプ
         if scene_type := scene_facts.get("scene_type"):
             type_map = {
@@ -995,7 +1010,25 @@ JetRacer自動運転車の走行を実況・解説する姉妹AIの一人です�
                 "unknown": "不明"
             }
             lines.append(f"シーンタイプ: {type_map.get(scene_type, scene_type)}")
-        
+
+        # 照明条件（Phase 0C: VisionToSignals対応）
+        if lighting := scene_facts.get("lighting"):
+            lighting_map = {
+                "dark": "暗い（低照度）",
+                "bright": "明るい",
+                "normal": "通常",
+            }
+            lines.append(f"照明: {lighting_map.get(lighting, lighting)}")
+
+        # 車線位置（Phase 0C: VisionToSignals対応）
+        if lane := scene_facts.get("lane"):
+            lane_map = {
+                "left": "左寄り",
+                "right": "右寄り",
+                "center": "中央",
+            }
+            lines.append(f"車線位置: {lane_map.get(lane, lane)}")
+
         # 走行関連情報（JetRacerモード用）
         if self.jetracer_mode:
             if road_pct := scene_facts.get("road_percentage"):
@@ -1005,19 +1038,44 @@ JetRacer自動運転車の走行を実況・解説する姉妹AIの一人です�
                     "straight": "直線",
                     "curve_left": "左カーブ",
                     "curve_right": "右カーブ",
+                    "curve": "カーブ",
                     "corner": "コーナー",
                 }
                 lines.append(f"前方: {upcoming_map.get(upcoming, upcoming)}")
+
+            # 障害物（最重要なので目立つように）
             if obstacle := scene_facts.get("obstacle"):
-                lines.append(f"障害物: {obstacle}")
-        
+                lines.append(f"⚠️ 障害物検出: {obstacle}")
+        else:
+            # 一般モードでも障害物は表示
+            if obstacle := scene_facts.get("obstacle"):
+                lines.append(f"⚠️ 障害物: {obstacle}")
+
+        # VLM自然言語記述（Phase 0C: VisionToSignals対応）
+        if vlm_desc := scene_facts.get("vlm_description"):
+            lines.append(f"VLM解析: {vlm_desc}")
+
+        # タイムスタンプ情報（鮮度確認用）
+        if timestamp := scene_facts.get("vision_timestamp"):
+            try:
+                from datetime import datetime
+                ts = datetime.fromisoformat(timestamp)
+                age = (datetime.now() - ts).total_seconds()
+                lines.append(f"（{age:.1f}秒前の観測）")
+            except (ValueError, TypeError):
+                pass
+
         # その他の情報（上記以外）
-        shown_keys = {"caption", "objects", "scene_type", "road_percentage", 
-                      "upcoming", "obstacle", "object_count", "vision_time_ms"}
+        shown_keys = {
+            "caption", "objects", "detected_objects", "primary_object", "position",
+            "scene_type", "lighting", "lane", "road_percentage", "upcoming",
+            "obstacle", "object_count", "vision_time_ms", "vlm_description",
+            "vision_source", "vision_timestamp"
+        }
         for key, value in scene_facts.items():
             if key not in shown_keys and value:
                 lines.append(f"{key}: {value}")
-        
+
         return "\n".join(lines)
 
     def _format_world_state_v2(self, state: Any) -> str:
