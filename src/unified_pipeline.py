@@ -336,6 +336,17 @@ class UnifiedPipeline:
 
             print(f"    [{speaker_name}] {speech[:60]}{'...' if len(speech) > 60 else ''}")
 
+            # Director評価結果を表示
+            if evaluation:
+                status_emoji = {
+                    DirectorStatus.PASS: "✅",
+                    DirectorStatus.WARN: "⚠️",
+                    DirectorStatus.RETRY: "🔄",
+                    DirectorStatus.MODIFY: "❌",
+                }.get(evaluation.status, "❓")
+                reason_preview = evaluation.reason[:50] if evaluation.reason else ""
+                print(f"    {status_emoji} Director: {evaluation.status.name} - {reason_preview}")
+
             # 5d. 記録
             dialogue_turn = DialogueTurn(
                 turn_number=turn,

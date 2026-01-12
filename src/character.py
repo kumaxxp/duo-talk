@@ -24,7 +24,9 @@ from src.beat_tracker import get_beat_tracker
 
 # v2.1 imports
 from src.signals import DuoSignals, SignalEvent, EventType
-from src.injection import PromptBuilder, Priority, get_forbidden_context_manager
+from src.injection import PromptBuilder, Priority, get_forbidden_context_manager, DualRAGInjector
+from src.style_rag import get_style_rag
+from src.memory_rag import get_memory_rag
 from src.novelty_guard import NoveltyGuard, LoopBreakStrategy
 from src.silence_controller import SilenceController
 from src.prompt_loader import PromptLoader, CharacterPrompt, DirectorPrompt
@@ -1139,20 +1141,40 @@ JetRacer自動運転車の走行を実況・解説する姉妹AIの一人です�
                 "deep_values"
             )
 
-        # 2.4 RAG知識
+        # 2.4 Dual-RAG注入（StyleRAG + MemoryRAG）
         partner_speech = conversation_history[-1][1] if conversation_history else None
-        rag_hints = self._get_rag_hints(
-            query=frame_description,
-            partner_speech=partner_speech,
-        )
-        self.last_rag_hints = rag_hints  # GUI表示用に保存
+        character_name = "yana" if self.char_id == "A" else "ayu"
+        query = f"{frame_description}\n{partner_speech}" if partner_speech else frame_description
 
-        if rag_hints:
-            builder.add(
-                "【Knowledge from your expertise】\n" + "\n".join(f"- {h}" for h in rag_hints),
-                Priority.RAG,
-                "rag"
-            )
+        # DualRAGInjectorを使用
+        dual_rag_injector = DualRAGInjector(
+            style_rag=get_style_rag(),
+            memory_rag=get_memory_rag(),
+            max_style_samples=3,
+            max_episodes=2,
+            max_facts=2,
+            forbidden_context=get_forbidden_context_manager()
+        )
+        rag_result = dual_rag_injector.inject(
+            builder=builder,
+            character_id=character_name,
+            query=query,
+            emotion=None,  # 感情フィルタは後で実装可能
+            include_style=True,
+            include_memory=True
+        )
+
+        # GUI表示用に保存
+        self.last_rag_hints = []
+        if rag_result["style"] > 0:
+            self.last_rag_hints.append(f"Style: {rag_result['style']}件")
+            print(f"    🎭 Style RAG: {rag_result['style']}件のスタイルサンプルを注入")
+        if rag_result["episodes"] > 0:
+            self.last_rag_hints.append(f"Episodes: {rag_result['episodes']}件")
+            print(f"    📖 Episode RAG: {rag_result['episodes']}件のエピソードを注入")
+        if rag_result["facts"] > 0:
+            self.last_rag_hints.append(f"Facts: {rag_result['facts']}件")
+            print(f"    📋 Fact RAG: {rag_result['facts']}件の事実を注入")
 
         # 2.5 姉妹視点記憶（禁止コンテキストフィルター適用）
         character_name = "yana" if self.char_id == "A" else "ayu"
@@ -1181,6 +1203,8 @@ JetRacer自動運転車の走行を実況・解説する姉妹AIの一人です�
                 Priority.SISTER_MEMORY,
                 "sister_memory"
             )
+            memory_preview = memories[0].to_prompt_text()[:40] if memories else ""
+            print(f"    🧠 Memory: {len(memories)}件の記憶を注入 ({memory_preview}...)")
 
         # 2.6 シーン情報
         builder.add(
