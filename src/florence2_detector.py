@@ -227,8 +227,10 @@ class Florence2Detector:
         """
         使用するattentionバックエンドの優先順リストを返す
 
-        Florence-2 がサポートするバックエンド: sdpa, eager, flash_attention_2
-        ※ flash_attention_2 は実際のflash_attnパッケージが必要（ダミーでは不可）
+        Florence-2 / transformers がサポートするバックエンド:
+        - flash_attention_2: flash_attnパッケージが必要（ダミーでは不可）
+        - sdpa: PyTorch native SDPA（安定、推奨）
+        - eager: 最も互換性が高い（遅い）
 
         Returns:
             バックエンド名のリスト（優先順）
@@ -237,7 +239,8 @@ class Florence2Detector:
         backends = [self.config.attn_implementation]
 
         # フォールバック順序を追加（重複除去）
-        # flash_attention_2 はダミーモジュールでは動作しないので含めない
+        # flash_attention_2 はダミーモジュールでは動作しないので、
+        # sdpa を優先的に使用（PyTorch 2.0+でネイティブサポート）
         fallback_order = ["sdpa", "eager"]
         for backend in fallback_order:
             if backend not in backends:
