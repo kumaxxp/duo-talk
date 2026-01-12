@@ -728,7 +728,7 @@ class Character:
 
         # 4.1 システムプロンプト
         builder.add(
-            self._get_system_prompt(),
+            self.system_prompt,  # PromptManagerから取得
             Priority.SYSTEM,
             "system"
         )
@@ -1050,7 +1050,7 @@ JetRacer自動運転車の走行を実況・解説する姉妹AIの一人です�
 
         for attempt in range(max_attempts):
             response = self.llm.call(
-                system=self._get_system_prompt(),
+                system=self.system_prompt,  # PromptManagerから取得
                 user=prompt,
                 temperature=config.temperature + (0.2 * attempt),
                 max_tokens=100,  # 50〜80文字制限に合わせて短く
