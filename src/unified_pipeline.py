@@ -16,7 +16,7 @@ from typing import Optional, List, Tuple, Dict, Any, Callable, TYPE_CHECKING
 from src.input_source import InputBundle, InputSource, SourceType
 from src.input_collector import InputCollector, FrameContext
 from src.character import Character
-from src.director import Director
+from src.director_factory import get_director
 from src.types import DirectorEvaluation, DirectorStatus
 from src.logger import Logger
 from src.signals import DuoSignals
@@ -117,7 +117,8 @@ class UnifiedPipeline:
         # Characterは初回run()時にモード判定してから初期化
         self.char_a: Optional[Character] = None
         self.char_b: Optional[Character] = None
-        self.director = Director(enable_fact_check=enable_fact_check)
+        # Director: 設定に応じてMinimalまたはFullモードを使用
+        self.director = get_director()
         self.logger = Logger()
         self.signals = DuoSignals()
         
@@ -519,11 +520,12 @@ class UnifiedPipeline:
                 "attempt": attempt + 1,
                 "max_retry": max_retry,
                 "turn": turn_number,
-                "timestamp": datetime.now().isoformat()
+                "timestamp": datetime.now().isoformat(),
+                # プロンプトは生成後に取得（事前にはない）
             }
             if run_id:
                 self.logger.log_event(thought_data)
-            
+
             if event_callback:
                 event_callback("thought", thought_data)
 
@@ -535,7 +537,7 @@ class UnifiedPipeline:
                 topic_guidance=topic_guidance,
             )
 
-            # イベント: 評価開始
+            # イベント: 評価開始（プロンプト付き）
             review_data = {
                 "event": "thought",
                 "run_id": run_id,
@@ -544,7 +546,9 @@ class UnifiedPipeline:
                 "speaker_name": speaker_name,
                 "attempt": attempt + 1,
                 "turn": turn_number,
-                "timestamp": datetime.now().isoformat()
+                "timestamp": datetime.now().isoformat(),
+                "prompt": character.last_prompt,  # 生成に使用したプロンプト
+                "text": speech,  # 生成された応答
             }
             if run_id:
                 self.logger.log_event(review_data)
@@ -564,7 +568,7 @@ class UnifiedPipeline:
                 frame_num=1,  # 単一フレームの場合
             )
             
-            # イベント: 評価完了（結果通知）
+            # イベント: 評価完了（結果通知、プロンプト付き）
             reviewed_data = {
                 "event": "thought",
                 "run_id": run_id,
@@ -573,6 +577,7 @@ class UnifiedPipeline:
                 "result": evaluation.status.name,
                 "reason": evaluation.reason,
                 "text": speech,
+                "prompt": character.last_prompt,  # 生成に使用したプロンプト
                 "attempt": attempt + 1,
                 "turn": turn_number,
                 "timestamp": datetime.now().isoformat()
@@ -604,13 +609,14 @@ class UnifiedPipeline:
                             "reason": f"介入: {evaluation.reason}",
                             "suggestion": director_instruction,
                             "text": speech,
+                            "prompt": character.last_prompt,  # 生成に使用したプロンプト
                             "attempt": attempt + 1,
                             "turn": turn_number,
                             "timestamp": datetime.now().isoformat()
                         }
                         if run_id:
                             self.logger.log_event(retry_data)
-                        
+
                         if event_callback:
                             event_callback("thought", retry_data)
                         continue
@@ -637,13 +643,14 @@ class UnifiedPipeline:
                         "reason": evaluation.reason,
                         "suggestion": director_instruction,
                         "text": speech,
+                        "prompt": character.last_prompt,  # 生成に使用したプロンプト
                         "attempt": attempt + 1,
                         "turn": turn_number,
                         "timestamp": datetime.now().isoformat()
                     }
                     if run_id:
                         self.logger.log_event(retry_data)
-                    
+
                     if event_callback:
                         event_callback("thought", retry_data)
                     continue

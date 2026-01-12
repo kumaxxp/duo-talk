@@ -64,6 +64,10 @@ class Character:
         # 最後に使用したRAGヒントを保存（外部からアクセス可能）
         self.last_rag_hints: List[str] = []
 
+        # 最後に使用したプロンプトと応答を保存（デバッグ・GUI表示用）
+        self.last_prompt: str = ""
+        self.last_response: str = ""
+
         # Initialize beat tracker for pattern information
         self.beat_tracker = get_beat_tracker()
 
@@ -1288,6 +1292,9 @@ JetRacer自動運転車の走行を実況・解説する姉妹AIの一人です�
         # 3. プロンプトをビルド
         user_prompt = builder.build()
 
+        # プロンプトを保存（デバッグ・GUI表示用）
+        self.last_prompt = user_prompt
+
         # 4. LLM呼び出し（履歴付き）
         max_attempts = 2
         result = ""
@@ -1305,11 +1312,14 @@ JetRacer自動運転車の走行を実況・解説する姉妹AIの一人です�
 
             # 繰り返しチェック
             if not self._has_repetition(result):
+                # 応答を保存（デバッグ・GUI表示用）
+                self.last_response = result
                 return result
 
             print(f"    ⚠️ 繰り返し検出 (試行 {attempt + 1}/{max_attempts}): 再生成中...")
 
-        # 5. 結果を返す
+        # 5. 結果を返す（応答を保存）
+        self.last_response = result
         return result
 
     def _format_topic_guidance(self, guidance: dict) -> str:

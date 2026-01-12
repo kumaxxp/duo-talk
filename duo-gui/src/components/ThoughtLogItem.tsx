@@ -37,7 +37,7 @@ export default function ThoughtLogItem({ log }: ThoughtLogItemProps) {
         return log.status
     }
 
-    const hasDetails = log.reason || log.suggestion || log.result
+    const hasDetails = log.reason || log.suggestion || log.result || log.prompt || log.text
 
     return (
         <div className={`text-xs rounded border mb-1 transition-all ${statusColor(log.status)}`}>
@@ -93,10 +93,25 @@ export default function ThoughtLogItem({ log }: ThoughtLogItemProps) {
                         </div>
                     )}
 
+                    {/* Response (text) */}
                     {log.text && (
-                        <div className="bg-slate-50 p-2 rounded border border-slate-100 italic text-slate-600 font-serif">
-                            "{log.text}"
+                        <div className="bg-slate-50 p-2 rounded border border-slate-100">
+                            <div className="font-semibold text-[10px] uppercase text-slate-400 mb-1">Response</div>
+                            <div className="italic text-slate-600 font-serif">"{log.text}"</div>
                         </div>
+                    )}
+
+                    {/* Prompt Display */}
+                    {log.prompt && (
+                        <details className="group">
+                            <summary className="cursor-pointer text-[10px] uppercase text-slate-500 hover:text-slate-700 flex items-center gap-1">
+                                <span className="group-open:rotate-90 transition-transform">▶</span>
+                                Prompt (クリックで展開)
+                            </summary>
+                            <div className="mt-2 bg-slate-800 text-slate-100 p-3 rounded border border-slate-600 text-[11px] font-mono overflow-auto max-h-64">
+                                <pre className="whitespace-pre-wrap break-words">{log.prompt}</pre>
+                            </div>
+                        </details>
                     )}
 
                     {/* Any other details like attempt count */}

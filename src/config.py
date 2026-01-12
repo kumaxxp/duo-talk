@@ -35,6 +35,11 @@ class Config:
         self.log_dir = Path(os.getenv("LOG_DIR", "runs"))
         self.log_dir.mkdir(parents=True, exist_ok=True)
 
+        # Director Configuration
+        # "minimal": 静的チェックのみ（口調・褒め言葉・設定破壊）
+        # "full": 全機能（LLMスコアリング、NoveltyGuard、ビートトラッキング等）
+        self.director_mode = os.getenv("DIRECTOR_MODE", "minimal")
+
         # Project paths
         self.project_root = Path(__file__).parent.parent
         self.persona_dir = self.project_root / "persona"

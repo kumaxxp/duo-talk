@@ -24,6 +24,7 @@ export type ThoughtEvent = {
   suggestion?: string;
   turn?: number;
   text?: string;
+  prompt?: string;  // LLMに送信したプロンプト
 }
 
 export type EventRow = DirectorEvent | SpeakEvent | RAGEvent | PromptDbg | RunStartEnd | ThoughtEvent

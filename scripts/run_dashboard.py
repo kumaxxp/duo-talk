@@ -18,7 +18,7 @@ sys.path.insert(0, str(project_root))
 from src.jetracer_client import load_config
 from src.jetracer_provider import JetRacerProvider, DataMode
 from src.character import Character
-from src.director import Director
+from src.director_factory import get_director
 from src.logger import get_logger
 from src.types import DirectorEvaluation
 
@@ -180,9 +180,8 @@ class DuoTalkDashboard:
             self.char_b = Character("B")  # あゆ（Cloud AI）
             print("[Dashboard] Characters created")
 
-            # Director
-            fact_check = self.config.get("commentary", {}).get("fact_check_enabled", False)
-            self.director = Director(enable_fact_check=fact_check)
+            # Director: 設定に応じてMinimalまたはFullモードを使用
+            self.director = get_director()
             print("[Dashboard] Director created")
 
             self.status_label.set_text('✅ Running')
