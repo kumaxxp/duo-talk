@@ -211,6 +211,7 @@ class UnifiedPipeline:
         run_id: Optional[str] = None,
         interrupt_callback: Optional[Callable[[], Optional[InputBundle]]] = None,
         event_callback: Optional[Callable[[str, Dict], None]] = None,
+        initial_history: Optional[List[Tuple[str, str]]] = None,
     ) -> DialogueResult:
         """
         対話を実行
@@ -225,6 +226,8 @@ class UnifiedPipeline:
             event_callback: イベント通知コールバック（GUI用）
                 - event_callback(event_type: str, data: dict)
                 - event_type: "narration_start", "speak", "director", "interrupt", "narration_complete"
+            initial_history: 既存の会話履歴 [("A", "text"), ("B", "text"), ...]
+                - 継続会話の場合に過去の履歴を渡す
 
         Returns:
             DialogueResult
@@ -248,6 +251,11 @@ class UnifiedPipeline:
         self.director.reset_for_new_session()
         # Memory RAGの使用済み記憶をリセット（ループ防止）
         get_memory_rag().reset_used_memories()
+
+        # 3b. 既存の会話履歴がある場合、NoveltyGuardをシード（Fullモードのみ）
+        if initial_history and hasattr(self.director, 'novelty_guard'):
+            history_texts = [text for _, text in initial_history]
+            self.director.novelty_guard.seed_with_history(history_texts)
 
         # 3. 入力収集
         try:
@@ -284,7 +292,10 @@ class UnifiedPipeline:
 
         # 5. 対話ループ
         dialogue_turns: List[DialogueTurn] = []
-        conversation_history: List[Tuple[str, str]] = []
+        # 既存の会話履歴がある場合はそれを使用（継続会話用）
+        conversation_history: List[Tuple[str, str]] = list(initial_history) if initial_history else []
+        if initial_history:
+            print(f"    Continuing with {len(initial_history)} previous turns")
         topic_guidance: Optional[Dict[str, Any]] = None
         current_speaker = "A"
 

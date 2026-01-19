@@ -134,7 +134,8 @@
       "Bash(/home/owner/work/duo-talk/.venv/bin/python -m src.rag_cli:*)",
       "Bash(/home/owner/work/duo-talk/.venv/bin/python:*)",
       "Bash(timeout 90 python:*)",
-      "Bash(git status:*)"
+      "Bash(git status:*)",
+      "Bash(pip show:*)"
     ]
   }
 }

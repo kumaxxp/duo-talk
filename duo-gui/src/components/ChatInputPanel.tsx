@@ -52,9 +52,18 @@ export default function ChatInputPanel({ apiBase, onSendComplete }: ChatInputPan
       setMessages(prev => [...prev, userMessage])
       setInput('')
 
+      // 会話履歴を API 形式に変換（user入力は除外、yana/ayuの発言のみ）
+      // フォーマット: [{"speaker": "A" | "B", "text": "..."}]
+      const history = messages
+        .filter(msg => msg.speaker !== 'user')
+        .map(msg => ({
+          speaker: msg.speaker === 'yana' ? 'A' : 'B',
+          text: msg.text
+        }))
+
       // API 呼び出し（既存エンドポイント）
       const apiUrl = `${apiBase || 'http://localhost:5000'}/api/unified/run/start-sync`
-      
+
       const response = await fetch(apiUrl, {
         method: 'POST',
         headers: {
@@ -62,7 +71,8 @@ export default function ChatInputPanel({ apiBase, onSendComplete }: ChatInputPan
         },
         body: JSON.stringify({
           text: userMessage.text,
-          maxTurns: 2
+          maxTurns: 2,
+          history: history
         })
       })
 

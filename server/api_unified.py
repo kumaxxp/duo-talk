@@ -320,6 +320,16 @@ def start_run_sync():
     max_turns = data.get('maxTurns', data.get('max_turns', 8))
     jetracer_url = data.get('jetracerUrl', data.get('jetracer_url'))
 
+    # 会話履歴を変換: [{"speaker": "A", "text": "..."}, ...] -> [("A", "..."), ...]
+    raw_history = data.get('history', [])
+    initial_history = None
+    if raw_history:
+        initial_history = [
+            (item.get('speaker', 'A'), item.get('text', ''))
+            for item in raw_history
+            if item.get('text')
+        ]
+
     # パイプライン取得・実行
     pipeline = _get_pipeline(jetracer_url)
 
@@ -327,6 +337,7 @@ def start_run_sync():
         result = pipeline.run(
             initial_input=bundle,
             max_turns=max_turns,
+            initial_history=initial_history,
         )
 
         response_data = {
