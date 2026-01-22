@@ -64,6 +64,10 @@ class Character:
         # 最後に使用したRAGヒントを保存（外部からアクセス可能）
         self.last_rag_hints: List[str] = []
 
+        # 最後に使用したプロンプトと応答を保存（デバッグ・GUI表示用）
+        self.last_prompt: str = ""
+        self.last_response: str = ""
+
         # Initialize beat tracker for pattern information
         self.beat_tracker = get_beat_tracker()
 
@@ -724,7 +728,7 @@ class Character:
 
         # 4.1 システムプロンプト
         builder.add(
-            self._get_system_prompt(),
+            self.system_prompt,  # PromptManagerから取得
             Priority.SYSTEM,
             "system"
         )
@@ -960,28 +964,43 @@ JetRacer自動運転車の走行を実況・解説する姉妹AIの一人です�
     def _format_scene_facts(self, scene_facts: Dict[str, str]) -> str:
         """
         v2.2: DuoSignals.scene_factsをプロンプト用テキストにフォーマット
-        
+
         Florence-2等からの視覚解析結果をキャラクターが理解しやすい形式に変換
-        
+        VisionToSignalsからの出力フィールドにも対応（Phase 0C）
+
         Args:
             scene_facts: DuoSignals.scene_factsの辞書
-        
+
         Returns:
             フォーマットされたテキスト
         """
         if not scene_facts:
             return ""
-        
+
         lines = ["【視覚情報（Florence-2解析）】"]
-        
+
         # キャプション（シーン説明）
         if caption := scene_facts.get("caption"):
             lines.append(f"シーン: {caption}")
-        
-        # 検出物体
-        if objects := scene_facts.get("objects"):
-            lines.append(f"検出物体: {objects}")
-        
+
+        # 検出物体（objects または detected_objects）
+        detected = scene_facts.get("detected_objects") or scene_facts.get("objects")
+        if detected:
+            lines.append(f"検出物体: {detected}")
+
+        # 主要物体（Phase 0C: VisionToSignals対応）
+        if primary := scene_facts.get("primary_object"):
+            lines.append(f"主要物体: {primary}")
+
+        # 物体位置（Phase 0C: VisionToSignals対応）
+        if position := scene_facts.get("position"):
+            position_map = {
+                "left": "左側",
+                "right": "右側",
+                "center": "中央",
+            }
+            lines.append(f"位置: {position_map.get(position, position)}")
+
         # シーンタイプ
         if scene_type := scene_facts.get("scene_type"):
             type_map = {
@@ -991,7 +1010,25 @@ JetRacer自動運転車の走行を実況・解説する姉妹AIの一人です�
                 "unknown": "不明"
             }
             lines.append(f"シーンタイプ: {type_map.get(scene_type, scene_type)}")
-        
+
+        # 照明条件（Phase 0C: VisionToSignals対応）
+        if lighting := scene_facts.get("lighting"):
+            lighting_map = {
+                "dark": "暗い（低照度）",
+                "bright": "明るい",
+                "normal": "通常",
+            }
+            lines.append(f"照明: {lighting_map.get(lighting, lighting)}")
+
+        # 車線位置（Phase 0C: VisionToSignals対応）
+        if lane := scene_facts.get("lane"):
+            lane_map = {
+                "left": "左寄り",
+                "right": "右寄り",
+                "center": "中央",
+            }
+            lines.append(f"車線位置: {lane_map.get(lane, lane)}")
+
         # 走行関連情報（JetRacerモード用）
         if self.jetracer_mode:
             if road_pct := scene_facts.get("road_percentage"):
@@ -1001,19 +1038,44 @@ JetRacer自動運転車の走行を実況・解説する姉妹AIの一人です�
                     "straight": "直線",
                     "curve_left": "左カーブ",
                     "curve_right": "右カーブ",
+                    "curve": "カーブ",
                     "corner": "コーナー",
                 }
                 lines.append(f"前方: {upcoming_map.get(upcoming, upcoming)}")
+
+            # 障害物（最重要なので目立つように）
             if obstacle := scene_facts.get("obstacle"):
-                lines.append(f"障害物: {obstacle}")
-        
+                lines.append(f"⚠️ 障害物検出: {obstacle}")
+        else:
+            # 一般モードでも障害物は表示
+            if obstacle := scene_facts.get("obstacle"):
+                lines.append(f"⚠️ 障害物: {obstacle}")
+
+        # VLM自然言語記述（Phase 0C: VisionToSignals対応）
+        if vlm_desc := scene_facts.get("vlm_description"):
+            lines.append(f"VLM解析: {vlm_desc}")
+
+        # タイムスタンプ情報（鮮度確認用）
+        if timestamp := scene_facts.get("vision_timestamp"):
+            try:
+                from datetime import datetime
+                ts = datetime.fromisoformat(timestamp)
+                age = (datetime.now() - ts).total_seconds()
+                lines.append(f"（{age:.1f}秒前の観測）")
+            except (ValueError, TypeError):
+                pass
+
         # その他の情報（上記以外）
-        shown_keys = {"caption", "objects", "scene_type", "road_percentage", 
-                      "upcoming", "obstacle", "object_count", "vision_time_ms"}
+        shown_keys = {
+            "caption", "objects", "detected_objects", "primary_object", "position",
+            "scene_type", "lighting", "lane", "road_percentage", "upcoming",
+            "obstacle", "object_count", "vision_time_ms", "vlm_description",
+            "vision_source", "vision_timestamp"
+        }
         for key, value in scene_facts.items():
             if key not in shown_keys and value:
                 lines.append(f"{key}: {value}")
-        
+
         return "\n".join(lines)
 
     def _format_world_state_v2(self, state: Any) -> str:
@@ -1046,7 +1108,7 @@ JetRacer自動運転車の走行を実況・解説する姉妹AIの一人です�
 
         for attempt in range(max_attempts):
             response = self.llm.call(
-                system=self._get_system_prompt(),
+                system=self.system_prompt,  # PromptManagerから取得
                 user=prompt,
                 temperature=config.temperature + (0.2 * attempt),
                 max_tokens=100,  # 50〜80文字制限に合わせて短く
@@ -1113,7 +1175,7 @@ JetRacer自動運転車の走行を実況・解説する姉妹AIの一人です�
 
         # 2.1 システムプロンプト
         builder.add(
-            self._get_system_prompt(),
+            self.system_prompt,  # PromptManagerから取得したものを使用
             Priority.SYSTEM,
             "system"
         )
@@ -1288,13 +1350,164 @@ JetRacer自動運転車の走行を実況・解説する姉妹AIの一人です�
         # 3. プロンプトをビルド
         user_prompt = builder.build()
 
-        # 4. LLM呼び出し（履歴付き）
+        # プロンプトを保存（デバッグ・GUI表示用）
+        self.last_prompt = user_prompt
+
+        # 4. LLM呼び出し
+        return self._call_llm_with_prompt(user_prompt, conversation_history)
+
+    def prepare_prompt_unified(
+        self,
+        frame_description: str,
+        conversation_history: List[Tuple[str, str]],
+        director_instruction: Optional[str] = None,
+        vision_info: Optional[str] = None,
+        topic_guidance: Optional[dict] = None,
+        owner_instruction: Optional[str] = None,
+    ) -> str:
+        """
+        プロンプトを準備して保存（LLM呼び出しはしない）
+
+        speak_unified()と同じプロンプト構築ロジックを使用するが、
+        LLMは呼び出さずにプロンプトを返すのみ。
+
+        Returns:
+            構築されたプロンプト文字列（self.last_promptにも保存される）
+        """
+        # speak_unified と同じプロンプト構築ロジックを実行
+        builder = PromptBuilder()
+
+        builder.add(self.system_prompt, Priority.SYSTEM, "system")  # PromptManagerから取得
+        builder.add(self._world_rules, Priority.WORLD_RULES, "world_rules")
+        builder.add(self._character_prompt.to_injection_text(), Priority.DEEP_VALUES, "character")
+
+        deep_values_text = self._format_deep_values()
+        if deep_values_text:
+            builder.add(deep_values_text, Priority.DEEP_VALUES + 1, "deep_values")
+
+        # Dual-RAG注入
+        partner_speech = conversation_history[-1][1] if conversation_history else None
+        character_name = "yana" if self.char_id == "A" else "ayu"
+        query = f"{frame_description}\n{partner_speech}" if partner_speech else frame_description
+
+        dual_rag_injector = DualRAGInjector(
+            style_rag=get_style_rag(),
+            memory_rag=get_memory_rag(),
+            max_style_samples=3,
+            max_episodes=2,
+            max_facts=2,
+            forbidden_context=get_forbidden_context_manager()
+        )
+        rag_result = dual_rag_injector.inject(
+            builder=builder,
+            character_id=character_name,
+            query=query,
+            emotion=None,
+            include_style=True,
+            include_memory=True
+        )
+
+        self.last_rag_hints = []
+        if rag_result["style"] > 0:
+            self.last_rag_hints.append(f"Style: {rag_result['style']}件")
+        if rag_result["episodes"] > 0:
+            self.last_rag_hints.append(f"Episodes: {rag_result['episodes']}件")
+        if rag_result["facts"] > 0:
+            self.last_rag_hints.append(f"Facts: {rag_result['facts']}件")
+
+        # 姉妹視点記憶
+        memories = self.sister_memory.search(
+            query=frame_description or (partner_speech or ""),
+            character=character_name,
+            n_results=5
+        )
+        if memories:
+            forbidden_ctx = get_forbidden_context_manager()
+            filtered_memories = [m for m in memories if not forbidden_ctx.is_forbidden(
+                getattr(m, 'content', '') or getattr(m, 'text', '') or str(m)
+            )][:2]
+            if filtered_memories:
+                memory_text = "\n".join([m.to_prompt_text() for m in filtered_memories])
+                builder.add(f"【関連する過去の記憶】\n{memory_text}", Priority.SISTER_MEMORY, "sister_memory")
+
+        builder.add(f"【Current Scene】\n{frame_description}", Priority.SCENE_FACTS, "scene")
+
+        state = self.signals.snapshot()
+        if state.scene_facts:
+            scene_facts_text = self._format_scene_facts(state.scene_facts)
+            builder.add(scene_facts_text, Priority.SCENE_FACTS + 1, "scene_facts")
+
+        if vision_info:
+            builder.add(vision_info, Priority.SCENE_FACTS + 2, "vision")
+
+        if topic_guidance:
+            topic_text = self._format_topic_guidance(topic_guidance)
+            if topic_text:
+                builder.add(topic_text, Priority.DIRECTOR - 1, "topic_guidance")
+
+        if director_instruction:
+            builder.add(
+                f"【Director's Guidance】\n{director_instruction}\n※上記の指示を意識して応答してください",
+                Priority.DIRECTOR,
+                "director"
+            )
+
+        if owner_instruction:
+            builder.add(f"【オーナーからの指示】\n{owner_instruction}", Priority.OWNER_INSTRUCTION, "owner_instruction")
+
+        current_topic = topic_guidance.get("focus_hook", "対話") if topic_guidance else "対話"
+        topic_depth = topic_guidance.get("hook_depth", 0) if topic_guidance else 0
+        builder.check_and_inject_slots(current_topic=current_topic, topic_depth=topic_depth)
+
+        event_type = None
+        if state.recent_events:
+            last_event = state.recent_events[-1]
+            if isinstance(last_event, dict):
+                event_type = last_event.get("type")
+
+        few_shot = self.few_shot_injector.select_pattern(
+            signals_state=state,
+            loop_strategy=None,
+            event_type=event_type
+        )
+        if few_shot:
+            builder.add(f"【参考: このような会話パターンで】\n{few_shot}", Priority.FEW_SHOT, "few_shot")
+
+        user_prompt = builder.build()
+        self.last_prompt = user_prompt
+        return user_prompt
+
+    def generate_from_prepared_prompt(
+        self,
+        conversation_history: List[Tuple[str, str]],
+    ) -> str:
+        """
+        準備済みのプロンプト（self.last_prompt）を使ってLLMを呼び出す
+
+        prepare_prompt_unified()を先に呼び出しておく必要がある。
+
+        Returns:
+            生成された発話テキスト
+        """
+        if not self.last_prompt:
+            raise ValueError("プロンプトが準備されていません。prepare_prompt_unified()を先に呼び出してください。")
+
+        return self._call_llm_with_prompt(self.last_prompt, conversation_history)
+
+    def _call_llm_with_prompt(
+        self,
+        user_prompt: str,
+        conversation_history: List[Tuple[str, str]],
+    ) -> str:
+        """
+        プロンプトを使ってLLMを呼び出す（内部メソッド）
+        """
         max_attempts = 2
         result = ""
 
         for attempt in range(max_attempts):
             response = self.llm.call_with_history(
-                system=self._get_system_prompt(),
+                system=self.system_prompt,  # PromptManagerから取得
                 history=conversation_history,
                 current_speaker=self.char_id,
                 current_prompt=user_prompt,
@@ -1305,11 +1518,12 @@ JetRacer自動運転車の走行を実況・解説する姉妹AIの一人です�
 
             # 繰り返しチェック
             if not self._has_repetition(result):
+                self.last_response = result
                 return result
 
             print(f"    ⚠️ 繰り返し検出 (試行 {attempt + 1}/{max_attempts}): 再生成中...")
 
-        # 5. 結果を返す
+        self.last_response = result
         return result
 
     def _format_topic_guidance(self, guidance: dict) -> str:

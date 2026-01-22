@@ -82,6 +82,15 @@ class FewShotInjector:
         "topic_depth_3": "depth_personal",
     }
 
+    # Vision系パターンIDマッピング（Phase 0C追加）
+    VISION_PATTERN_MAP = {
+        "obstacle": "vision_obstacle_warning",       # 障害物検出（最優先）
+        "multiple_objects": "vision_multiple_objects",  # 複数物体
+        "lane": "vision_lane",                       # 車線位置
+        "environment": "vision_environment",         # 環境・照明
+        "discovery": "vision_discovery",             # 基本的な物体検出
+    }
+
     def __init__(
         self,
         patterns_path: Optional[str] = None,
@@ -170,6 +179,24 @@ class FewShotInjector:
         Returns:
             選択されたパターンのexample文字列、または None
         """
+        # 0. Vision情報の優先チェック（Phase 0C追加）
+        # 障害物検出は最優先で処理
+        if signals_state and hasattr(signals_state, 'scene_facts') and signals_state.scene_facts:
+            scene_facts = signals_state.scene_facts
+            # 鮮度チェック（5秒以内）
+            is_fresh = True
+            if hasattr(signals_state, 'is_stale'):
+                is_fresh = not signals_state.is_stale(max_age_seconds=5.0)
+            elif hasattr(signals_state, 'scene_timestamp') and signals_state.scene_timestamp:
+                from datetime import datetime
+                age = (datetime.now() - signals_state.scene_timestamp).total_seconds()
+                is_fresh = age <= 5.0
+
+            if is_fresh:
+                vision_pattern = self._select_vision_pattern(scene_facts)
+                if vision_pattern:
+                    return vision_pattern
+
         # 1. 具体性不足の場合は具体化パターンを優先
         if lacks_specificity:
             pattern = self._get_pattern_for_strategy(LoopBreakStrategy.FORCE_SPECIFIC_SLOT)
@@ -282,6 +309,55 @@ class FewShotInjector:
             if abs(v - avg) / avg > 0.3:  # 30%以上の乖離
                 return True
         return False
+
+    def _select_vision_pattern(self, scene_facts: Dict[str, Any]) -> Optional[str]:
+        """
+        scene_factsの内容に基づいて最適なvisionパターンを選択
+
+        優先順位:
+        1. obstacle検出 → vision_obstacle_warning（最優先）
+        2. 複数物体検出 → vision_multiple_objects
+        3. lane/position検出 → vision_lane
+        4. lighting/scene_type検出 → vision_environment
+        5. その他物体検出 → vision_discovery
+
+        Args:
+            scene_facts: VisionToSignalsで生成された辞書
+
+        Returns:
+            選択されたパターンのexample文字列、または None
+        """
+        if not scene_facts:
+            return None
+
+        # 1. 障害物検出（最優先）
+        if "obstacle" in scene_facts:
+            pattern_id = self.VISION_PATTERN_MAP.get("obstacle")
+            return self._get_pattern_by_id(pattern_id)
+
+        # 2. 複数物体検出
+        if "detected_objects" in scene_facts:
+            objects = scene_facts["detected_objects"]
+            if isinstance(objects, str) and "," in objects:  # 複数ある
+                pattern_id = self.VISION_PATTERN_MAP.get("multiple_objects")
+                return self._get_pattern_by_id(pattern_id)
+
+        # 3. 車線位置
+        if "lane" in scene_facts or ("position" in scene_facts and scene_facts.get("position") in ["left", "right"]):
+            pattern_id = self.VISION_PATTERN_MAP.get("lane")
+            return self._get_pattern_by_id(pattern_id)
+
+        # 4. 環境・照明
+        if "lighting" in scene_facts or "scene_type" in scene_facts:
+            pattern_id = self.VISION_PATTERN_MAP.get("environment")
+            return self._get_pattern_by_id(pattern_id)
+
+        # 5. 基本的な物体検出
+        if "primary_object" in scene_facts or "detected_objects" in scene_facts:
+            pattern_id = self.VISION_PATTERN_MAP.get("discovery")
+            return self._get_pattern_by_id(pattern_id)
+
+        return None
 
     def get_all_pattern_ids(self) -> List[str]:
         """全パターンIDを取得（デバッグ用）"""

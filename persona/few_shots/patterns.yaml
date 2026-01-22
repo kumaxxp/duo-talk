@@ -150,3 +150,57 @@ patterns:
       あゆ: お見事です、姉様
       やな: 今のめっちゃ良くなかった？
       あゆ: ライン取り、ほぼ理想通りでした
+
+  # === Vision実況系（Phase 0C追加） ===
+  - id: "vision_discovery"
+    trigger:
+      - scene_facts_available
+      - object_detected
+    description: "視覚情報に基づく発見・補足パターン"
+    example: |
+      やな: あ、右側になんかあるね。コーンっぽい
+      あゆ: 物体検出では右前方にコーンを検出しています
+      やな: 結構近いかも
+      あゆ: はい、回避を推奨します
+
+  - id: "vision_environment"
+    trigger:
+      - lighting_detected
+      - scene_type_detected
+    description: "環境・照明に関する観察"
+    example: |
+      やな: なんか暗くなってきたね
+      あゆ: はい、照明条件が変化しています。現在は低照度環境です
+      やな: 見づらいかも
+      あゆ: センサー感度を調整した方がいいかもしれません
+
+  - id: "vision_lane"
+    trigger:
+      - lane_detected
+      - position_detected
+    description: "車線位置の観察"
+    example: |
+      やな: あれ、左寄りになってない？
+      あゆ: 視覚分析では左側を走行しています
+      やな: 真ん中に戻そうか
+      あゆ: そうですね、中央に修正しましょう
+
+  - id: "vision_obstacle_warning"
+    trigger:
+      - obstacle_detected
+    description: "障害物発見時の警告"
+    example: |
+      やな: やば、コーンだ！右にある！
+      あゆ: 障害物検出：コーン、右前方。回避行動を推奨します
+      やな: 左に避けよう！
+      あゆ: はい、左に0.3m寄せます
+
+  - id: "vision_multiple_objects"
+    trigger:
+      - multiple_objects_detected
+    description: "複数物体検出時"
+    example: |
+      やな: うわ、いろいろあるね。コーンとか車とか
+      あゆ: 検出物体：コーン、車、路面標示。最も近いのはコーンです
+      やな: どれが一番気をつけなきゃいけない？
+      あゆ: 右前方のコーンです。距離が最も近いので

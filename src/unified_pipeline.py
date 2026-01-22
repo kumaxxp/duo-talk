@@ -16,7 +16,7 @@ from typing import Optional, List, Tuple, Dict, Any, Callable, TYPE_CHECKING
 from src.input_source import InputBundle, InputSource, SourceType
 from src.input_collector import InputCollector, FrameContext
 from src.character import Character
-from src.director import Director
+from src.director_factory import get_director
 from src.types import DirectorEvaluation, DirectorStatus
 from src.logger import Logger
 from src.signals import DuoSignals
@@ -117,7 +117,8 @@ class UnifiedPipeline:
         # Characterは初回run()時にモード判定してから初期化
         self.char_a: Optional[Character] = None
         self.char_b: Optional[Character] = None
-        self.director = Director(enable_fact_check=enable_fact_check)
+        # Director: 設定に応じてMinimalまたはFullモードを使用
+        self.director = get_director()
         self.logger = Logger()
         self.signals = DuoSignals()
         
@@ -210,6 +211,7 @@ class UnifiedPipeline:
         run_id: Optional[str] = None,
         interrupt_callback: Optional[Callable[[], Optional[InputBundle]]] = None,
         event_callback: Optional[Callable[[str, Dict], None]] = None,
+        initial_history: Optional[List[Tuple[str, str]]] = None,
     ) -> DialogueResult:
         """
         対話を実行
@@ -224,6 +226,8 @@ class UnifiedPipeline:
             event_callback: イベント通知コールバック（GUI用）
                 - event_callback(event_type: str, data: dict)
                 - event_type: "narration_start", "speak", "director", "interrupt", "narration_complete"
+            initial_history: 既存の会話履歴 [("A", "text"), ("B", "text"), ...]
+                - 継続会話の場合に過去の履歴を渡す
 
         Returns:
             DialogueResult
@@ -247,6 +251,11 @@ class UnifiedPipeline:
         self.director.reset_for_new_session()
         # Memory RAGの使用済み記憶をリセット（ループ防止）
         get_memory_rag().reset_used_memories()
+
+        # 3b. 既存の会話履歴がある場合、NoveltyGuardをシード（Fullモードのみ）
+        if initial_history and hasattr(self.director, 'novelty_guard'):
+            history_texts = [text for _, text in initial_history]
+            self.director.novelty_guard.seed_with_history(history_texts)
 
         # 3. 入力収集
         try:
@@ -283,7 +292,10 @@ class UnifiedPipeline:
 
         # 5. 対話ループ
         dialogue_turns: List[DialogueTurn] = []
-        conversation_history: List[Tuple[str, str]] = []
+        # 既存の会話履歴がある場合はそれを使用（継続会話用）
+        conversation_history: List[Tuple[str, str]] = list(initial_history) if initial_history else []
+        if initial_history:
+            print(f"    Continuing with {len(initial_history)} previous turns")
         topic_guidance: Optional[Dict[str, Any]] = None
         current_speaker = "A"
 
@@ -509,7 +521,15 @@ class UnifiedPipeline:
         speaker_name = "やな" if speaker == "A" else "あゆ"
 
         for attempt in range(max_retry + 1):
-            # イベント: 生成開始
+            # 1. プロンプトを先に準備
+            prompt = character.prepare_prompt_unified(
+                frame_description=frame_description,
+                conversation_history=conversation_history,
+                director_instruction=director_instruction,
+                topic_guidance=topic_guidance,
+            )
+
+            # 2. イベント: 生成開始（プロンプト付き）
             thought_data = {
                 "event": "thought",
                 "run_id": run_id,
@@ -519,23 +539,22 @@ class UnifiedPipeline:
                 "attempt": attempt + 1,
                 "max_retry": max_retry,
                 "turn": turn_number,
-                "timestamp": datetime.now().isoformat()
+                "timestamp": datetime.now().isoformat(),
+                "prompt": prompt,  # LLMに送信するプロンプト
             }
             if run_id:
                 self.logger.log_event(thought_data)
-            
+
             if event_callback:
                 event_callback("thought", thought_data)
 
-            # 発話生成
-            speech = character.speak_unified(
-                frame_description=frame_description,
+            # 3. 準備済みプロンプトを使ってLLM呼び出し
+            speech = character.generate_from_prepared_prompt(
                 conversation_history=conversation_history,
-                director_instruction=director_instruction,
-                topic_guidance=topic_guidance,
             )
 
             # イベント: 評価開始
+            # ※MinimalモードではLLM評価なし、FullモードではLLM評価あり
             review_data = {
                 "event": "thought",
                 "run_id": run_id,
@@ -544,7 +563,9 @@ class UnifiedPipeline:
                 "speaker_name": speaker_name,
                 "attempt": attempt + 1,
                 "turn": turn_number,
-                "timestamp": datetime.now().isoformat()
+                "timestamp": datetime.now().isoformat(),
+                "text": speech,  # 生成された応答
+                # プロンプトは評価後にDirectorから取得（LLM使用時のみ）
             }
             if run_id:
                 self.logger.log_event(review_data)
@@ -564,7 +585,7 @@ class UnifiedPipeline:
                 frame_num=1,  # 単一フレームの場合
             )
             
-            # イベント: 評価完了（結果通知）
+            # イベント: 評価完了（結果通知、Director評価プロンプト付き - Fullモードのみ）
             reviewed_data = {
                 "event": "thought",
                 "run_id": run_id,
@@ -575,8 +596,12 @@ class UnifiedPipeline:
                 "text": speech,
                 "attempt": attempt + 1,
                 "turn": turn_number,
-                "timestamp": datetime.now().isoformat()
+                "timestamp": datetime.now().isoformat(),
             }
+            # Director評価プロンプトがあれば含める（FullモードでLLM評価を行った場合のみ）
+            if self.director.last_evaluation_prompt:
+                reviewed_data["prompt"] = self.director.last_evaluation_prompt
+
             if run_id:
                 self.logger.log_event(reviewed_data)
 
@@ -604,13 +629,14 @@ class UnifiedPipeline:
                             "reason": f"介入: {evaluation.reason}",
                             "suggestion": director_instruction,
                             "text": speech,
+                            "prompt": prompt,  # 生成に使用したプロンプト
                             "attempt": attempt + 1,
                             "turn": turn_number,
-                            "timestamp": datetime.now().isoformat()
+                            "timestamp": datetime.now().isoformat(),
                         }
                         if run_id:
                             self.logger.log_event(retry_data)
-                        
+
                         if event_callback:
                             event_callback("thought", retry_data)
                         continue
@@ -637,13 +663,14 @@ class UnifiedPipeline:
                         "reason": evaluation.reason,
                         "suggestion": director_instruction,
                         "text": speech,
+                        "prompt": prompt,  # 生成に使用したプロンプト
                         "attempt": attempt + 1,
                         "turn": turn_number,
-                        "timestamp": datetime.now().isoformat()
+                        "timestamp": datetime.now().isoformat(),
                     }
                     if run_id:
                         self.logger.log_event(retry_data)
-                    
+
                     if event_callback:
                         event_callback("thought", retry_data)
                     continue

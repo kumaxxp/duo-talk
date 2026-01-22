@@ -689,6 +689,19 @@ class NoveltyGuard:
         self.turn_count = 0
         self.topic_state = TopicState()
 
+    def seed_with_history(self, history: List[str]) -> None:
+        """
+        過去の発話履歴でNoveltyGuardを初期化（継続会話用）
+
+        Args:
+            history: 過去の発話リスト（発言テキストのみ）
+        """
+        for utterance in history:
+            if utterance:
+                # 履歴をシード：update=Trueで内部状態を更新
+                self.check_and_update(utterance, update=True)
+        print(f"    📚 NoveltyGuard seeded with {len(history)} historical utterances")
+
     def get_stats(self) -> Dict[str, Any]:
         """統計情報を取得"""
         return {
