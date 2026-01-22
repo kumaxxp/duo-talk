@@ -1,5 +1,5 @@
 {
   "backend": "ollama",
-  "model": "gemma3-27b",
+  "model": "hf.co/mmnga/tokyotech-llm-Llama-3.1-Swallow-8B-Instruct-v0.3-gguf:Q4_K_M",
   "container_id": null
 }
