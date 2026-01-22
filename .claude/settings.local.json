@@ -135,7 +135,8 @@
       "Bash(/home/owner/work/duo-talk/.venv/bin/python:*)",
       "Bash(timeout 90 python:*)",
       "Bash(git status:*)",
-      "Bash(pip show:*)"
+      "Bash(pip show:*)",
+      "Bash(git ls-tree:*)"
     ]
   }
 }
